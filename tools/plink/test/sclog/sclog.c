@@ -212,6 +212,15 @@ static void wrap_malloc_pre(void *wrapctx, void **user_data)
 {
     logging_paused++;
     *user_data = drwrap_get_arg(wrapctx, 0);
+    dr_fprintf(outfile, "malloc %"PRIuMAX"\n", (uintmax_t)*user_data);
+}
+static void wrap_aligned_alloc_pre(void *wrapctx, void **user_data)
+{
+    logging_paused++;
+    size_t align = (size_t) drwrap_get_arg(wrapctx, 0);
+    *user_data = drwrap_get_arg(wrapctx, 1);
+    dr_fprintf(outfile, "aligned_alloc align=%zu size=%"PRIuMAX"\n",
+               align, (uintmax_t)*user_data);
 }
 static void wrap_free_pre(void *wrapctx, void **user_data)
 {
@@ -225,6 +234,7 @@ static void wrap_realloc_pre(void *wrapctx, void **user_data)
     void *ptr = drwrap_get_arg(wrapctx, 0);
     freed(ptr);
     *user_data = drwrap_get_arg(wrapctx, 1);
+    dr_fprintf(outfile, "realloc %"PRIuMAX"\n", (uintmax_t)*user_data);
 }
 static void wrap_alloc_post(void *wrapctx, void *user_data)
 {
@@ -237,39 +247,7 @@ static void wrap_alloc_post(void *wrapctx, void *user_data)
 }
 
 /*
- * We wrap the C library function memset, because I've noticed that at
- * least one optimised implementation of it diverges control flow
- * internally based on what appears to be the _alignment_ of the input
- * pointer - and that alignment check can vary depending on the
- * addresses of allocated blocks. So I can't guarantee no divergence
- * of control flow inside memset if malloc doesn't return the same
- * values, and instead I just have to trust that memset isn't reading
- * the contents of the block and basing control flow decisions on that.
- */
-static void wrap_memset_pre(void *wrapctx, void **user_data)
-{
-    uint was_already_paused = logging_paused++;
-
-    if (outfile == INVALID_FILE || was_already_paused)
-        return;
-
-    const void *addr = drwrap_get_arg(wrapctx, 0);
-    size_t size = (size_t)drwrap_get_arg(wrapctx, 2);
-
-    struct allocation *alloc = find_allocation(addr);
-    if (!alloc) {
-        dr_fprintf(outfile, "memset %"PRIuMAX" @ %"PRIxMAX"\n",
-                   (uintmax_t)size, (uintmax_t)addr);
-    } else {
-        dr_fprintf(outfile, "memset %"PRIuMAX" @ allocations[%"PRIuPTR"]"
-                   " + %"PRIxMAX"\n", (uintmax_t)size, alloc->index,
-                   (uintmax_t)(addr - alloc->start));
-    }
-}
-
-/*
- * Common post-wrapper function for memset and free, whose entire
- * function is to unpause the logging.
+ * Common post-wrapper function to unpause the logging.
  */
 static void unpause_post(void *wrapctx, void *user_data)
 {
@@ -400,6 +378,7 @@ static dr_emit_flags_t instrument_instr(
     int opcode = instr_get_opcode(instr);
 
     switch (opcode) {
+#if defined(X86)
       case OP_div:
       case OP_idiv:
         /*
@@ -413,6 +392,21 @@ static dr_emit_flags_t instrument_instr(
             3, instr_get_src(instr, 2), instr_get_src(instr, 0),
             OPND_CREATE_INTPTR(loc));
         break;
+#endif
+#if defined(AARCH64)
+      case OP_sdiv:
+      case OP_udiv:
+        /*
+         * AArch64 hardware divisions. 0 = numerator, 1 = denominator.
+         */
+        instr_format_location(instr, &loc);
+        dr_insert_clean_call(
+            drcontext, bb, instr, (void *)log_div, false,
+            3, instr_get_src(instr, 0), instr_get_src(instr, 1),
+            OPND_CREATE_INTPTR(loc));
+        break;
+#endif
+#if defined(X86)
       case OP_shl:
       case OP_shr:
       case OP_sar:
@@ -422,30 +416,51 @@ static dr_emit_flags_t instrument_instr(
       case OP_rol:
       case OP_ror:
       case OP_rcl:
-      case OP_rcr:
+      case OP_rcr: {
         /*
          * Shift instructions. If they're register-controlled, log the
          * shift count.
          */
-        {
-            opnd_t shiftcount = instr_get_src(instr, 0);
-            if (!opnd_is_immed(shiftcount)) {
-                reg_id_t r0;
-                drreg_status_t st;
-                st = drreg_reserve_register(drcontext, bb, instr, NULL, &r0);
-                DR_ASSERT(st == DRREG_SUCCESS);
-                opnd_t op_r0 = opnd_create_reg(r0);
-                instrlist_preinsert(bb, instr, INSTR_CREATE_movzx(
-                                        drcontext, op_r0, shiftcount));
-                instr_format_location(instr, &loc);
-                dr_insert_clean_call(
-                    drcontext, bb, instr, (void *)log_var_shift, false,
-                    2, op_r0, OPND_CREATE_INTPTR(loc));
-                st = drreg_unreserve_register(drcontext, bb, instr, r0);
-                DR_ASSERT(st == DRREG_SUCCESS);
-            }
+        opnd_t shiftcount = instr_get_src(instr, 0);
+        if (!opnd_is_immed(shiftcount)) {
+            reg_id_t r0;
+            drreg_status_t st;
+            st = drreg_reserve_register(drcontext, bb, instr, NULL, &r0);
+            DR_ASSERT(st == DRREG_SUCCESS);
+            opnd_t op_r0 = opnd_create_reg(r0);
+            instr_t *movzx = INSTR_CREATE_movzx(drcontext, op_r0, shiftcount);
+            instr_set_translation(movzx, instr_get_app_pc(instr));
+            instrlist_preinsert(bb, instr, movzx);
+            instr_format_location(instr, &loc);
+            dr_insert_clean_call(
+                drcontext, bb, instr, (void *)log_var_shift, false,
+                2, op_r0, OPND_CREATE_INTPTR(loc));
+            st = drreg_unreserve_register(drcontext, bb, instr, r0);
+            DR_ASSERT(st == DRREG_SUCCESS);
         }
         break;
+      }
+#endif
+#if defined(AARCH64)
+      case OP_lslv:
+      case OP_asrv:
+      case OP_lsrv:
+      case OP_rorv: {
+        /*
+         * AArch64 variable shift instructions.
+         */
+        opnd_t shiftcount = instr_get_src(instr, 1);
+        DR_ASSERT(opnd_is_reg(shiftcount));
+        reg_id_t shiftreg = opnd_get_reg(shiftcount);
+        if (shiftreg >= DR_REG_W0 && shiftreg <= DR_REG_WSP)
+            shiftreg = reg_32_to_64(shiftreg);
+        instr_format_location(instr, &loc);
+        dr_insert_clean_call(
+            drcontext, bb, instr, (void *)log_var_shift, false,
+            2, opnd_create_reg(shiftreg), OPND_CREATE_INTPTR(loc));
+        break;
+      }
+#endif
     }
 
     return DR_EMIT_DEFAULT;
@@ -510,41 +525,42 @@ static void try_wrap_fn(const module_data_t *module, const char *name,
 static void load_module(
     void *drcontext, const module_data_t *module, bool loaded)
 {
+    bool libc = !strncmp(dr_module_preferred_name(module), "libc", 4);
 
 #define TRY_WRAP(fn, pre, post) do                              \
     {                                                           \
         static bool done_this_one = false;                      \
-        try_wrap_fn(module, fn, pre, post, &done_this_one);    \
+        try_wrap_fn(module, fn, pre, post, &done_this_one);     \
     } while (0)
 
     if (loaded) {
         TRY_WRAP("log_to_file_real", wrap_logsetfile, NULL);
         TRY_WRAP("dry_run_real", NULL, wrap_dryrun);
-        TRY_WRAP("malloc", wrap_malloc_pre, wrap_alloc_post);
-        TRY_WRAP("realloc", wrap_realloc_pre, wrap_alloc_post);
-        TRY_WRAP("free", wrap_free_pre, unpause_post);
-        TRY_WRAP("memset", wrap_memset_pre, unpause_post);
+        if (libc) {
+            TRY_WRAP("malloc", wrap_malloc_pre, wrap_alloc_post);
+            TRY_WRAP("aligned_alloc", wrap_aligned_alloc_pre, wrap_alloc_post);
+            TRY_WRAP("realloc", wrap_realloc_pre, wrap_alloc_post);
+            TRY_WRAP("free", wrap_free_pre, unpause_post);
 
-        /*
-         * More strangely named versions of standard C library
-         * functions, which I've observed in practice to be where the
-         * calls end up. I think these are probably selected by
-         * STT_IFUNC in libc.so, so that the normally named version of
-         * the function is never reached at all.
-         *
-         * This list is not expected to be complete. If you re-run
-         * this test on a different platform and find control flow
-         * diverging inside some libc function that looks as if it's
-         * another name for malloc or memset or whatever, then you may
-         * need to add more aliases here to stop the test failing.
-         */
-        TRY_WRAP("__GI___libc_malloc", wrap_malloc_pre, wrap_alloc_post);
-        TRY_WRAP("__libc_malloc", wrap_malloc_pre, wrap_alloc_post);
-        TRY_WRAP("__GI___libc_realloc", wrap_realloc_pre, wrap_alloc_post);
-        TRY_WRAP("__GI___libc_free", wrap_free_pre, unpause_post);
-        TRY_WRAP("__memset_sse2_unaligned", wrap_memset_pre, unpause_post);
-        TRY_WRAP("__memset_sse2", wrap_memset_pre, unpause_post);
-        TRY_WRAP("cfree", wrap_free_pre, unpause_post);
+            /*
+             * More strangely named versions of standard C library
+             * functions, which I've observed in practice to be where the
+             * calls end up. I think these are probably selected by
+             * STT_IFUNC in libc.so, so that the normally named version of
+             * the function is never reached at all.
+             *
+             * This list is not expected to be complete. If you re-run
+             * this test on a different platform and find control flow
+             * diverging inside some libc function that looks as if it's
+             * another name for malloc or memset or whatever, then you may
+             * need to add more aliases here to stop the test failing.
+             */
+            TRY_WRAP("__GI___libc_malloc", wrap_malloc_pre, wrap_alloc_post);
+            TRY_WRAP("__libc_malloc", wrap_malloc_pre, wrap_alloc_post);
+            TRY_WRAP("__GI___libc_realloc", wrap_realloc_pre, wrap_alloc_post);
+            TRY_WRAP("__GI___libc_free", wrap_free_pre, unpause_post);
+            TRY_WRAP("cfree", wrap_free_pre, unpause_post);
+        }
     }
 }
 

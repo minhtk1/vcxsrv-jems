@@ -22,8 +22,9 @@ struct LogContext {
     int logtype;                       /* cached out of conf */
 };
 
-static Filename *xlatlognam(Filename *s, char *hostname, int port,
-                            struct tm *tm);
+static Filename *xlatlognam(const Filename *s,
+                            const char *hostname, int port,
+                            const struct tm *tm);
 
 /*
  * Internal wrapper function which must be called for _all_ output
@@ -58,7 +59,7 @@ static void logwrite(LogContext *ctx, ptrlen data)
  * Convenience wrapper on logwrite() which printf-formats the
  * string.
  */
-static void logprintf(LogContext *ctx, const char *fmt, ...)
+static PRINTF_LIKE(2, 3) void logprintf(LogContext *ctx, const char *fmt, ...)
 {
     va_list ap;
     char *data;
@@ -79,6 +80,11 @@ void logflush(LogContext *ctx)
     if (ctx->logtype > 0)
         if (ctx->state == L_OPEN)
             fflush(ctx->lgfp);
+}
+
+LogPolicy *log_get_policy(LogContext *ctx)
+{
+    return ctx->lp;
 }
 
 static void logfopen_callback(void *vctx, int mode)
@@ -168,7 +174,7 @@ void logfopen(LogContext *ctx)
         filename_free(ctx->currlogfilename);
     ctx->currlogfilename =
         xlatlognam(conf_get_filename(ctx->conf, CONF_logfilename),
-                   conf_get_str(ctx->conf, CONF_host),
+                   conf_dest(ctx->conf),    /* hostname or serial line */
                    conf_get_int(ctx->conf, CONF_port), &tm);
 
     if (open_for_write_would_lose_data(ctx->currlogfilename)) {
@@ -248,26 +254,6 @@ void logevent(LogContext *ctx, const char *event)
     }
 }
 
-void logevent_and_free(LogContext *ctx, char *event)
-{
-    logevent(ctx, event);
-    sfree(event);
-}
-
-void logeventvf(LogContext *ctx, const char *fmt, va_list ap)
-{
-    logevent_and_free(ctx, dupvprintf(fmt, ap));
-}
-
-void logeventf(LogContext *ctx, const char *fmt, ...)
-{
-    va_list ap;
-
-    va_start(ap, fmt);
-    logeventvf(ctx, fmt, ap);
-    va_end(ap);
-}
-
 /*
  * Log an SSH packet.
  * If n_blanks != 0, blank or omit some parts.
@@ -344,7 +330,7 @@ void log_packet(LogContext *ctx, int direction, int type,
         /* If we're about to stop omitting, it's time to say how
          * much we omitted. */
         if ((blktype != PKTLOG_OMIT) && omitted) {
-            logprintf(ctx, "  (%d byte%s omitted)\r\n",
+            logprintf(ctx, "  (%"SIZEu" byte%s omitted)\r\n",
                       omitted, (omitted==1?"":"s"));
             omitted = 0;
         }
@@ -352,7 +338,8 @@ void log_packet(LogContext *ctx, int direction, int type,
         /* (Re-)initialise dumpdata as necessary
          * (start of row, or if we've just stopped omitting) */
         if (!output_pos && !omitted)
-            sprintf(dumpdata, "  %08zx%*s\r\n", p-(p%16), 1+3*16+2+16, "");
+            sprintf(dumpdata, "  %08"SIZEx"%*s\r\n",
+                    p-(p%16), 1+3*16+2+16, "");
 
         /* Deal with the current byte. */
         if (blktype == PKTLOG_OMIT) {
@@ -363,7 +350,7 @@ void log_packet(LogContext *ctx, int direction, int type,
                 c = 'X';
                 sprintf(smalldata, "XX");
             } else {  /* PKTLOG_EMIT */
-                c = ((unsigned char *)data)[p];
+                c = ((const unsigned char *)data)[p];
                 sprintf(smalldata, "%02x", c);
             }
             dumpdata[10+2+3*(p%16)] = smalldata[0];
@@ -387,7 +374,7 @@ void log_packet(LogContext *ctx, int direction, int type,
 
     /* Tidy up */
     if (omitted)
-        logprintf(ctx, "  (%d byte%s omitted)\r\n",
+        logprintf(ctx, "  (%"SIZEu" byte%s omitted)\r\n",
                   omitted, (omitted==1?"":"s"));
     logflush(ctx);
 }
@@ -445,10 +432,12 @@ void log_reconfig(LogContext *ctx, Conf *conf)
  *
  * "&Y":YYYY   "&m":MM   "&d":DD   "&T":hhmmss   "&h":<hostname>   "&&":&
  */
-static Filename *xlatlognam(Filename *src, char *hostname, int port,
-                            struct tm *tm)
+static Filename *xlatlognam(const Filename *src,
+                            const char *hostname, int port,
+                            const struct tm *tm)
 {
-    char buf[32], *bufp;
+    char buf[32];
+    const char *bufp;
     int size;
     strbuf *buffer;
     const char *s;
