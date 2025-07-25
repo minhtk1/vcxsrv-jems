@@ -98,22 +98,14 @@ xorg-server/hw/xwin/glx/wglext.h                  mesalib/include/GL/wglext.h
 
 mesalib/src/mapi/glapi/glapi.h                      xorg-server/glx/glapi.h
 mesalib/src/util/macros.h                           xorg-server/glx/util/macros.h
+mesalib/src/util/detect_os.h                        xorg-server/glx/util/detect_os.h
 mesalib/src/mapi/glapi/glapitable.h                 xorg-server/glx/glapitable.h
-mesalib/src/mapi/glapi/gen/remap_helper.h           xorg-server/glx/remap_helper.h
-mesalib/src/mesa/main/remap_helper.h                xorg-server/glx/remap_helper.h
 mesalib/src/mapi/glapi/gen/glprocs.h                xorg-server/glx/glprocs.h
 mesalib/src/mapi/glapi/gen/dispatch.h               xorg-server/glx/dispatch.h
 mesalib/src/mapi/glapi/gen/dispatch.h               mesalib/src/mesa/main/dispatch.h
-mesalib/src/mapi/glapi/gen/indirect_dispatch.c      xorg-server/glx/indirect_dispatch.c
-mesalib/src/mapi/glapi/gen/indirect_dispatch.h      xorg-server/glx/indirect_dispatch.h
-mesalib/src/mapi/glapi/gen/indirect_dispatch_swap.c xorg-server/glx/indirect_dispatch_swap.c
-mesalib/src/mapi/glapi/gen/indirect_reqsize.c       xorg-server/glx/indirect_reqsize.c
-mesalib/src/mapi/glapi/gen/indirect_reqsize.h       xorg-server/glx/indirect_reqsize.h
 mesalib/src/mapi/glapi/gen/indirect_size.h          xorg-server/glx/indirect_size.h
 mesalib/src/mapi/glapi/gen/indirect_size_get.c      xorg-server/glx/indirect_size_get.c
 mesalib/src/mapi/glapi/gen/indirect_size_get.h      xorg-server/glx/indirect_size_get.h
-mesalib/src/mapi/glapi/gen/indirect_table.c         xorg-server/glx/indirect_table.c
-mesalib/src/mapi/glapi/gen/glfunctions.h            xorg-server/glx/glfunctions.h
 
 libXaw/include/X11/Xaw/AllWidgets.h               X11/Xaw/AllWidgets.h
 libXaw/include/X11/Xaw/AsciiSink.h                X11/Xaw/AsciiSink.h
@@ -236,25 +228,30 @@ Diff=False
 def CompareFiles(f1name, f2name):
   try:
     if len(sys.argv)>1:
-      print "Comparing",f1name,f2name
-    f1 = open(f1name, 'rU')
-    f2 = open(f2name, 'rU')
+      print("Comparing "+f1name+" "+f2name)
+    f1 = open(f1name, 'r')
+    f2 = open(f2name, 'r')
 
     a = f1.readlines(); f1.close()
     b = f2.readlines(); f2.close()
     for line in difflib.ndiff(a, b):
       if line[0]!=' ':
-        print f1name,"and",f2name,"are different"
+        print(f1name+" and "+f2name+" are different")
         return True
 
     return False
-  except:
-    if not os.path.exists(f1name): print "\n",f1name,"does not exist\n"
-    if not os.path.exists(f2name): print "\n",f2name,"does not exist\n"
+  except Exception as e:
+    print(e)
+    if not os.path.exists(f1name):
+        print("\n"+f1name+" does not exist\n")
+    elif not os.path.exists(f2name):
+        print("\n"+f2name+" does not exist\n")
+    else:
+        print(f1name+" and "+f2name+" are different")
     return True
 
-for SrcFile,DestFile in izip(Files[0::2], Files[1::2]):
+for SrcFile,DestFile in zip(Files[0::2], Files[1::2]):
   Diff |= CompareFiles(SrcFile, DestFile)
 
 if not Diff:
-  print "All Files are the same"
+  print("All Files are the same")

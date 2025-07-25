@@ -12,134 +12,186 @@ if [[ "$2" == "" ]] ; then
   echo "Please pass number of parallel builds as second argument"
   exit
 fi
-
+if [[ "$3" == "" ]] ; then
+  echo "Please pass build type as third argument.  D for DEBUG, R for RELEASE, A for ALL"
+  exit
+fi
+if [[ "$3" == "A" ]] ; then
+BUILDRELEASE=1
+BUILDDEBUG=1
+fi
+if [[ "$3" == "R" ]] ; then
+BUILDRELEASE=1
+BUILDDEBUG=0
+fi
+if [[ "$3" == "D" ]] ; then
+BUILDRELEASE=0
+BUILDDEBUG=1
+fi
+BUILDDEPS=1
+if [[ "$4" == "N" ]] ; then
+BUILDDEPS=0
+fi
 function check-error {
-    if [ $? -ne 0 ]; then
-        echo $1
+    errorcode=$?
+    if [[ $errorcode != 0 ]]; then
+        echo $errorcode: $1
         exit
     fi
 }
 
-which nasm > /dev/null 2>&1
+which nasm.exe > /dev/null 2>&1
 check-error 'Please install nasm'
-
 which MSBuild.exe > /dev/null 2>&1
-check-error 'Please install/set environment for visual studio 2017'
+check-error 'Please install/set environment for visual studio 2022'
 which python.exe > /dev/null 2>&1
-check-error 'Make sure that python.exe is in the PATH. (e.g. cp /usr/bin/python2.7.exe /usr/bin/python.exe)'
+check-error 'Please install python'
+which jom.exe > /dev/null 2>&1
+check-error 'Please install jom'
 
 # c:\perl should have a copy of strawberry perl portable edition
-which /cygdrive/c/perl/perl/bin/perl.exe > /dev/null 2>&1
+which perl.exe > /dev/null 2>&1
 check-error 'Please install strawberry perl portable edition into c:\perl'
-ORIPATH=$PATH
-export PATH=/cygdrive/c/perl/perl/bin:$PATH
 
 # echo script lines from now one
-#set -v
+# set -v
 
-if [[ "$IS64" == "1" ]]; then
-	MSBuild.exe freetype/freetypevc10.sln /t:Build /p:Configuration="Release Multithreaded" /p:Platform=x64
-	check-error 'Error compiling freetype'
-	MSBuild.exe freetype/freetypevc10.sln /t:Build /p:Configuration="Debug Multithreaded" /p:Platform=x64
-	check-error 'Error compiling freetype'
-else
-	MSBuild.exe freetype/freetypevc10.sln /t:Build /p:Configuration="Release Multithreaded" /p:Platform=Win32
-	check-error 'Error compiling freetype'
-	MSBuild.exe freetype/freetypevc10.sln /t:Build /p:Configuration="Debug Multithreaded" /p:Platform=Win32
-	check-error 'Error compiling freetype'
-fi
+echo "[INFO] IS64=$IS64 BUILDRELEASE=$BUILDRELEASE BUILDDEBUG=$BUILDDEBUG BUILDDEPS=$BUILDDEPS THREADS=$2 TYPE=$3 PATH=$PATH PWD=$(pwd)"
 
-cd openssl
+set -o errexit     # hoặc: set -e
+set -o errtrace    # để ERR được propagate vào cả các function/subshell
 
-if [[ "$IS64" == "1" ]]; then
+error_trap() {
+  local code=$?
+  local line=${BASH_LINENO[0]}
+  echo "[ERROR] Exit code $code tại dòng $line (${BASH_SOURCE[1]})"
+  exit $code
+}
 
-	if [[ ! -d "release64" ]]; then
-	  mkdir release64
+trap 'error_trap' ERR
+
+if [[ "$BUILDDEPS" == "1" ]] ; then
+	if [[ "$IS64" == "1" ]]; then
+		if [[ "$BUILDRELEASE" == "1" ]] ; then
+			echo MSBuild.exe freetype/freetypevc10.sln -t:Build -p:Configuration="Release Multithreaded" -p:Platform=x64 -m:$2
+			MSBuild.exe freetype/freetypevc10.sln -t:Build -p:Configuration="Release Multithreaded" -p:Platform=x64 -m:$2
+			check-error 'Error compiling freetype'
+		fi
+		if [[ "$BUILDDEBUG" == "1" ]] ; then
+			echo MSBuild.exe freetype/freetypevc10.sln -t:Build -p:Configuration="Debug Multithreaded" -p:Platform=x64 -m:$2
+			MSBuild.exe freetype/freetypevc10.sln -t:Build -p:Configuration="Debug Multithreaded" -p:Platform=x64 -m:$2
+			check-error 'Error compiling freetype'
+		fi
+	else
+		if [[ "$BUILDRELEASE" == "1" ]] ; then
+			echo MSBuild.exe freetype/freetypevc10.sln -t:Build -p:Configuration="Release Multithreaded" -p:Platform=Win32 -m:$2
+			MSBuild.exe freetype/freetypevc10.sln -t:Build -p:Configuration="Release Multithreaded" -p:Platform=Win32 -m:$2
+			check-error 'Error compiling freetype'
+		fi
+		if [[ "$BUILDDEBUG" == "1" ]] ; then
+			echo MSBuild.exe freetype/freetypevc10.sln -t:Build -p:Configuration="Debug Multithreaded" -p:Platform=Win32 -m:$2
+			MSBuild.exe freetype/freetypevc10.sln -t:Build -p:Configuration="Debug Multithreaded" -p:Platform=Win32 -m:$2
+			check-error 'Error compiling freetype'
+		fi
 	fi
-	cd release64
 
-	perl ../Configure VC-WIN64A --release
-else
-
-	if [[ ! -d "release32" ]]; then
-	  mkdir release32
+	# OpenSSL
+	if [[ "$BUILDRELEASE" == "1" ]] ; then
+		cd openssl
+		if [[ "$IS64" == "1" ]]; then
+			mkdir -p release64 && cd release64
+			perl.exe ../Configure VC-WIN64A --release no-makedepend
+		else
+			mkdir -p release32 && cd release32
+			perl.exe ../Configure VC-WIN32 --release no-makedepend
+		fi
+		check-error 'Error executing perl'
+		jom.exe /J$2
+		check-error 'Error compiling openssl for release'
+		cd ../..
 	fi
-	cd release32
 
-	perl ../Configure VC-WIN32 --release
-fi
-check-error 'Error executing perl'
+	if [[ "$BUILDDEBUG" == "1" ]] ; then
+		cd openssl
+		if [[ "$IS64" == "1" ]]; then
+			mkdir -p debug64 && cd debug64
+			perl.exe ../Configure VC-WIN64A --debug no-makedepend
+		else
+			mkdir -p debug32 && cd debug32
+			perl.exe ../Configure VC-WIN32 --debug no-makedepend
+		fi
+		check-error 'Error executing perl'
+		jom.exe /J$2
+		check-error 'Error compiling openssl for debug'
+		cd ../..
+	fi
 
-nmake
-check-error 'Error compiling openssl for release'
+	# PThreads
+	cd pthreads
+	if [[ "$BUILDRELEASE" == "1" ]] ; then
+		nmake.exe VC-static
+		check-error 'Error compiling pthreads for release'
+	fi
+	if [[ "$BUILDDEBUG" == "1" ]] ; then
+		nmake.exe VC-static-debug
+		check-error 'Error compiling pthreads for debug'
+	fi
+	cd ..
 
-cd ..
+fi # End of BUILDDEPS block
 
+# Build mhmake and vcxsrv
 if [[ "$IS64" == "1" ]]; then
-	if [[ ! -d "debug64" ]]; then
-	  mkdir debug64
+	if [[ "$BUILDDEPS" == "1" ]]; then
+		if [[ "$BUILDRELEASE" == "1" ]]; then
+			MSBuild.exe tools/mhmake/mhmakevc10.sln -t:Build -p:Configuration=Release -p:Platform=x64 -m:$2
+			wait
+			check-error 'Error compiling mhmake for release'
+		fi
+		if [[ "$BUILDDEBUG" == "1" ]]; then
+			MSBuild.exe tools/mhmake/mhmakevc10.sln -t:Build -p:Configuration=Debug -p:Platform=x64 -m:$2
+			wait
+			check-error 'Error compiling mhmake for debug'
+		fi
 	fi
-	cd debug64
-	perl ../Configure VC-WIN64A --debug
-else
-	if [[ ! -d "debug32" ]]; then
-	  mkdir debug32
+
+	if [[ "$BUILDRELEASE" == "1" ]]; then
+		tools/mhmake/Release64/mhmake.exe -P$2 -C xorg-server MAKESERVER=1
+		check-error 'Error compiling vcxsrv for release'
 	fi
-	cd debug32
-	perl ../Configure VC-WIN32 --debug
-fi
-check-error 'Error executing perl'
-
-nmake
-check-error 'Error compiling openssl for debug'
-
-cd ../../pthreads
-nmake VC-static
-check-error 'Error compiling pthreads for release'
-
-nmake VC-static-debug
-check-error 'Error compiling pthreads for debug'
-
-cd ..
-
-#reuse the cygwin perl again
-export PATH=$ORIPATH
-
-
-if [[ "$IS64" == "1" ]]; then
-	MSBuild.exe tools/mhmake/mhmakevc10.sln /t:Build /p:Configuration=Release /p:Platform=x64
-	check-error 'Error compiling mhmake for release'
-
-	MSBuild.exe tools/mhmake/mhmakevc10.sln /t:Build /p:Configuration=Debug /p:Platform=x64
-	check-error 'Error compiling mhmake for debug'
-	export MHMAKECONF=`cygpath -da .`
-
-	tools/mhmake/Release64/mhmake -P$2 -C xorg-server MAKESERVER=1 DEBUG=1
-	check-error 'Error compiling vcxsrv for debug'
-
-	tools/mhmake/Release64/mhmake.exe -P$2 -C xorg-server MAKESERVER=1
-	check-error 'Error compiling vcxsrv for release'
+	if [[ "$BUILDDEBUG" == "1" ]]; then
+		tools/mhmake/Debug64/mhmake.exe -P$2 -C xorg-server MAKESERVER=1 DEBUG=1
+		check-error 'Error compiling vcxsrv for debug'
+	fi
 
 	cd xorg-server/installer
-	./packageall.bat nox86
-else
-	MSBuild.exe tools/mhmake/mhmakevc10.sln /t:Build /p:Configuration=Release /p:Platform=Win32
-	check-error 'Error compiling mhmake for release'
+	# ./packageall.bat nox86
+else # IS32
+	if [[ "$BUILDDEPS" == "1" ]]; then
+		if [[ "$BUILDRELEASE" == "1" ]]; then
+		MSBuild.exe tools/mhmake/mhmakevc10.sln -t:Build -p:Configuration=Release -p:Platform=Win32 -m:$2
+		wait
+		check-error 'Error compiling mhmake for release'
+		fi
+		if [[ "$BUILDDEBUG" == "1" ]]; then
+		MSBuild.exe tools/mhmake/mhmakevc10.sln -t:Build -p:Configuration=Debug -p:Platform=Win32 -m:$2
+		wait
+		check-error 'Error compiling mhmake for debug'
+		fi
+	fi
 
-	MSBuild.exe tools/mhmake/mhmakevc10.sln /t:Build /p:Configuration=Debug /p:Platform=Win32
-	check-error 'Error compiling mhmake for debug'
-	export MHMAKECONF=`cygpath -da .`
-
-	tools/mhmake/Release/mhmake -P$2 -C xorg-server MAKESERVER=1 DEBUG=1
-	check-error 'Error compiling vcxsrv for debug'
-
-	tools/mhmake/Release/mhmake.exe -P$2 -C xorg-server MAKESERVER=1
-	check-error 'Error compiling vcxsrv for release'
+	if [[ "$BUILDRELEASE" == "1" ]]; then
+		tools/mhmake/Release/mhmake.exe -P$2 -C xorg-server MAKESERVER=1
+		check-error 'Error compiling vcxsrv for release'
+	fi
+	if [[ "$BUILDDEBUG" == "1" ]]; then
+		tools/mhmake/Release/mhmake.exe -P$2 -C xorg-server MAKESERVER=1 DEBUG=1
+		check-error 'Error compiling vcxsrv for debug'
+	fi
 
 	cd xorg-server/installer
-	./packageall.bat nox64
+	#   ./packageall.bat nox64
 fi
-
 
 
 
