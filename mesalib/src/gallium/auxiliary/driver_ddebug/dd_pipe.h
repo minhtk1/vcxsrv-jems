@@ -32,7 +32,7 @@
 #include "pipe/p_state.h"
 #include "pipe/p_screen.h"
 #include "dd_util.h"
-#include "os/os_thread.h"
+#include "util/u_thread.h"
 #include "util/list.h"
 #include "util/u_log.h"
 #include "util/u_queue.h"
@@ -93,6 +93,7 @@ struct call_resource_copy_region
 struct call_clear
 {
    unsigned buffers;
+   struct pipe_scissor_state scissor_state;
    union pipe_color_union color;
    double depth;
    unsigned stencil;
@@ -121,14 +122,16 @@ struct call_flush {
 };
 
 struct call_draw_info {
-   struct pipe_draw_info draw;
+   struct pipe_draw_info info;
+   unsigned drawid_offset;
    struct pipe_draw_indirect_info indirect;
+   struct pipe_draw_start_count_bias draw;
 };
 
 struct call_get_query_result_resource {
    struct pipe_query *query;
    enum pipe_query_type query_type;
-   bool wait;
+   enum pipe_query_flags flags;
    enum pipe_query_value_type result_type;
    int index;
    struct pipe_resource *resource;
@@ -167,7 +170,7 @@ struct call_texture_subdata {
    struct pipe_box box;
    const void *data;
    unsigned stride;
-   unsigned layer_stride;
+   uintptr_t layer_stride;
 };
 
 struct dd_call
@@ -299,6 +302,7 @@ struct dd_context
 
    struct dd_draw_state draw_state;
    unsigned num_draw_calls;
+   unsigned num_vertex_buffers;
 
    struct u_log_context log;
 

@@ -1,8 +1,8 @@
 /**************************************************************************
- * 
+ *
  * Copyright 2008 VMware, Inc.
  * All Rights Reserved.
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the
  * "Software"), to deal in the Software without restriction, including
@@ -10,11 +10,11 @@
  * distribute, sub license, and/or sell copies of the Software, and to
  * permit persons to whom the Software is furnished to do so, subject to
  * the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice (including the
  * next paragraph) shall be included in all copies or substantial portions
  * of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
  * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
  * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT.
@@ -22,7 +22,7 @@
  * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
  * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- * 
+ *
  **************************************************************************/
 
 
@@ -39,13 +39,22 @@
 #define U_MATH_H
 
 
-#include "c99_math.h"
+#include "c99_compat.h"
 #include <assert.h>
 #include <float.h>
 #include <stdarg.h>
+#include <math.h>
 
 #include "bitscan.h"
 #include "u_endian.h" /* for UTIL_ARCH_BIG_ENDIAN */
+#include "util/detect_cc.h"
+#include "util/detect_arch.h"
+#include "util/macros.h"
+
+#ifdef __HAIKU__
+#include <sys/param.h>
+#undef ALIGN
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -55,12 +64,6 @@ extern "C" {
 #ifndef M_SQRT2
 #define M_SQRT2 1.41421356237309504880
 #endif
-
-#define POW2_TABLE_SIZE_LOG2 9
-#define POW2_TABLE_SIZE (1 << POW2_TABLE_SIZE_LOG2)
-#define POW2_TABLE_OFFSET (POW2_TABLE_SIZE/2)
-#define POW2_TABLE_SCALE ((float)(POW2_TABLE_SIZE/2))
-extern float pow2_table[POW2_TABLE_SIZE];
 
 
 /**
@@ -99,55 +102,7 @@ util_get_float32_exponent(float x)
 }
 
 
-/**
- * Fast version of 2^x
- * Identity: exp2(a + b) = exp2(a) * exp2(b)
- * Let ipart = int(x)
- * Let fpart = x - ipart;
- * So, exp2(x) = exp2(ipart) * exp2(fpart)
- * Compute exp2(ipart) with i << ipart
- * Compute exp2(fpart) with lookup table.
- */
-static inline float
-util_fast_exp2(float x)
-{
-   int32_t ipart;
-   float fpart, mpart;
-   union fi epart;
-
-   if(x > 129.00000f)
-      return 3.402823466e+38f;
-
-   if (x < -126.99999f)
-      return 0.0f;
-
-   ipart = (int32_t) x;
-   fpart = x - (float) ipart;
-
-   /* same as
-    *   epart.f = (float) (1 << ipart)
-    * but faster and without integer overflow for ipart > 31
-    */
-   epart.i = (ipart + 127 ) << 23;
-
-   mpart = pow2_table[POW2_TABLE_OFFSET + (int)(fpart * POW2_TABLE_SCALE)];
-
-   return epart.f * mpart;
-}
-
-
-/**
- * Fast approximation to exp(x).
- */
-static inline float
-util_fast_exp(float x)
-{
-   const float k = 1.44269f; /* = log2(e) */
-   return util_fast_exp2(k * x);
-}
-
-
-#define LOG2_TABLE_SIZE_LOG2 16
+#define LOG2_TABLE_SIZE_LOG2 8
 #define LOG2_TABLE_SCALE (1 << LOG2_TABLE_SIZE_LOG2)
 #define LOG2_TABLE_SIZE (LOG2_TABLE_SCALE + 1)
 extern float log2_table[LOG2_TABLE_SIZE];
@@ -170,21 +125,28 @@ util_fast_log2(float x)
 
 
 /**
- * Fast approximation to x^y.
- */
-static inline float
-util_fast_pow(float x, float y)
-{
-   return util_fast_exp2(util_fast_log2(x) * y);
-}
-
-
-/**
  * Floor(x), returned as int.
  */
 static inline int
 util_ifloor(float f)
 {
+#if defined(USE_X86_ASM) && defined(__GNUC__) && defined(__i386__)
+   /*
+    * IEEE floor for computers that round to nearest or even.
+    * 'f' must be between -4194304 and 4194303.
+    * This floor operation is done by "(iround(f + .5) + iround(f - .5)) >> 1",
+    * but uses some IEEE specific tricks for better speed.
+    * Contributed by Josh Vanderhoof
+    */
+   int ai, bi;
+   double af, bf;
+   af = (3 << 22) + 0.5 + (double)f;
+   bf = (3 << 22) + 0.5 - (double)f;
+   /* GCC generates an extra fstp/fld without this. */
+   __asm__ ("fstps %0" : "=m" (ai) : "t" (af) : "st");
+   __asm__ ("fstps %0" : "=m" (bi) : "t" (bf) : "st");
+   return (ai - bi) >> 1;
+#else
    int ai, bi;
    double af, bf;
    union fi u;
@@ -193,32 +155,18 @@ util_ifloor(float f)
    u.f = (float) af;  ai = u.i;
    u.f = (float) bf;  bi = u.i;
    return (ai - bi) >> 1;
+#endif
 }
 
 
 /**
  * Round float to nearest int.
+ * the range of f should be [INT_MIN, INT_MAX]
  */
 static inline int
 util_iround(float f)
 {
-#if defined(PIPE_CC_GCC) && defined(PIPE_ARCH_X86) 
-   int r;
-   __asm__ ("fistpl %0" : "=m" (r) : "t" (f) : "st");
-   return r;
-#elif defined(PIPE_CC_MSVC) && defined(PIPE_ARCH_X86)
-   int r;
-   _asm {
-      fld f
-      fistp r
-   }
-   return r;
-#else
-   if (f >= 0.0f)
-      return (int) (f + 0.5f);
-   else
-      return (int) (f - 0.5f);
-#endif
+   return (int)lrintf(f);
 }
 
 
@@ -348,6 +296,14 @@ fui( float f )
    return fi.ui;
 }
 
+static inline uint64_t
+dui( double f )
+{
+   union di di;
+   di.d = f;
+   return di.ui;
+}
+
 static inline float
 uif(uint32_t ui)
 {
@@ -356,6 +312,13 @@ uif(uint32_t ui)
    return fi.f;
 }
 
+static inline double
+uid(uint64_t ui)
+{
+   union di di;
+   di.ui = ui;
+   return di.d;
+}
 
 /**
  * Convert uint8_t to float in [0, 1].
@@ -624,6 +587,34 @@ util_bswap16(uint16_t n)
           (n << 8);
 }
 
+/**
+ * Mask and sign-extend a number
+ *
+ * The bit at position `width - 1` is replicated to all the higher bits.
+ * This makes no assumptions about the high bits of the value and will
+ * overwrite them with the sign bit.
+ */
+static inline int64_t
+util_mask_sign_extend(uint64_t val, unsigned width)
+{
+   assert(width > 0 && width <= 64);
+   unsigned shift = 64 - width;
+   return (int64_t)(val << shift) >> shift;
+}
+
+/**
+ * Sign-extend a number
+ *
+ * The bit at position `width - 1` is replicated to all the higher bits.
+ * This assumes and asserts that the value fits into `width` bits.
+ */
+static inline int64_t
+util_sign_extend(uint64_t val, unsigned width)
+{
+   assert(width == 64 || val < (UINT64_C(1) << width));
+   return util_mask_sign_extend(val, width);
+}
+
 static inline void*
 util_memcpy_cpu_to_le32(void * restrict dest, const void * restrict src, size_t n)
 {
@@ -643,35 +634,80 @@ util_memcpy_cpu_to_le32(void * restrict dest, const void * restrict src, size_t 
 }
 
 /**
- * Clamp X to [MIN, MAX].
- * This is a macro to allow float, int, uint, etc. types.
- * We arbitrarily turn NaN into MIN.
+ * Align a value up to an alignment value
+ *
+ * If \c value is not already aligned to the requested alignment value, it
+ * will be rounded up.
+ *
+ * \param value  Value to be rounded
+ * \param alignment  Alignment value to be used.  This must be a power of two.
+ *
+ * \sa ROUND_DOWN_TO()
  */
-#define CLAMP( X, MIN, MAX )  ( (X)>(MIN) ? ((X)>(MAX) ? (MAX) : (X)) : (MIN) )
 
-#define MIN2( A, B )   ( (A)<(B) ? (A) : (B) )
-#define MAX2( A, B )   ( (A)>(B) ? (A) : (B) )
+#if defined(ALIGN)
+#undef ALIGN
+#endif
+static inline uint32_t
+ALIGN(uint32_t value, uint32_t alignment)
+{
+   assert(util_is_power_of_two_nonzero(alignment));
+   return ALIGN_POT(value, alignment);
+}
 
-#define MIN3( A, B, C ) ((A) < (B) ? MIN2(A, C) : MIN2(B, C))
-#define MAX3( A, B, C ) ((A) > (B) ? MAX2(A, C) : MAX2(B, C))
+/**
+ * Like ALIGN(), but works with a non-power-of-two alignment.
+ */
+static inline uintptr_t
+ALIGN_NPOT(uintptr_t value, int32_t alignment)
+{
+   assert(alignment > 0);
+   return (value + alignment - 1) / alignment * alignment;
+}
 
-#define MIN4( A, B, C, D ) ((A) < (B) ? MIN3(A, C, D) : MIN3(B, C, D))
-#define MAX4( A, B, C, D ) ((A) > (B) ? MAX3(A, C, D) : MAX3(B, C, D))
-
+/**
+ * Align a value down to an alignment value
+ *
+ * If \c value is not already aligned to the requested alignment value, it
+ * will be rounded down.
+ *
+ * \param value  Value to be rounded
+ * \param alignment  Alignment value to be used.  This must be a power of two.
+ *
+ * \sa ALIGN()
+ */
+static inline uint64_t
+ROUND_DOWN_TO(uint64_t value, uint32_t alignment)
+{
+   assert(util_is_power_of_two_nonzero(alignment));
+   return ((value) & ~(uint64_t)(alignment - 1));
+}
 
 /**
  * Align a value, only works pot alignemnts.
  */
-static inline int
-align(int value, int alignment)
+static inline uint32_t
+align(uint32_t value, uint32_t alignment)
 {
-   return (value + alignment - 1) & ~(alignment - 1);
+   assert(util_is_power_of_two_nonzero(alignment));
+   return ALIGN_POT(value, alignment);
 }
 
 static inline uint64_t
-align64(uint64_t value, unsigned alignment)
+align64(uint64_t value, uint64_t alignment)
 {
-   return (value + alignment - 1) & ~((uint64_t)alignment - 1);
+   assert(util_is_power_of_two_nonzero64(alignment));
+   return ALIGN_POT(value, alignment);
+}
+
+/**
+ * Align a value(uintptr_t, intptr_t, ptrdiff_t), only works pot alignemnts.
+ */
+static inline uintptr_t
+align_uintptr(uintptr_t value, uintptr_t alignment)
+{
+   assert(util_is_power_of_two_nonzero_uintptr(alignment));
+   return ALIGN_POT(value, alignment);
 }
 
 /**
@@ -737,7 +773,72 @@ util_fpstate_set_denorms_to_zero(unsigned current_fpstate);
 void
 util_fpstate_set(unsigned fpstate);
 
+/**
+ * For indexed draw calls, return true if the vertex count to be drawn is
+ * much lower than the vertex count that has to be uploaded, meaning
+ * that the driver should flatten indices instead of trying to upload
+ * a too big range.
+ *
+ * This is used by vertex upload code in u_vbuf and glthread.
+ */
+static inline bool
+util_is_vbo_upload_ratio_too_large(unsigned draw_vertex_count,
+                                   unsigned upload_vertex_count)
+{
+   if (upload_vertex_count > 256)
+      return upload_vertex_count > draw_vertex_count * 4;
+   else if (upload_vertex_count > 64)
+      return upload_vertex_count > draw_vertex_count * 8;
+   else
+      return upload_vertex_count > draw_vertex_count * 16;
+}
 
+bool util_invert_mat4x4(float *out, const float *m);
+
+/* Quantize the lod bias value to reduce the number of sampler state
+ * variants in gallium because apps use it for smooth mipmap transitions,
+ * thrashing cso_cache and degrading performance.
+ *
+ * This quantization matches the AMD hw specification, so having more
+ * precision would have no effect anyway.
+ */
+static inline float
+util_quantize_lod_bias(float lod)
+{
+   lod = CLAMP(lod, -32, 31);
+   return roundf(lod * 256) / 256;
+}
+
+/**
+ * Adds two unsigned integers and if the addition
+ * overflows then clamp it to ~0U.
+ */
+static inline unsigned
+util_clamped_uadd(unsigned a, unsigned b)
+{
+   unsigned res = a + b;
+   if (res < a) {
+      res = ~0U;
+   }
+   return res;
+}
+
+/**
+ * Checks the value 'n' is aligned to 'a'.
+ * The alignment must be a power of two.
+ */
+static inline bool
+util_is_aligned(uintmax_t n, uintmax_t a)
+{
+   assert((a != 0) && ((a & (a - 1)) == 0));
+   return (n & (a - 1)) == 0;
+}
+
+static inline bool
+util_is_sint16(int x)
+{
+   return x >= INT16_MIN && x <= INT16_MAX;
+}
 
 #ifdef __cplusplus
 }

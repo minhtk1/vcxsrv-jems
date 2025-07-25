@@ -19,10 +19,6 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
  * IN THE SOFTWARE.
- *
- * Authors:
- *    Jason Ekstrand (jason@jlekstrand.net)
- *
  */
 
 /*
@@ -55,7 +51,7 @@ mark_global_var_uses_block(nir_block *block, nir_function_impl *impl,
                            struct hash_table *var_func_table)
 {
    nir_foreach_instr(instr, block) {
-      if (instr->type ==  nir_instr_type_deref) {
+      if (instr->type == nir_instr_type_deref) {
          nir_deref_instr *deref = nir_instr_as_deref(instr);
          if (deref->deref_type == nir_deref_type_var)
             register_var_use(deref->var, impl, var_func_table);
@@ -76,30 +72,24 @@ nir_lower_global_vars_to_local(nir_shader *shader)
     */
    struct hash_table *var_func_table = _mesa_pointer_hash_table_create(NULL);
 
-   nir_foreach_function(function, shader) {
-      if (function->impl) {
-         nir_foreach_block(block, function->impl)
-            mark_global_var_uses_block(block, function->impl, var_func_table);
-      }
+   nir_foreach_function_impl(impl, shader) {
+      nir_foreach_block(block, impl)
+         mark_global_var_uses_block(block, impl, var_func_table);
    }
 
-   nir_foreach_variable_safe(var, &shader->globals) {
+   nir_foreach_variable_with_modes_safe(var, shader, nir_var_shader_temp) {
       struct hash_entry *entry = _mesa_hash_table_search(var_func_table, var);
       if (!entry)
          continue;
 
       nir_function_impl *impl = entry->data;
 
-      assert(var->data.mode == nir_var_shader_temp);
-
       if (impl != NULL) {
          exec_node_remove(&var->node);
          var->data.mode = nir_var_function_temp;
          exec_list_push_tail(&impl->locals, &var->node);
-         nir_metadata_preserve(impl, nir_metadata_block_index |
-                                     nir_metadata_dominance |
-                                     nir_metadata_live_ssa_defs);
-         progress = true;
+         progress = nir_progress(true, impl,
+                                 nir_metadata_control_flow | nir_metadata_live_defs);
       }
    }
 
@@ -108,13 +98,9 @@ nir_lower_global_vars_to_local(nir_shader *shader)
    if (progress)
       nir_fixup_deref_modes(shader);
 
-#ifndef NDEBUG
-   nir_foreach_function(function, shader) {
-      if (function->impl) {
-         function->impl->valid_metadata &= ~nir_metadata_not_properly_reset;
-      }
+   nir_foreach_function_impl(impl, shader) {
+      nir_no_progress(impl);
    }
-#endif
 
    return progress;
 }

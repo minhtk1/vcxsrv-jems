@@ -3,7 +3,7 @@
 
 = General Considerations =
 
-The state tracker and winsys driver support a rather limited number of
+The frontend and winsys driver support a rather limited number of
 platforms. However, the pipe drivers are meant to run in a wide number of
 platforms. Hence the pipe drivers, the auxiliary modules, and all public
 headers in general, should strictly follow these guidelines to ensure
@@ -11,7 +11,7 @@ headers in general, should strictly follow these guidelines to ensure
 
 = Compiler Support =
 
-* Include the p_compiler.h.
+* Include the util/compiler.h.
 
 * Cast explicitly when converting to integer types of smaller sizes.
 

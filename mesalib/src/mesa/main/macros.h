@@ -34,7 +34,9 @@
 #include "util/macros.h"
 #include "util/u_math.h"
 #include "util/rounding.h"
-#include "imports.h"
+#include "util/compiler.h"
+#include "util/glheader.h"
+#include "mesa_private.h"
 
 
 /**
@@ -143,7 +145,7 @@ extern GLfloat _mesa_ubyte_to_float_color_tab[256];
  *** UNCLAMPED_FLOAT_TO_UBYTE: clamp float to [0,1] and map to ubyte in [0,255]
  *** CLAMPED_FLOAT_TO_UBYTE: map float known to be in [0,1] to ubyte in [0,255]
  ***/
-#ifndef DEBUG
+#if !MESA_DEBUG
 /* This function/macro is sensitive to precision.  Test very carefully
  * if you change it!
  */
@@ -193,6 +195,30 @@ static inline fi_type FLOAT_AS_UNION(GLfloat f)
    tmp.f = f;
    return tmp;
 }
+
+static inline uint64_t DOUBLE_AS_UINT64(double d)
+{
+   union {
+      double d;
+      uint64_t u64;
+   } tmp;
+   tmp.d = d;
+   return tmp.u64;
+}
+
+static inline double UINT64_AS_DOUBLE(uint64_t u)
+{
+   union {
+      double d;
+      uint64_t u64;
+   } tmp;
+   tmp.u64 = u;
+   return tmp.d;
+}
+
+/* First sign-extend x, then return uint32_t. */
+#define INT_AS_UINT(x) ((uint32_t)((int32_t)(x)))
+#define FLOAT_AS_UINT(x) (FLOAT_AS_UNION(x).u)
 
 /**
  * Convert a floating point value to an unsigned fixed point value.
@@ -278,14 +304,17 @@ COPY_4UBV(GLubyte dst[4], const GLubyte src[4])
 }
 
 /** Copy \p SZ elements into a 4-element vector */
-#define COPY_SZ_4V(DST, SZ, SRC)  \
-do {                              \
-   switch (SZ) {                  \
-   case 4: (DST)[3] = (SRC)[3];   \
-   case 3: (DST)[2] = (SRC)[2];   \
-   case 2: (DST)[1] = (SRC)[1];   \
-   case 1: (DST)[0] = (SRC)[0];   \
-   }                              \
+#define COPY_SZ_4V(DST, SZ, SRC)                  \
+do {                                              \
+   switch (SZ) {                                  \
+   case 4: (DST)[3] = (SRC)[3];                   \
+           FALLTHROUGH;                           \
+   case 3: (DST)[2] = (SRC)[2];                   \
+           FALLTHROUGH;                           \
+   case 2: (DST)[1] = (SRC)[1];                   \
+           FALLTHROUGH;                           \
+   case 1: (DST)[0] = (SRC)[0];                   \
+   }                                              \
 } while(0)
 
 /** Copy \p SZ elements into a homegeneous (4-element) vector, giving
@@ -660,59 +689,6 @@ INTERP_4F(GLfloat t, GLfloat dst[4], const GLfloat out[4], const GLfloat in[4])
 
 
 
-static inline unsigned
-minify(unsigned value, unsigned levels)
-{
-    return MAX2(1, value >> levels);
-}
-
-/**
- * Align a value up to an alignment value
- *
- * If \c value is not already aligned to the requested alignment value, it
- * will be rounded up.
- *
- * \param value  Value to be rounded
- * \param alignment  Alignment value to be used.  This must be a power of two.
- *
- * \sa ROUND_DOWN_TO()
- */
-static inline uintptr_t
-ALIGN(uintptr_t value, int32_t alignment)
-{
-   assert((alignment > 0) && _mesa_is_pow_two(alignment));
-   return (((value) + (alignment) - 1) & ~((alignment) - 1));
-}
-
-/**
- * Like ALIGN(), but works with a non-power-of-two alignment.
- */
-static inline uintptr_t
-ALIGN_NPOT(uintptr_t value, int32_t alignment)
-{
-   assert(alignment > 0);
-   return (value + alignment - 1) / alignment * alignment;
-}
-
-/**
- * Align a value down to an alignment value
- *
- * If \c value is not already aligned to the requested alignment value, it
- * will be rounded down.
- *
- * \param value  Value to be rounded
- * \param alignment  Alignment value to be used.  This must be a power of two.
- *
- * \sa ALIGN()
- */
-static inline uintptr_t
-ROUND_DOWN_TO(uintptr_t value, int32_t alignment)
-{
-   assert((alignment > 0) && _mesa_is_pow_two(alignment));
-   return ((value) & ~(alignment - 1));
-}
-
-
 /** Cross product of two 3-element vectors */
 static inline void
 CROSS3(GLfloat n[3], const GLfloat u[3], const GLfloat v[3])
@@ -807,5 +783,14 @@ DIFFERENT_SIGNS(GLfloat x, GLfloat y)
 
 /* Stringify */
 #define STRINGIFY(x) #x
+
+/*
+ * For GL_ARB_vertex_buffer_object we need to treat vertex array pointers
+ * as offsets into buffer stores.  Since the vertex array pointer and
+ * buffer store pointer are both pointers and we need to add them, we use
+ * this macro.
+ * Both pointers/offsets are expressed in bytes.
+ */
+#define ADD_POINTERS(A, B)  ( (GLubyte *) (A) + (uintptr_t) (B) )
 
 #endif

@@ -1,31 +1,12 @@
 /*
- * Copyright (C) 2017-2018 Rob Clark <robclark@freedesktop.org>
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Copyright © 2017-2018 Rob Clark <robclark@freedesktop.org>
+ * SPDX-License-Identifier: MIT
  *
  * Authors:
  *    Rob Clark <robclark@freedesktop.org>
  */
 
 #include "ir3_image.h"
-
 
 /*
  * SSBO/Image to/from IBO/tex hw mapping table:
@@ -34,127 +15,129 @@
 void
 ir3_ibo_mapping_init(struct ir3_ibo_mapping *mapping, unsigned num_textures)
 {
-	memset(mapping, IBO_INVALID, sizeof(*mapping));
-	mapping->num_ibo = 0;
-	mapping->num_tex = 0;
-	mapping->tex_base = num_textures;
+   memset(mapping, IBO_INVALID, sizeof(*mapping));
+   mapping->num_tex = 0;
+   mapping->tex_base = num_textures;
 }
 
-unsigned
-ir3_ssbo_to_ibo(struct ir3_ibo_mapping *mapping, unsigned ssbo)
+struct ir3_instruction *
+ir3_ssbo_to_ibo(struct ir3_context *ctx, nir_src src)
 {
-	if (mapping->ssbo_to_ibo[ssbo] == IBO_INVALID) {
-		unsigned ibo = mapping->num_ibo++;
-		mapping->ssbo_to_ibo[ssbo] = ibo;
-		mapping->ibo_to_image[ibo] = IBO_SSBO | ssbo;
-	}
-	return mapping->ssbo_to_ibo[ssbo];
+   if (ir3_bindless_resource(src))
+      ctx->so->bindless_ibo = true;
+   return ir3_get_src(ctx, &src)[0];
 }
 
 unsigned
 ir3_ssbo_to_tex(struct ir3_ibo_mapping *mapping, unsigned ssbo)
 {
-	if (mapping->ssbo_to_tex[ssbo] == IBO_INVALID) {
-		unsigned tex = mapping->num_tex++;
-		mapping->ssbo_to_tex[ssbo] = tex;
-		mapping->tex_to_image[tex] = IBO_SSBO | ssbo;
-	}
-	return mapping->ssbo_to_tex[ssbo] + mapping->tex_base;
+   if (mapping->ssbo_to_tex[ssbo] == IBO_INVALID) {
+      unsigned tex = mapping->num_tex++;
+      mapping->ssbo_to_tex[ssbo] = tex;
+      mapping->tex_to_image[tex] = IBO_SSBO | ssbo;
+   }
+   return mapping->ssbo_to_tex[ssbo] + mapping->tex_base;
 }
 
-unsigned
-ir3_image_to_ibo(struct ir3_ibo_mapping *mapping, unsigned image)
+struct ir3_instruction *
+ir3_image_to_ibo(struct ir3_context *ctx, nir_src src)
 {
-	if (mapping->image_to_ibo[image] == IBO_INVALID) {
-		unsigned ibo = mapping->num_ibo++;
-		mapping->image_to_ibo[image] = ibo;
-		mapping->ibo_to_image[ibo] = image;
-	}
-	return mapping->image_to_ibo[image];
+   if (ir3_bindless_resource(src)) {
+      ctx->so->bindless_ibo = true;
+      return ir3_get_src(ctx, &src)[0];
+   }
+
+   if (nir_src_is_const(src)) {
+      int image_idx = nir_src_as_uint(src);
+      return create_immed(&ctx->build, ctx->s->info.num_ssbos + image_idx);
+   } else {
+      struct ir3_instruction *image_idx = ir3_get_src(ctx, &src)[0];
+      if (ctx->s->info.num_ssbos) {
+         return ir3_ADD_U(&ctx->build, image_idx, 0,
+                          create_immed(&ctx->build, ctx->s->info.num_ssbos), 0);
+      } else {
+         return image_idx;
+      }
+   }
 }
 
 unsigned
 ir3_image_to_tex(struct ir3_ibo_mapping *mapping, unsigned image)
 {
-	if (mapping->image_to_tex[image] == IBO_INVALID) {
-		unsigned tex = mapping->num_tex++;
-		mapping->image_to_tex[image] = tex;
-		mapping->tex_to_image[tex] = image;
-	}
-	return mapping->image_to_tex[image] + mapping->tex_base;
-}
-
-/* Helper to parse the deref for an image to get image slot.  This should be
- * mapped to tex or ibo idx using ir3_image_to_tex() or ir3_image_to_ibo().
- */
-unsigned
-ir3_get_image_slot(nir_deref_instr *deref)
-{
-	unsigned int loc = 0;
-	unsigned inner_size = 1;
-
-	while (deref->deref_type != nir_deref_type_var) {
-		assert(deref->deref_type == nir_deref_type_array);
-		unsigned const_index = nir_src_as_uint(deref->arr.index);
-
-		/* Go to the next instruction */
-		deref = nir_deref_instr_parent(deref);
-
-		assert(glsl_type_is_array(deref->type));
-		const unsigned array_len = glsl_get_length(deref->type);
-		loc += MIN2(const_index, array_len - 1) * inner_size;
-
-		/* Update the inner size */
-		inner_size *= array_len;
-	}
-
-	loc += deref->var->data.driver_location;
-
-	return loc;
+   if (mapping->image_to_tex[image] == IBO_INVALID) {
+      unsigned tex = mapping->num_tex++;
+      mapping->image_to_tex[image] = tex;
+      mapping->tex_to_image[tex] = image;
+   }
+   return mapping->image_to_tex[image] + mapping->tex_base;
 }
 
 /* see tex_info() for equiv logic for texture instructions.. it would be
  * nice if this could be better unified..
  */
 unsigned
-ir3_get_image_coords(const nir_variable *var, unsigned *flagsp)
+ir3_get_image_coords(const nir_intrinsic_instr *instr, unsigned *flagsp)
 {
-	const struct glsl_type *type = glsl_without_array(var->type);
-	unsigned coords = glsl_get_sampler_coordinate_components(type);
-	unsigned flags = 0;
+   enum glsl_sampler_dim dim = nir_intrinsic_image_dim(instr);
+   unsigned coords = nir_image_intrinsic_coord_components(instr);
+   unsigned flags = 0;
 
-	if (coords == 3)
-		flags |= IR3_INSTR_3D;
+   if (dim == GLSL_SAMPLER_DIM_CUBE || nir_intrinsic_image_array(instr))
+      flags |= IR3_INSTR_A;
+   else if (dim == GLSL_SAMPLER_DIM_3D)
+      flags |= IR3_INSTR_3D;
 
-	if (glsl_sampler_type_is_array(type))
-		flags |= IR3_INSTR_A;
+   if (flagsp)
+      *flagsp = flags;
 
-	if (flagsp)
-		*flagsp = flags;
-
-	return coords;
+   return coords;
 }
 
 type_t
-ir3_get_image_type(const nir_variable *var)
+ir3_get_type_for_image_intrinsic(const nir_intrinsic_instr *instr)
 {
-	switch (glsl_get_sampler_result_type(glsl_without_array(var->type))) {
-	case GLSL_TYPE_UINT:
-		return TYPE_U32;
-	case GLSL_TYPE_INT:
-		return TYPE_S32;
-	case GLSL_TYPE_FLOAT:
-		return TYPE_F32;
-	case GLSL_TYPE_UINT16:
-		return TYPE_U16;
-	case GLSL_TYPE_INT16:
-		return TYPE_S16;
-	case GLSL_TYPE_FLOAT16:
-		return TYPE_F16;
-	default:
-		unreachable("bad sampler type.");
-		return 0;
-	}
+   const nir_intrinsic_info *info = &nir_intrinsic_infos[instr->intrinsic];
+   int bit_size = info->has_dest ? instr->def.bit_size : nir_src_bit_size(instr->src[3]);
+
+   nir_alu_type type = nir_type_uint;
+   switch (instr->intrinsic) {
+   case nir_intrinsic_image_load:
+   case nir_intrinsic_bindless_image_load:
+      type = nir_alu_type_get_base_type(nir_intrinsic_dest_type(instr));
+      /* SpvOpAtomicLoad doesn't have dest type */
+      if (type == nir_type_invalid)
+         type = nir_type_uint;
+      break;
+
+   case nir_intrinsic_image_store:
+   case nir_intrinsic_bindless_image_store:
+      type = nir_alu_type_get_base_type(nir_intrinsic_src_type(instr));
+      /* SpvOpAtomicStore doesn't have src type */
+      if (type == nir_type_invalid)
+         type = nir_type_uint;
+      break;
+
+   case nir_intrinsic_image_atomic:
+   case nir_intrinsic_bindless_image_atomic:
+   case nir_intrinsic_image_atomic_swap:
+   case nir_intrinsic_bindless_image_atomic_swap:
+      type = nir_atomic_op_type(nir_intrinsic_atomic_op(instr));
+      break;
+
+   default:
+      unreachable("Unhandled NIR image intrinsic");
+   }
+
+   switch (type) {
+   case nir_type_uint:
+      return bit_size == 16 ? TYPE_U16 : TYPE_U32;
+   case nir_type_int:
+      return bit_size == 16 ? TYPE_S16 : TYPE_S32;
+   case nir_type_float:
+      return bit_size == 16 ? TYPE_F16 : TYPE_F32;
+   default:
+      unreachable("bad type");
+   }
 }
 
 /* Returns the number of components for the different image formats
@@ -162,69 +145,10 @@ ir3_get_image_type(const nir_variable *var)
  * GL_NV_image_formats extension.
  */
 unsigned
-ir3_get_num_components_for_glformat(GLuint format)
+ir3_get_num_components_for_image_format(enum pipe_format format)
 {
-	switch (format) {
-	case GL_R32F:
-	case GL_R32I:
-	case GL_R32UI:
-	case GL_R16F:
-	case GL_R16I:
-	case GL_R16UI:
-	case GL_R16:
-	case GL_R16_SNORM:
-	case GL_R8I:
-	case GL_R8UI:
-	case GL_R8:
-	case GL_R8_SNORM:
-		return 1;
-
-	case GL_RG32F:
-	case GL_RG32I:
-	case GL_RG32UI:
-	case GL_RG16F:
-	case GL_RG16I:
-	case GL_RG16UI:
-	case GL_RG16:
-	case GL_RG16_SNORM:
-	case GL_RG8I:
-	case GL_RG8UI:
-	case GL_RG8:
-	case GL_RG8_SNORM:
-		return 2;
-
-	case GL_R11F_G11F_B10F:
-		return 3;
-
-	case GL_RGBA32F:
-	case GL_RGBA32I:
-	case GL_RGBA32UI:
-	case GL_RGBA16F:
-	case GL_RGBA16I:
-	case GL_RGBA16UI:
-	case GL_RGBA16:
-	case GL_RGBA16_SNORM:
-	case GL_RGBA8I:
-	case GL_RGBA8UI:
-	case GL_RGBA8:
-	case GL_RGBA8_SNORM:
-	case GL_RGB10_A2UI:
-	case GL_RGB10_A2:
-		return 4;
-
-	case GL_NONE:
-		/* Omitting the image format qualifier is allowed on desktop GL
-		 * profiles. Assuming 4 components is always safe.
-		 */
-		return 4;
-
-	default:
-		/* Return 4 components also for all other formats we don't know
-		 * about. The format should have been validated already by
-		 * the higher level API, but drop a debug message just in case.
-		 */
-		debug_printf("Unhandled GL format %u while emitting imageStore()\n",
-					 format);
-		return 4;
-	}
+   if (format == PIPE_FORMAT_NONE)
+      return 4;
+   else
+      return util_format_get_nr_components(format);
 }
