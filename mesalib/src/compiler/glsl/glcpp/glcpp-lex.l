@@ -105,7 +105,7 @@ void glcpp_set_column (int  column_no , yyscan_t yyscanner);
 			 * an implicit call on strlen() for the length  \
 			 * of the string, as this is already found by   \
 			 * flex and stored in yyleng */                 \
-			linear_ctx *mem_ctx = yyextra->linalloc;	\
+			void *mem_ctx = yyextra->linalloc;		\
 			yylval->str = linear_alloc_child(mem_ctx,	\
 							 yyleng + 1);	\
 			memcpy(yylval->str, yytext, yyleng + 1);        \
@@ -403,7 +403,7 @@ PATH			["][]^./ _A-Za-z0-9+*%[(){}|&~=!:;,?-]*["]
 	 * for the lexer. Within <DEFINE> we are looking for the first
 	 * identifier and specifically checking whether the identifier
 	 * is followed by a '(' or not, (to lex either a
-	 * FUNC_IDENTIFIER or an OBJ_IDENTIFIER token).
+	 * FUNC_IDENTIFIER or an OBJ_IDENITIFIER token).
 	 *
 	 * While in the <DEFINE> state we also need to explicitly
 	 * handle a few other things that may appear before the

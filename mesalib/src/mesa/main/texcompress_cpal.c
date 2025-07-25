@@ -31,14 +31,13 @@
  */
 
 
-#include "util/glheader.h"
+#include "glheader.h"
 #include "context.h"
 #include "mtypes.h"
-
+#include "imports.h"
 #include "pixelstore.h"
 #include "texcompress_cpal.h"
 #include "teximage.h"
-#include "api_exec_decl.h"
 
 
 static const struct cpal_format_info {

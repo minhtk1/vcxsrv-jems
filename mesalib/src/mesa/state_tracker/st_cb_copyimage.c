@@ -25,11 +25,11 @@
 #include "state_tracker/st_context.h"
 #include "state_tracker/st_cb_bitmap.h"
 #include "state_tracker/st_cb_copyimage.h"
-#include "state_tracker/st_cb_texture.h"
+#include "state_tracker/st_cb_fbo.h"
 #include "state_tracker/st_texture.h"
 #include "state_tracker/st_util.h"
 
-#include "util/box.h"
+#include "util/u_box.h"
 #include "util/format/u_format.h"
 #include "util/u_inlines.h"
 
@@ -54,8 +54,7 @@
  * formats are not supported. (same as ARB_copy_image)
  */
 static enum pipe_format
-get_canonical_format(struct pipe_screen *screen,
-                     enum pipe_format format)
+get_canonical_format(enum pipe_format format)
 {
    const struct util_format_description *desc =
       util_format_description(format);
@@ -63,7 +62,7 @@ get_canonical_format(struct pipe_screen *screen,
    /* Packed formats. Return the equivalent array format. */
    if (format == PIPE_FORMAT_R11G11B10_FLOAT ||
        format == PIPE_FORMAT_R9G9B9E5_FLOAT)
-      return get_canonical_format(screen, PIPE_FORMAT_R8G8B8A8_UINT);
+      return get_canonical_format(PIPE_FORMAT_R8G8B8A8_UINT);
 
    if (desc->nr_channels == 4 &&
        desc->channel[0].size == 10 &&
@@ -73,40 +72,32 @@ get_canonical_format(struct pipe_screen *screen,
       if (desc->swizzle[0] == PIPE_SWIZZLE_X &&
           desc->swizzle[1] == PIPE_SWIZZLE_Y &&
           desc->swizzle[2] == PIPE_SWIZZLE_Z)
-         return get_canonical_format(screen, PIPE_FORMAT_R8G8B8A8_UINT);
+         return get_canonical_format(PIPE_FORMAT_R8G8B8A8_UINT);
 
       return PIPE_FORMAT_NONE;
    }
 
 #define RETURN_FOR_SWIZZLE1(x, format) \
    if (desc->swizzle[0] == PIPE_SWIZZLE_##x) \
-      return (screen->get_canonical_format ? \
-              screen->get_canonical_format(screen, format) : \
-              format)
+      return format
 
 #define RETURN_FOR_SWIZZLE2(x, y, format) \
    if (desc->swizzle[0] == PIPE_SWIZZLE_##x && \
        desc->swizzle[1] == PIPE_SWIZZLE_##y) \
-      return (screen->get_canonical_format ? \
-              screen->get_canonical_format(screen, format) : \
-              format)
+      return format
 
 #define RETURN_FOR_SWIZZLE3(x, y, z, format) \
    if (desc->swizzle[0] == PIPE_SWIZZLE_##x && \
        desc->swizzle[1] == PIPE_SWIZZLE_##y && \
        desc->swizzle[2] == PIPE_SWIZZLE_##z) \
-      return (screen->get_canonical_format ? \
-              screen->get_canonical_format(screen, format) : \
-              format)
+      return format
 
 #define RETURN_FOR_SWIZZLE4(x, y, z, w, format) \
    if (desc->swizzle[0] == PIPE_SWIZZLE_##x && \
        desc->swizzle[1] == PIPE_SWIZZLE_##y && \
        desc->swizzle[2] == PIPE_SWIZZLE_##z && \
        desc->swizzle[3] == PIPE_SWIZZLE_##w) \
-      return (screen->get_canonical_format ? \
-              screen->get_canonical_format(screen, format) : \
-              format)
+      return format
 
    /* Array formats. */
    if (desc->is_array) {
@@ -217,42 +208,40 @@ has_identity_swizzle(const struct util_format_description *desc)
  * Return a canonical format for the given bits and channel size.
  */
 static enum pipe_format
-canonical_format_from_bits(struct pipe_screen *screen,
-                           unsigned bits,
-                           unsigned channel_size)
+canonical_format_from_bits(unsigned bits, unsigned channel_size)
 {
    switch (bits) {
    case 8:
       if (channel_size == 8)
-         return get_canonical_format(screen, PIPE_FORMAT_R8_UINT);
+         return get_canonical_format(PIPE_FORMAT_R8_UINT);
       break;
 
    case 16:
       if (channel_size == 8)
-         return get_canonical_format(screen, PIPE_FORMAT_R8G8_UINT);
+         return get_canonical_format(PIPE_FORMAT_R8G8_UINT);
       if (channel_size == 16)
-         return get_canonical_format(screen, PIPE_FORMAT_R16_UINT);
+         return get_canonical_format(PIPE_FORMAT_R16_UINT);
       break;
 
    case 32:
       if (channel_size == 8)
-         return get_canonical_format(screen, PIPE_FORMAT_R8G8B8A8_UINT);
+         return get_canonical_format(PIPE_FORMAT_R8G8B8A8_UINT);
       if (channel_size == 16)
-         return get_canonical_format(screen, PIPE_FORMAT_R16G16_UINT);
+         return get_canonical_format(PIPE_FORMAT_R16G16_UINT);
       if (channel_size == 32)
-         return get_canonical_format(screen, PIPE_FORMAT_R32_UINT);
+         return get_canonical_format(PIPE_FORMAT_R32_UINT);
       break;
 
    case 64:
       if (channel_size == 16)
-         return get_canonical_format(screen, PIPE_FORMAT_R16G16B16A16_UINT);
+         return get_canonical_format(PIPE_FORMAT_R16G16B16A16_UINT);
       if (channel_size == 32)
-         return get_canonical_format(screen, PIPE_FORMAT_R32G32_UINT);
+         return get_canonical_format(PIPE_FORMAT_R32G32_UINT);
       break;
 
    case 128:
       if (channel_size == 32)
-         return get_canonical_format(screen, PIPE_FORMAT_R32G32B32A32_UINT);
+         return get_canonical_format(PIPE_FORMAT_R32G32B32A32_UINT);
       break;
    }
 
@@ -282,10 +271,7 @@ blit(struct pipe_context *pipe,
    blit.src.box = *src_box;
    u_box_3d(dstx, dsty, dstz, src_box->width, src_box->height,
             src_box->depth, &blit.dst.box);
-   if (util_format_is_depth_or_stencil(dst_format))
-      blit.mask = PIPE_MASK_ZS;
-   else
-      blit.mask = PIPE_MASK_RGBA;
+   blit.mask = PIPE_MASK_RGBA;
    blit.filter = PIPE_TEX_FILTER_NEAREST;
 
    pipe->blit(pipe, &blit);
@@ -310,8 +296,8 @@ swizzled_copy(struct pipe_context *pipe,
     * about the channel type from this point on.
     * Only the swizzle and channel size.
     */
-   blit_src_format = get_canonical_format(pipe->screen, src->format);
-   blit_dst_format = get_canonical_format(pipe->screen, dst->format);
+   blit_src_format = get_canonical_format(src->format);
+   blit_dst_format = get_canonical_format(dst->format);
 
    assert(blit_src_format != PIPE_FORMAT_NONE);
    assert(blit_dst_format != PIPE_FORMAT_NONE);
@@ -332,14 +318,14 @@ swizzled_copy(struct pipe_context *pipe,
        * e.g. R32 -> BGRA8 is realized as RGBA8 -> BGRA8
        */
       blit_src_format =
-         canonical_format_from_bits(pipe->screen, bits, dst_desc->channel[0].size);
+         canonical_format_from_bits(bits, dst_desc->channel[0].size);
    } else if (has_identity_swizzle(dst_desc)) {
       /* Dst is unswizzled and src can be swizzled, so dst is typecast
        * to an equivalent src-compatible format.
        * e.g. BGRA8 -> R32 is realized as BGRA8 -> RGBA8
        */
       blit_dst_format =
-         canonical_format_from_bits(pipe->screen, bits, src_desc->channel[0].size);
+         canonical_format_from_bits(bits, src_desc->channel[0].size);
    } else {
       assert(!"This should have been handled by handle_complex_copy.");
       return;
@@ -512,14 +498,8 @@ copy_image(struct pipe_context *pipe,
    if (src->format == dst->format ||
        util_format_is_compressed(src->format) ||
        util_format_is_compressed(dst->format)) {
-
-      if (src->nr_samples <= 1 && dst->nr_samples <= 1) {
-         pipe->resource_copy_region(pipe, dst, dst_level, dstx, dsty, dstz,
-                                    src, src_level, src_box);
-      } else {
-         blit(pipe, dst, dst->format, dst_level, dstx, dsty, dstz,
-              src, src->format, src_level, src_box);
-      }
+      pipe->resource_copy_region(pipe, dst, dst_level, dstx, dsty, dstz,
+                                 src, src_level, src_box);
       return;
    }
 
@@ -598,54 +578,30 @@ fallback_copy_image(struct st_context *st,
    else
       line_bytes = _mesa_format_row_stride(dst_image->TexFormat, dst_w);
 
-   if (src_image == dst_image && src_z == dst_z) {
-      assert(dst_image != NULL);
-
-      /* calculate bounding-box of the two rectangles */
-      int min_x = MIN2(src_x, dst_x);
-      int min_y = MIN2(src_y, dst_y);
-      int max_x = MAX2(src_x + src_w, dst_x + dst_w);
-      int max_y = MAX2(src_y + src_h, dst_y + dst_h);
-      st_MapTextureImage(
+   if (dst_image) {
+      st->ctx->Driver.MapTextureImage(
             st->ctx, dst_image, dst_z,
-            min_x, min_y, max_x - min_x, max_y - min_y,
-            GL_MAP_READ_BIT | GL_MAP_WRITE_BIT, &dst, &dst_stride);
-      src = dst;
-      src_stride = dst_stride;
-
-      /* adjust pointers */
-      int format_bytes = _mesa_get_format_bytes(dst_image->TexFormat);
-      src += ((src_y - min_y) / src_blk_h) * src_stride;
-      src += ((src_x - min_x) / src_blk_w) * format_bytes;
-      dst += ((dst_y - min_y) / src_blk_h) * dst_stride;
-      dst += ((dst_x - min_x) / dst_blk_w) * format_bytes;
+            dst_x, dst_y, dst_w, dst_h,
+            GL_MAP_WRITE_BIT, &dst, &dst_stride);
    } else {
-      if (dst_image) {
-         st_MapTextureImage(
-               st->ctx, dst_image, dst_z,
-               dst_x, dst_y, dst_w, dst_h,
-               GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT,
-               &dst, &dst_stride);
-      } else {
-         dst = pipe_texture_map(st->pipe, dst_res, 0, dst_z,
-                                 PIPE_MAP_WRITE | PIPE_MAP_DISCARD_RANGE,
-                                 dst_x, dst_y, dst_w, dst_h,
-                                 &dst_transfer);
-         dst_stride = dst_transfer->stride;
-      }
+      dst = pipe_transfer_map(st->pipe, dst_res, 0, dst_z,
+                              PIPE_TRANSFER_WRITE,
+                              dst_x, dst_y, dst_w, dst_h,
+                              &dst_transfer);
+      dst_stride = dst_transfer->stride;
+   }
 
-      if (src_image) {
-         st_MapTextureImage(
-               st->ctx, src_image, src_z,
-               src_x, src_y, src_w, src_h,
-               GL_MAP_READ_BIT, &src, &src_stride);
-      } else {
-         src = pipe_texture_map(st->pipe, src_res, 0, src_z,
-                                 PIPE_MAP_READ,
-                                 src_x, src_y, src_w, src_h,
-                                 &src_transfer);
-         src_stride = src_transfer->stride;
-      }
+   if (src_image) {
+      st->ctx->Driver.MapTextureImage(
+            st->ctx, src_image, src_z,
+            src_x, src_y, src_w, src_h,
+            GL_MAP_READ_BIT, &src, &src_stride);
+   } else {
+      src = pipe_transfer_map(st->pipe, src_res, 0, src_z,
+                              PIPE_TRANSFER_READ,
+                              src_x, src_y, src_w, src_h,
+                              &src_transfer);
+      src_stride = src_transfer->stride;
    }
 
    for (int y = 0; y < lines; y++) {
@@ -655,20 +611,19 @@ fallback_copy_image(struct st_context *st,
    }
 
    if (dst_image) {
-      st_UnmapTextureImage(st->ctx, dst_image, dst_z);
+      st->ctx->Driver.UnmapTextureImage(st->ctx, dst_image, dst_z);
    } else {
-      pipe_texture_unmap(st->pipe, dst_transfer);
+      pipe_transfer_unmap(st->pipe, dst_transfer);
    }
 
    if (src_image) {
-      if (src_image != dst_image || src_z != dst_z)
-         st_UnmapTextureImage(st->ctx, src_image, src_z);
+      st->ctx->Driver.UnmapTextureImage(st->ctx, src_image, src_z);
    } else {
-      pipe_texture_unmap(st->pipe, src_transfer);
+      pipe_transfer_unmap(st->pipe, src_transfer);
    }
 }
 
-void
+static void
 st_CopyImageSubData(struct gl_context *ctx,
                     struct gl_texture_image *src_image,
                     struct gl_renderbuffer *src_renderbuffer,
@@ -689,32 +644,32 @@ st_CopyImageSubData(struct gl_context *ctx,
    st_invalidate_readpix_cache(st);
 
    if (src_image) {
-      struct gl_texture_image *src = src_image;
-      struct gl_texture_object *stObj = src_image->TexObject;
+      struct st_texture_image *src = st_texture_image(src_image);
       src_res = src->pt;
-      src_level = stObj->pt != src_res ? 0 : src_image->Level;
+      src_level = src_image->Level;
       src_z += src_image->Face;
       if (src_image->TexObject->Immutable) {
-         src_level += src_image->TexObject->Attrib.MinLevel;
-         src_z += src_image->TexObject->Attrib.MinLayer;
+         src_level += src_image->TexObject->MinLevel;
+         src_z += src_image->TexObject->MinLayer;
       }
    } else {
-      src_res = src_renderbuffer->texture;
+      struct st_renderbuffer *src = st_renderbuffer(src_renderbuffer);
+      src_res = src->texture;
       src_level = 0;
    }
 
    if (dst_image) {
-      struct gl_texture_image *dst = dst_image;
-      struct gl_texture_object *stObj = dst_image->TexObject;
+      struct st_texture_image *dst = st_texture_image(dst_image);
       dst_res = dst->pt;
-      dst_level = stObj->pt != dst_res ? 0 : dst_image->Level;
+      dst_level = dst_image->Level;
       dst_z += dst_image->Face;
       if (dst_image->TexObject->Immutable) {
-         dst_level += dst_image->TexObject->Attrib.MinLevel;
-         dst_z += dst_image->TexObject->Attrib.MinLayer;
+         dst_level += dst_image->TexObject->MinLevel;
+         dst_z += dst_image->TexObject->MinLayer;
       }
    } else {
-      dst_res = dst_renderbuffer->texture;
+      struct st_renderbuffer *dst = st_renderbuffer(dst_renderbuffer);
+      dst_res = dst->texture;
       dst_level = 0;
    }
 
@@ -729,4 +684,10 @@ st_CopyImageSubData(struct gl_context *ctx,
       copy_image(pipe, dst_res, dst_level, dst_x, dst_y, dst_z,
                  src_res, src_level, &box);
    }
+}
+
+void
+st_init_copy_image_functions(struct dd_function_table *functions)
+{
+   functions->CopyImageSubData = st_CopyImageSubData;
 }

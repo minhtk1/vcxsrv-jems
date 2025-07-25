@@ -32,21 +32,21 @@
 #include <errno.h>
 
 #include "c99_alloca.h"
+#include "os/os_process.h"
 #include "util/u_atomic.h"
 #include "util/u_debug.h"
 #include "util/u_string.h"
 
-#include "util/detect.h"
-#if DETECT_OS_POSIX
+#include "pipe/p_config.h"
+#if defined(PIPE_OS_UNIX)
 #include <unistd.h>
 #include <sys/stat.h>
-#elif DETECT_OS_WINDOWS
+#elif defined(PIPE_OS_WINDOWS)
 #include <direct.h>
 #include <process.h>
 #define mkdir(dir, mode) _mkdir(dir)
 #endif
 
-struct pipe_screen;
 
 /* name of the directory in home */
 #define DD_DIR "ddebug_dumps"

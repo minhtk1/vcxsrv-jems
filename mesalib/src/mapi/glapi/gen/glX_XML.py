@@ -38,8 +38,8 @@ class glx_item_factory(gl_XML.gl_item_factory):
     def create_enum(self, element, context, category):
         return glx_enum(element, context, category)
 
-    def create_api(self, pointer_type):
-        return glx_api(self, pointer_type)
+    def create_api(self):
+        return glx_api(self)
 
 
 class glx_enum(gl_XML.gl_enum):
@@ -48,7 +48,7 @@ class glx_enum(gl_XML.gl_enum):
 
         self.functions = {}
 
-        for child in element:
+        for child in element.getchildren():
             if child.tag == "size":
                 n = child.get( "name" )
                 c = child.get( "count" )
@@ -130,7 +130,7 @@ class glx_function(gl_XML.gl_function):
                     self.counter_list.append(param.counter)
 
 
-        for child in element:
+        for child in element.getchildren():
             if child.tag == "glx":
                 rop = child.get( 'rop' )
                 sop = child.get( 'sop' )

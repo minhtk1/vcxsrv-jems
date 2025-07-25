@@ -24,13 +24,7 @@
 #ifndef NIR_XFB_INFO_H
 #define NIR_XFB_INFO_H
 
-#include "nir_defines.h"
-#include <stddef.h>
-#include <stdio.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "nir.h"
 
 #define NIR_MAX_XFB_BUFFERS 4
 #define NIR_MAX_XFB_STREAMS 4
@@ -44,7 +38,6 @@ typedef struct {
    uint8_t buffer;
    uint16_t offset;
    uint8_t location;
-   bool high_16bits;
    uint8_t component_mask;
    uint8_t component_offset;
 } nir_xfb_output_info;
@@ -60,7 +53,7 @@ typedef struct nir_xfb_info {
    uint8_t streams_written;
 
    nir_xfb_buffer_info buffers[NIR_MAX_XFB_BUFFERS];
-   uint8_t buffer_to_stream[NIR_MAX_XFB_BUFFERS];
+   uint8_t buffer_to_stream[NIR_MAX_XFB_STREAMS];
 
    uint16_t output_count;
    nir_xfb_output_info outputs[0];
@@ -77,21 +70,11 @@ nir_xfb_info_size(uint16_t output_count)
    return sizeof(nir_xfb_info) + sizeof(nir_xfb_output_info) * output_count;
 }
 
-void nir_shader_gather_xfb_info(nir_shader *shader);
+nir_xfb_info *
+nir_gather_xfb_info(const nir_shader *shader, void *mem_ctx);
 
-void
-nir_gather_xfb_info_with_varyings(nir_shader *shader,
+nir_xfb_info *
+nir_gather_xfb_info_with_varyings(const nir_shader *shader,
                                   void *mem_ctx,
                                   nir_xfb_varyings_info **varyings_info);
-
-void
-nir_gather_xfb_info_from_intrinsics(nir_shader *nir);
-
-void
-nir_print_xfb_info(nir_xfb_info *info, FILE *fp);
-
-#ifdef __cplusplus
-} /* extern "C" */
-#endif
-
 #endif /* NIR_XFB_INFO_H */

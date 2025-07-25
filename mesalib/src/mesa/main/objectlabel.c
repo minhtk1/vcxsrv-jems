@@ -29,6 +29,7 @@
 #include "dlist.h"
 #include "enums.h"
 #include "fbobject.h"
+#include "objectlabel.h"
 #include "pipelineobj.h"
 #include "queryobj.h"
 #include "samplerobj.h"
@@ -36,7 +37,6 @@
 #include "syncobj.h"
 #include "texobj.h"
 #include "transformfeedback.h"
-#include "api_exec_decl.h"
 
 
 /**
@@ -44,15 +44,14 @@
  */
 static void
 set_label(struct gl_context *ctx, char **labelPtr, const char *label,
-          int length, const char *caller, bool ext_length)
+          int length, const char *caller)
 {
    free(*labelPtr);
    *labelPtr = NULL;
 
    /* set new label string */
    if (label) {
-      if ((!ext_length && length >= 0) ||
-          (ext_length && length > 0)) {
+      if (length >= 0) {
          if (length >= MAX_LABEL_LENGTH)
             _mesa_error(ctx, GL_INVALID_VALUE,
                         "%s(length=%d, which is not less than "
@@ -70,13 +69,6 @@ set_label(struct gl_context *ctx, char **labelPtr, const char *label,
          }
       }
       else {
-         if (ext_length && length < 0) {
-            _mesa_error(ctx, GL_INVALID_VALUE,
-                        "%s(label length=%d, is less than zero)", caller,
-                        length);
-            return;
-         }
-
          int len = strlen(label);
          if (len >= MAX_LABEL_LENGTH)
             _mesa_error(ctx, GL_INVALID_VALUE,
@@ -141,15 +133,12 @@ copy_label(const GLchar *src, GLchar *dst, GLsizei *length, GLsizei bufSize)
  */
 static char **
 get_label_pointer(struct gl_context *ctx, GLenum identifier, GLuint name,
-                  const char *caller, bool ext_errors)
+                  const char *caller)
 {
    char **labelPtr = NULL;
-   GLenum no_match_error =
-      ext_errors ? GL_INVALID_OPERATION : GL_INVALID_VALUE;
 
    switch (identifier) {
    case GL_BUFFER:
-   case GL_BUFFER_OBJECT_EXT:
       {
          struct gl_buffer_object *bufObj = _mesa_lookup_bufferobj(ctx, name);
          if (bufObj)
@@ -157,7 +146,6 @@ get_label_pointer(struct gl_context *ctx, GLenum identifier, GLuint name,
       }
       break;
    case GL_SHADER:
-   case GL_SHADER_OBJECT_EXT:
       {
          struct gl_shader *shader = _mesa_lookup_shader(ctx, name);
          if (shader)
@@ -165,7 +153,6 @@ get_label_pointer(struct gl_context *ctx, GLenum identifier, GLuint name,
       }
       break;
    case GL_PROGRAM:
-   case GL_PROGRAM_OBJECT_EXT:
       {
          struct gl_shader_program *program =
             _mesa_lookup_shader_program(ctx, name);
@@ -174,7 +161,6 @@ get_label_pointer(struct gl_context *ctx, GLenum identifier, GLuint name,
       }
       break;
    case GL_VERTEX_ARRAY:
-   case GL_VERTEX_ARRAY_OBJECT_EXT:
       {
          struct gl_vertex_array_object *obj = _mesa_lookup_vao(ctx, name);
          if (obj)
@@ -182,7 +168,6 @@ get_label_pointer(struct gl_context *ctx, GLenum identifier, GLuint name,
       }
       break;
    case GL_QUERY:
-   case GL_QUERY_OBJECT_EXT:
       {
          struct gl_query_object *query = _mesa_lookup_query_object(ctx, name);
          if (query)
@@ -230,8 +215,8 @@ get_label_pointer(struct gl_context *ctx, GLenum identifier, GLuint name,
       }
       break;
    case GL_DISPLAY_LIST:
-      if (_mesa_is_desktop_gl_compat(ctx)) {
-         struct gl_display_list *list = _mesa_lookup_list(ctx, name, false);
+      if (ctx->API == API_OPENGL_COMPAT) {
+         struct gl_display_list *list = _mesa_lookup_list(ctx, name);
          if (list)
             labelPtr = &list->Label;
       }
@@ -240,7 +225,6 @@ get_label_pointer(struct gl_context *ctx, GLenum identifier, GLuint name,
       }
       break;
    case GL_PROGRAM_PIPELINE:
-   case GL_PROGRAM_PIPELINE_OBJECT_EXT:
       {
          struct gl_pipeline_object *pipe =
             _mesa_lookup_pipeline_object(ctx, name);
@@ -253,7 +237,7 @@ get_label_pointer(struct gl_context *ctx, GLenum identifier, GLuint name,
    }
 
    if (NULL == labelPtr) {
-      _mesa_error(ctx, no_match_error, "%s(name = %u)", caller, name);
+      _mesa_error(ctx, GL_INVALID_VALUE, "%s(name = %u)", caller, name);
    }
 
    return labelPtr;
@@ -262,42 +246,6 @@ invalid_enum:
    _mesa_error(ctx, GL_INVALID_ENUM, "%s(identifier = %s)",
                caller, _mesa_enum_to_string(identifier));
    return NULL;
-}
-
-void GLAPIENTRY
-_mesa_LabelObjectEXT(GLenum identifier, GLuint name, GLsizei length,
-                     const GLchar *label)
-{
-   GET_CURRENT_CONTEXT(ctx);
-   const char *callerstr = "glLabelObjectEXT";
-   char **labelPtr;
-
-   labelPtr = get_label_pointer(ctx, identifier, name, callerstr, true);
-   if (!labelPtr)
-      return;
-
-   set_label(ctx, labelPtr, label, length, callerstr, true);
-}
-
-void GLAPIENTRY
-_mesa_GetObjectLabelEXT(GLenum identifier, GLuint name, GLsizei bufSize,
-                        GLsizei *length, GLchar *label)
-{
-   GET_CURRENT_CONTEXT(ctx);
-   const char *callerstr = "glGetObjectLabelEXT";
-   char **labelPtr;
-
-   if (bufSize < 0) {
-      _mesa_error(ctx, GL_INVALID_VALUE, "%s(bufSize = %d)", callerstr,
-                  bufSize);
-      return;
-   }
-
-   labelPtr = get_label_pointer(ctx, identifier, name, callerstr, true);
-   if (!labelPtr)
-      return;
-
-   copy_label(*labelPtr, label, length, bufSize);
 }
 
 void GLAPIENTRY
@@ -313,11 +261,11 @@ _mesa_ObjectLabel(GLenum identifier, GLuint name, GLsizei length,
    else
       callerstr = "glObjectLabelKHR";
 
-   labelPtr = get_label_pointer(ctx, identifier, name, callerstr, false);
+   labelPtr = get_label_pointer(ctx, identifier, name, callerstr);
    if (!labelPtr)
       return;
 
-   set_label(ctx, labelPtr, label, length, callerstr, false);
+   set_label(ctx, labelPtr, label, length, callerstr);
 }
 
 void GLAPIENTRY
@@ -339,7 +287,7 @@ _mesa_GetObjectLabel(GLenum identifier, GLuint name, GLsizei bufSize,
       return;
    }
 
-   labelPtr = get_label_pointer(ctx, identifier, name, callerstr, false);
+   labelPtr = get_label_pointer(ctx, identifier, name, callerstr);
    if (!labelPtr)
       return;
 
@@ -369,7 +317,7 @@ _mesa_ObjectPtrLabel(const void *ptr, GLsizei length, const GLchar *label)
 
    labelPtr = &syncObj->Label;
 
-   set_label(ctx, labelPtr, label, length, callerstr, false);
+   set_label(ctx, labelPtr, label, length, callerstr);
    _mesa_unref_sync_object(ctx, syncObj, 1);
 }
 

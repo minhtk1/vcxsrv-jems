@@ -155,8 +155,9 @@ for the 965 fragment shader backend when that is developed.
 
 Q: How should I expand instructions that take multiple backend instructions?
 
-Sometimes you'll have to do the expansion in your code generation.
-However, in many cases you'll want to do a pass over the IR to convert
+Sometimes you'll have to do the expansion in your code generation --
+see, for example, ir_to_mesa.cpp's handling of ir_unop_sqrt.  However,
+in many cases you'll want to do a pass over the IR to convert
 non-native instructions to a series of native instructions.  For
 example, for the Mesa backend we have ir_div_to_mul_rcp.cpp because
 Mesa IR (and many hardware backends) only have a reciprocal
@@ -219,7 +220,7 @@ Q: What is the file naming convention in this directory?
 Initially, there really wasn't one.  We have since adopted one:
 
  - Files that implement code lowering passes should be named lower_*
-   (e.g., lower_builtins.cpp).
+   (e.g., lower_noise.cpp).
  - Files that implement optimization passes should be named opt_*.
  - Files that implement a class that is used throught the code should
    take the name of that class (e.g., ir_hierarchical_visitor.cpp).

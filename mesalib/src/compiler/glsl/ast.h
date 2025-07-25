@@ -197,7 +197,6 @@ enum ast_operators {
    ast_identifier,
    ast_int_constant,
    ast_uint_constant,
-   ast_float16_constant,
    ast_float_constant,
    ast_bool_constant,
    ast_double_constant,
@@ -259,7 +258,6 @@ public:
    union {
       const char *identifier;
       int int_constant;
-      float float16_constant;
       float float_constant;
       unsigned uint_constant;
       int bool_constant;
@@ -607,12 +605,6 @@ struct ast_type_qualifier {
          unsigned explicit_xfb_stride:1; /**< xfb_stride value assigned explicitly by shader code */
          /** \} */
 
-         /**
-          * Flag set if GL_OVR_multiview num_views_relative layout
-          * qualifier is used.
-          */
-         unsigned explicit_numviews:1;
-
 	 /** \name Layout qualifiers for GL_ARB_tessellation_shader */
 	 /** \{ */
 	 /* tess eval input layout */
@@ -671,12 +663,6 @@ struct ast_type_qualifier {
          /** \{ */
          unsigned derivative_group:1;
          /** \} */
-
-         /**
-          * Flag set if GL_NV_viewport_array2 viewport_relative layout
-          * qualifier is used.
-          */
-         unsigned viewport_relative:1;
       }
       /** \brief Set of flags, accessed by name. */
       q;
@@ -752,14 +738,6 @@ struct ast_type_qualifier {
    ast_expression *binding;
 
    /**
-    * Binding specified via GL_OVR_multiview's "num_views" keyword.
-    *
-    * \note
-    * This field is only valid if \c explicit_numviews is set.
-    */
-   ast_expression *num_views;
-
-   /**
     * Offset specified via GL_ARB_shader_atomic_counter's or
     * GL_ARB_enhanced_layouts "offset" keyword, or by GL_ARB_enhanced_layouts
     * "xfb_offset" keyword.
@@ -795,7 +773,7 @@ struct ast_type_qualifier {
     * \note
     * This field is only valid if \c explicit_image_format is set.
     */
-   enum pipe_format image_format;
+   GLenum image_format;
 
    /**
     * Arrangement of invocations used to calculate derivatives in a compute
@@ -929,7 +907,7 @@ public:
    }
 
    ast_type_specifier(const glsl_type *t)
-      : type(t), type_name(glsl_get_type_name(t)), structure(NULL), array_specifier(NULL),
+      : type(t), type_name(t->name), structure(NULL), array_specifier(NULL),
         default_precision(ast_precision_none)
    {
       /* empty */
@@ -1186,9 +1164,6 @@ public:
 
 protected:
    void test_to_hir(exec_list *, struct _mesa_glsl_parse_state *);
-   void eval_test_expression(exec_list *instructions,
-                             struct _mesa_glsl_parse_state *state);
-   ir_rvalue *test_val;
 };
 
 class ast_iteration_statement : public ast_node {
@@ -1210,8 +1185,6 @@ public:
    ast_node *init_statement;
    ast_node *condition;
    ast_expression *rest_expression;
-
-   exec_list rest_instructions;
 
    ast_node *body;
 

@@ -27,7 +27,7 @@
 #ifndef U_TEXTURE_H
 #define U_TEXTURE_H
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -46,7 +46,8 @@ extern "C" {
  */
 void util_map_texcoords2d_onto_cubemap(unsigned face,
                                        const float *in_st, unsigned in_stride,
-                                       float *out_str, unsigned out_stride);
+                                       float *out_str, unsigned out_stride,
+                                       boolean allow_scale);
 
 
 #ifdef __cplusplus

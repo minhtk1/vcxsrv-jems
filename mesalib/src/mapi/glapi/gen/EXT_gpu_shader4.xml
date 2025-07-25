@@ -40,25 +40,25 @@
     </enum>
 
 
-    <function name="VertexAttribI1iEXT" exec="beginend">
+    <function name="VertexAttribI1iEXT" exec="dynamic">
         <param name="index" type="GLuint"/>
         <param name="x" type="GLint"/>
     </function>
 
-    <function name="VertexAttribI2iEXT" exec="beginend">
+    <function name="VertexAttribI2iEXT" exec="dynamic">
         <param name="index" type="GLuint"/>
         <param name="x" type="GLint"/>
         <param name="y" type="GLint"/>
     </function>
 
-    <function name="VertexAttribI3iEXT" exec="beginend">
+    <function name="VertexAttribI3iEXT" exec="dynamic">
         <param name="index" type="GLuint"/>
         <param name="x" type="GLint"/>
         <param name="y" type="GLint"/>
         <param name="z" type="GLint"/>
     </function>
 
-    <function name="VertexAttribI4iEXT" exec="beginend">
+    <function name="VertexAttribI4iEXT" exec="dynamic">
         <param name="index" type="GLuint"/>
         <param name="x" type="GLint"/>
         <param name="y" type="GLint"/>
@@ -66,25 +66,25 @@
         <param name="w" type="GLint"/>
     </function>
 
-    <function name="VertexAttribI1uiEXT" exec="beginend">
+    <function name="VertexAttribI1uiEXT" exec="dynamic">
         <param name="index" type="GLuint"/>
         <param name="x" type="GLuint"/>
     </function>
 
-    <function name="VertexAttribI2uiEXT" exec="beginend">
+    <function name="VertexAttribI2uiEXT" exec="dynamic">
         <param name="index" type="GLuint"/>
         <param name="x" type="GLuint"/>
         <param name="y" type="GLuint"/>
     </function>
 
-    <function name="VertexAttribI3uiEXT" exec="beginend">
+    <function name="VertexAttribI3uiEXT" exec="dynamic">
         <param name="index" type="GLuint"/>
         <param name="x" type="GLuint"/>
         <param name="y" type="GLuint"/>
         <param name="z" type="GLuint"/>
     </function>
 
-    <function name="VertexAttribI4uiEXT" exec="beginend">
+    <function name="VertexAttribI4uiEXT" exec="dynamic">
         <param name="index" type="GLuint"/>
         <param name="x" type="GLuint"/>
         <param name="y" type="GLuint"/>
@@ -97,19 +97,19 @@
         <param name="v" type="const GLint *"/>
     </function>
 
-    <function name="VertexAttribI2ivEXT" exec="beginend">
+    <function name="VertexAttribI2ivEXT" exec="dynamic">
         <param name="index" type="GLuint"/>
-        <param name="v" type="const GLint *" count="2"/>
+        <param name="v" type="const GLint *"/>
     </function>
 
-    <function name="VertexAttribI3ivEXT" exec="beginend">
+    <function name="VertexAttribI3ivEXT" exec="dynamic">
         <param name="index" type="GLuint"/>
-        <param name="v" type="const GLint *" count="3"/>
+        <param name="v" type="const GLint *"/>
     </function>
 
-    <function name="VertexAttribI4ivEXT" exec="beginend">
+    <function name="VertexAttribI4ivEXT" exec="dynamic">
         <param name="index" type="GLuint"/>
-        <param name="v" type="const GLint *" count="4"/>
+        <param name="v" type="const GLint *"/>
     </function>
 
     <function name="VertexAttribI1uivEXT" alias="VertexAttribI1uiv">
@@ -117,19 +117,19 @@
         <param name="v" type="const GLuint *"/>
     </function>
 
-    <function name="VertexAttribI2uivEXT" exec="beginend">
+    <function name="VertexAttribI2uivEXT" exec="dynamic">
         <param name="index" type="GLuint"/>
-        <param name="v" type="const GLuint *" count="2"/>
+        <param name="v" type="const GLuint *"/>
     </function>
 
-    <function name="VertexAttribI3uivEXT" exec="beginend">
+    <function name="VertexAttribI3uivEXT" exec="dynamic">
         <param name="index" type="GLuint"/>
-        <param name="v" type="const GLuint *" count="3"/>
+        <param name="v" type="const GLuint *"/>
     </function>
 
-    <function name="VertexAttribI4uivEXT" exec="beginend">
+    <function name="VertexAttribI4uivEXT" exec="dynamic">
         <param name="index" type="GLuint"/>
-        <param name="v" type="const GLuint *" count="4"/>
+        <param name="v" type="const GLuint *"/>
     </function>
 
     <function name="VertexAttribI4bvEXT" alias="VertexAttribI4bv">

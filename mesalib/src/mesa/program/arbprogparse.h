@@ -26,7 +26,7 @@
 #ifndef ARBPROGPARSE_H
 #define ARBPROGPARSE_H
 
-#include "util/glheader.h"
+#include "main/glheader.h"
 
 struct gl_context;
 struct gl_program;

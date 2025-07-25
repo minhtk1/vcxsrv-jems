@@ -1,6 +1,6 @@
 /**************************************************************************
  *
- * Copyright 2010 VMware, Inc.
+ * Copyright 2010 Vmware, Inc.
  * All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -34,6 +34,44 @@
 #ifndef _OS_MEMORY_H_
 #define _OS_MEMORY_H_
 
-#include "os_memory_stdc.h"
+#include "detect_os.h"
+
+#if defined(EMBEDDED_DEVICE)
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void *
+os_malloc(size_t size);
+
+void *
+os_calloc(size_t count, size_t size);
+
+void
+os_free(void *ptr);
+
+void *
+os_realloc(void *ptr, size_t old_size, size_t new_size);
+
+void *
+os_malloc_aligned(size_t size, size_t alignment);
+
+void
+os_free_aligned(void *ptr);
+
+#ifdef __cplusplus
+}
+#endif
+
+#elif DETECT_OS_WINDOWS && defined(DEBUG) && !defined(DEBUG_MEMORY_IMPLEMENTATION)
+
+#  include "os_memory_debug.h"
+
+#else
+
+#  include "os_memory_stdc.h"
+
+#endif
 
 #endif /* _OS_MEMORY_H_ */

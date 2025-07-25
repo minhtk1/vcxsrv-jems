@@ -28,18 +28,16 @@
 /**
  * @file
  * OS independent time-manipulation functions.
- *
+ * 
  * @author Jose Fonseca <jfonseca@vmware.com>
  */
 
 #include "os_time.h"
 #include "detect_os.h"
 
-#include "c11/time.h"
-
 #include "util/u_atomic.h"
 
-#if DETECT_OS_POSIX_LITE
+#if DETECT_OS_UNIX
 #  include <unistd.h> /* usleep */
 #  include <time.h> /* timeval */
 #  include <sys/time.h> /* timeval */
@@ -55,9 +53,39 @@
 int64_t
 os_time_get_nano(void)
 {
-   struct timespec ts;
-   timespec_get(&ts, TIME_MONOTONIC);
-   return ts.tv_nsec + ts.tv_sec*INT64_C(1000000000);
+#if DETECT_OS_LINUX || DETECT_OS_BSD
+
+   struct timespec tv;
+   clock_gettime(CLOCK_MONOTONIC, &tv);
+   return tv.tv_nsec + tv.tv_sec*INT64_C(1000000000);
+
+#elif DETECT_OS_UNIX
+
+   struct timeval tv;
+   gettimeofday(&tv, NULL);
+   return tv.tv_usec*INT64_C(1000) + tv.tv_sec*INT64_C(1000000000);
+
+#elif DETECT_OS_WINDOWS
+
+   static LARGE_INTEGER frequency;
+   LARGE_INTEGER counter;
+   int64_t secs, nanosecs;
+   if(!frequency.QuadPart)
+      QueryPerformanceFrequency(&frequency);
+   QueryPerformanceCounter(&counter);
+   /* Compute seconds and nanoseconds parts separately to
+    * reduce severity of precision loss.
+    */
+   secs = counter.QuadPart / frequency.QuadPart;
+   nanosecs = (counter.QuadPart % frequency.QuadPart) * INT64_C(1000000000)
+      / frequency.QuadPart;
+   return secs*INT64_C(1000000000) + nanosecs;
+
+#else
+
+#error Unsupported OS
+
+#endif
 }
 
 
@@ -65,13 +93,13 @@ os_time_get_nano(void)
 void
 os_time_sleep(int64_t usecs)
 {
-#if DETECT_OS_LINUX || DETECT_OS_MANAGARM || DETECT_OS_FUCHSIA
+#if DETECT_OS_LINUX
    struct timespec time;
    time.tv_sec = usecs / 1000000;
    time.tv_nsec = (usecs % 1000000) * 1000;
    while (clock_nanosleep(CLOCK_MONOTONIC, 0, &time, &time) == EINTR);
 
-#elif DETECT_OS_POSIX
+#elif DETECT_OS_UNIX
    usleep(usecs);
 
 #elif DETECT_OS_WINDOWS
@@ -97,9 +125,7 @@ os_time_get_absolute_timeout(uint64_t timeout)
       return OS_TIMEOUT_INFINITE;
 
    time = os_time_get_nano();
-
-   /* Do the addition in unsigned, because signed overflow is UB, then convert to signed again. */
-   abs_timeout = (uint64_t)time + (uint64_t)timeout;
+   abs_timeout = time + (int64_t)timeout;
 
    /* Check for overflow. */
    if (abs_timeout < time)
@@ -120,7 +146,7 @@ os_wait_until_zero(volatile int *var, uint64_t timeout)
 
    if (timeout == OS_TIMEOUT_INFINITE) {
       while (p_atomic_read(var)) {
-#if DETECT_OS_POSIX_LITE
+#if DETECT_OS_UNIX
          sched_yield();
 #endif
       }
@@ -134,7 +160,7 @@ os_wait_until_zero(volatile int *var, uint64_t timeout)
          if (os_time_timeout(start_time, end_time, os_time_get_nano()))
             return false;
 
-#if DETECT_OS_POSIX_LITE
+#if DETECT_OS_UNIX
          sched_yield();
 #endif
       }
@@ -156,7 +182,7 @@ os_wait_until_zero_abs_timeout(volatile int *var, int64_t timeout)
       if (os_time_get_nano() >= timeout)
          return false;
 
-#if DETECT_OS_POSIX_LITE
+#if DETECT_OS_UNIX
       sched_yield();
 #endif
    }

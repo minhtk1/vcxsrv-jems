@@ -34,16 +34,11 @@
 #include <stdbool.h>
 #include "util/hash_table.h"
 #include "util/set.h"
-#include "util/u_memory.h"
 #include "context.h"
 #include "glformats.h"
 #include "texobj.h"
 #include "teximage.h"
-#include "textureview.h"
-#include "api_exec_decl.h"
-
-#include "state_tracker/st_cb_texture.h"
-#include "state_tracker/st_vdpau.h"
+#include "vdpau.h"
 
 #define MAX_TEXTURES 4
 
@@ -94,7 +89,7 @@ unregister_surface(struct set_entry *entry)
    }
 
    _mesa_set_remove(ctx->vdpSurfaces, entry);
-   FREE(surf);
+   free(surf);
 }
 
 void GLAPIENTRY
@@ -180,7 +175,7 @@ register_surface(struct gl_context *ctx, GLboolean isOutput,
       }
 
       /* This will disallow respecifying the storage. */
-      _mesa_set_texture_view_state(ctx, tex, target, 1);
+      tex->Immutable = GL_TRUE;
       _mesa_unlock_texture(ctx, tex);
 
       _mesa_reference_texobj(&surf->textures[i], tex);
@@ -381,11 +376,11 @@ _mesa_VDPAUMapSurfacesNV(GLsizei numSurfaces, const GLintptr *surfaces)
             return;
          }
 
-         st_FreeTextureImageBuffer(ctx, image);
+         ctx->Driver.FreeTextureImageBuffer(ctx, image);
 
-         st_vdpau_map_surface(ctx, surf->target, surf->access,
-                              surf->output, tex, image,
-                              surf->vdpSurface, j);
+         ctx->Driver.VDPAUMapSurface(ctx, surf->target, surf->access,
+                                     surf->output, tex, image,
+                                     surf->vdpSurface, j);
 
          _mesa_unlock_texture(ctx, tex);
       }
@@ -431,12 +426,12 @@ _mesa_VDPAUUnmapSurfacesNV(GLsizei numSurfaces, const GLintptr *surfaces)
 
          image = _mesa_select_tex_image(tex, surf->target, 0);
 
-         st_vdpau_unmap_surface(ctx, surf->target, surf->access,
-                                surf->output, tex, image,
-                                surf->vdpSurface, j);
+         ctx->Driver.VDPAUUnmapSurface(ctx, surf->target, surf->access,
+                                       surf->output, tex, image,
+                                       surf->vdpSurface, j);
 
          if (image)
-            st_FreeTextureImageBuffer(ctx, image);
+            ctx->Driver.FreeTextureImageBuffer(ctx, image);
 
          _mesa_unlock_texture(ctx, tex);
       }

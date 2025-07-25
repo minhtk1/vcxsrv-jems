@@ -33,15 +33,9 @@ struct cso_context;
 struct pipe_context;
 struct pipe_resource;
 struct util_queue_monitoring;
-struct st_context;
-
-typedef void (*hud_st_invalidate_state_func)(struct st_context *st,
-                                             unsigned flags);
 
 struct hud_context *
-hud_create(struct cso_context *cso, struct hud_context *share,
-           struct st_context *st,
-           hud_st_invalidate_state_func st_invalidate_state);
+hud_create(struct cso_context *cso, struct hud_context *share);
 
 void
 hud_destroy(struct hud_context *hud, struct cso_context *cso);

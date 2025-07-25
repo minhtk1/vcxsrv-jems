@@ -29,7 +29,6 @@
 #include "main/teximage.h"
 #include "main/texparam.h"
 #include "st_copytex.h"
-#include "api_exec_decl.h"
 
 
 /**

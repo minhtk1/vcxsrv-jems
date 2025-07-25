@@ -28,11 +28,10 @@
 #include "main/errors.h"
 #include "main/bufferobj.h"
 #include "math/m_eval.h"
+#include "main/vtxfmt.h"
 #include "main/api_arrayelt.h"
 #include "main/arrayobj.h"
 #include "main/varray.h"
-#include "main/context.h"
-#include "util/u_memory.h"
 #include "vbo.h"
 #include "vbo_private.h"
 
@@ -73,14 +72,13 @@ static void
 init_legacy_currval(struct gl_context *ctx)
 {
    struct vbo_context *vbo = vbo_context(ctx);
+   GLuint i;
 
    /* Set up a constant (Stride == 0) array for each current
     * attribute:
     */
-   for (int attr = 0; attr < VERT_ATTRIB_MAX; attr++) {
-      if (VERT_BIT(attr) & VERT_BIT_GENERIC_ALL)
-         continue;
-
+   for (i = 0; i < VERT_ATTRIB_FF_MAX; i++) {
+      const unsigned attr = VERT_ATTRIB_FF(i);
       struct gl_array_attributes *attrib = &vbo->current[attr];
 
       init_array(ctx, attrib, check_size(ctx->Current.Attrib[attr]),
@@ -141,21 +139,37 @@ init_mat_currval(struct gl_context *ctx)
 
 
 void
-vbo_exec_update_eval_maps(struct gl_context *ctx)
+_vbo_install_exec_vtxfmt(struct gl_context *ctx)
 {
    struct vbo_context *vbo = vbo_context(ctx);
 
-   vbo->exec.eval.recalculate_maps = GL_TRUE;
+   _mesa_install_exec_vtxfmt(ctx, &vbo->exec.vtxfmt);
+}
+
+
+void
+vbo_exec_invalidate_state(struct gl_context *ctx)
+{
+   struct vbo_context *vbo = vbo_context(ctx);
+   struct vbo_exec_context *exec = &vbo->exec;
+
+   if (ctx->NewState & _NEW_EVAL)
+      exec->eval.recalculate_maps = GL_TRUE;
 }
 
 
 GLboolean
 _vbo_CreateContext(struct gl_context *ctx)
 {
-   struct vbo_context *vbo = &ctx->vbo_context;
+   struct vbo_context *vbo = CALLOC_STRUCT(vbo_context);
 
-   memset(vbo, 0, sizeof(*vbo));
+   ctx->vbo_context = vbo;
 
+   vbo->binding.Offset = 0;
+   vbo->binding.Stride = 0;
+   vbo->binding.InstanceDivisor = 0;
+   _mesa_reference_buffer_object(ctx, &vbo->binding.BufferObj,
+                                 ctx->Shared->NullBufferObj);
    init_legacy_currval(ctx);
    init_generic_currval(ctx);
    init_mat_currval(ctx);
@@ -163,8 +177,12 @@ _vbo_CreateContext(struct gl_context *ctx)
    /* make sure all VBO_ATTRIB_ values can fit in an unsigned byte */
    STATIC_ASSERT(VBO_ATTRIB_MAX <= 255);
 
+   /* Hook our functions into exec and compile dispatch tables.  These
+    * will pretty much be permanently installed, which means that the
+    * vtxfmt mechanism can be removed now.
+    */
    vbo_exec_init(ctx);
-   if (_mesa_is_desktop_gl_compat(ctx))
+   if (ctx->API == API_OPENGL_COMPAT)
       vbo_save_init(ctx);
 
    vbo->VAO = _mesa_new_vao(ctx, ~((GLuint)0));
@@ -184,10 +202,15 @@ _vbo_DestroyContext(struct gl_context *ctx)
    struct vbo_context *vbo = vbo_context(ctx);
 
    if (vbo) {
+
+      _mesa_reference_buffer_object(ctx, &vbo->binding.BufferObj, NULL);
+
       vbo_exec_destroy(ctx);
-      if (_mesa_is_desktop_gl_compat(ctx))
+      if (ctx->API == API_OPENGL_COMPAT)
          vbo_save_destroy(ctx);
       _mesa_reference_vao(ctx, &vbo->VAO, NULL);
+      free(vbo);
+      ctx->vbo_context = NULL;
    }
 }
 
@@ -198,4 +221,12 @@ _vbo_current_attrib(const struct gl_context *ctx, gl_vert_attrib attr)
    const struct vbo_context *vbo = vbo_context_const(ctx);
    const gl_vertex_processing_mode vmp = ctx->VertexProgram._VPMode;
    return &vbo->current[_vbo_attribute_alias_map[vmp][attr]];
+}
+
+
+const struct gl_vertex_buffer_binding *
+_vbo_current_binding(const struct gl_context *ctx)
+{
+   const struct vbo_context *vbo = vbo_context_const(ctx);
+   return &vbo->binding;
 }

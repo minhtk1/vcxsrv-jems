@@ -27,8 +27,9 @@
 #define SHADEROBJ_H
 
 
-#include "util/glheader.h"
+#include "main/glheader.h"
 #include "compiler/shader_enums.h"
+#include "program/ir_to_mesa.h"
 #include "util/macros.h"
 
 
@@ -70,7 +71,8 @@ _mesa_reference_shader_program_(struct gl_context *ctx,
                                struct gl_shader_program *shProg);
 
 void
-_mesa_reference_shader_program_data(struct gl_shader_program_data **ptr,
+_mesa_reference_shader_program_data(struct gl_context *ctx,
+                                    struct gl_shader_program_data **ptr,
                                     struct gl_shader_program_data *data);
 
 static inline void
@@ -96,10 +98,6 @@ extern struct gl_shader_program *
 _mesa_lookup_shader_program(struct gl_context *ctx, GLuint name);
 
 extern struct gl_shader_program *
-_mesa_lookup_shader_program_err_glthread(struct gl_context *ctx, GLuint name,
-                                         bool glthread, const char *caller);
-
-extern struct gl_shader_program *
 _mesa_lookup_shader_program_err(struct gl_context *ctx, GLuint name,
                                 const char *caller);
 
@@ -120,6 +118,10 @@ _mesa_free_shader_program_data(struct gl_context *ctx,
 extern void
 _mesa_delete_shader_program(struct gl_context *ctx,
                             struct gl_shader_program *shProg);
+
+
+extern void
+_mesa_init_shader_object_functions(struct dd_function_table *driver);
 
 static inline gl_shader_stage
 _mesa_shader_enum_to_shader_stage(GLenum v)
@@ -161,7 +163,7 @@ _mesa_shader_stage_to_subroutine_prefix(gl_shader_stage stage)
   case MESA_SHADER_TESS_EVAL:
     return "__subu_e";
   default:
-    unreachable("bad value in _mesa_shader_stage_to_subroutine_prefix()");
+    return NULL;
   }
 }
 
@@ -201,9 +203,8 @@ _mesa_shader_stage_from_subroutine(GLenum subroutine)
       return MESA_SHADER_TESS_CTRL;
    case GL_TESS_EVALUATION_SUBROUTINE:
       return MESA_SHADER_TESS_EVAL;
-   default:
-      unreachable("not reached");
    }
+   unreachable("not reached");
 }
 
 static inline GLenum
@@ -222,9 +223,13 @@ _mesa_shader_stage_to_subroutine(gl_shader_stage stage)
       return GL_TESS_CONTROL_SUBROUTINE;
    case MESA_SHADER_TESS_EVAL:
       return GL_TESS_EVALUATION_SUBROUTINE;
-   default:
+   case MESA_SHADER_NONE:
+      break;
+   case MESA_SHADER_KERNEL:
       unreachable("not reached");
+      break;
    }
+   unreachable("not reached");
 }
 
 static inline GLenum
@@ -243,9 +248,11 @@ _mesa_shader_stage_to_subroutine_uniform(gl_shader_stage stage)
       return GL_TESS_CONTROL_SUBROUTINE_UNIFORM;
    case MESA_SHADER_TESS_EVAL:
       return GL_TESS_EVALUATION_SUBROUTINE_UNIFORM;
-   default:
-      unreachable("not reached");
+   case MESA_SHADER_NONE:
+   case MESA_SHADER_KERNEL:
+      break;
    }
+   unreachable("not reached");
 }
 
 extern bool

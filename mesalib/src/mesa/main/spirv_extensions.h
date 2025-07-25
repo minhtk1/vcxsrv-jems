@@ -65,6 +65,9 @@ _mesa_get_enabled_spirv_extension(struct gl_context *ctx,
 
 const char *_mesa_spirv_extensions_to_string(enum SpvExtension ext);
 
+void _mesa_fill_supported_spirv_extensions(struct spirv_supported_extensions *ext,
+                                           const struct spirv_supported_capabilities *cap);
+
 #ifdef __cplusplus
 }
 #endif

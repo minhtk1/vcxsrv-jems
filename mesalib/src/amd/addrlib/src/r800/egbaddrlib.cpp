@@ -1,10 +1,28 @@
 /*
-************************************************************************************************************************
-*
-*  Copyright (C) 2007-2024 Advanced Micro Devices, Inc. All rights reserved.
-*  SPDX-License-Identifier: MIT
-*
-***********************************************************************************************************************/
+ * Copyright © 2007-2019 Advanced Micro Devices, Inc.
+ * All Rights Reserved.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sub license, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NON-INFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDERS, AUTHORS
+ * AND/OR ITS SUPPLIERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+ * USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ * The above copyright notice and this permission notice (including the
+ * next paragraph) shall be included in all copies or substantial portions
+ * of the Software.
+ */
 /**
 ****************************************************************************************************
 * @file  egbaddrlib.cpp
@@ -13,6 +31,8 @@
 */
 
 #include "egbaddrlib.h"
+
+#include "util/macros.h"
 
 namespace Addr
 {
@@ -415,7 +435,6 @@ BOOL_32 EgBasedLib::ComputeSurfaceInfoMicroTiled(
                                                               &expPitch,
                                                               &expHeight);
 
-
     pOut->pitch = expPitch;
     pOut->height = expHeight;
     pOut->depth = expNumSlices;
@@ -426,7 +445,6 @@ BOOL_32 EgBasedLib::ComputeSurfaceInfoMicroTiled(
 
     return valid;
 }
-
 
 /**
 ****************************************************************************************************
@@ -732,7 +750,6 @@ BOOL_32 EgBasedLib::ComputeSurfaceAlignmentsMicroTiled(
     return valid;
 }
 
-
 /**
 ****************************************************************************************************
 *   EgBasedLib::HwlReduceBankWidthHeight
@@ -829,8 +846,8 @@ BOOL_32 EgBasedLib::HwlReduceBankWidthHeight(
         if (valid == FALSE)
         {
             ADDR_WARN(
-                0, "TILE_SIZE(%d)*BANK_WIDTH(%d)*BANK_HEIGHT(%d) <= ROW_SIZE(%d)",
-                tileSize, pTileInfo->bankWidth, pTileInfo->bankHeight, m_rowSize);
+                0, ("TILE_SIZE(%d)*BANK_WIDTH(%d)*BANK_HEIGHT(%d) <= ROW_SIZE(%d)",
+                tileSize, pTileInfo->bankWidth, pTileInfo->bankHeight, m_rowSize));
         }
     }
 
@@ -958,7 +975,7 @@ BOOL_32 EgBasedLib::SanityCheckMacroTiled(
     ) const
 {
     BOOL_32 valid       = TRUE;
-    UINT_32 numPipes    = HwlGetPipes(pTileInfo);
+    ASSERTED UINT_32 numPipes = HwlGetPipes(pTileInfo);
 
     switch (pTileInfo->banks)
     {
@@ -1031,7 +1048,7 @@ BOOL_32 EgBasedLib::SanityCheckMacroTiled(
     {
         if (pTileInfo->tileSplitBytes > m_rowSize)
         {
-            ADDR_WARN(0, "tileSplitBytes is bigger than row size");
+            ADDR_WARN(0, ("tileSplitBytes is bigger than row size"));
         }
     }
 
@@ -1072,6 +1089,7 @@ AddrTileMode EgBasedLib::ComputeSurfaceMipLevelTileMode(
     ) const
 {
     UINT_64 bytesPerSlice;
+    (void)bytesPerSlice;
     UINT_32 bytesPerTile;
 
     AddrTileMode expTileMode = baseTileMode;
@@ -1542,8 +1560,6 @@ ADDR_E_RETURNCODE EgBasedLib::ComputeMacroTileEquation(
                     pEquation->xor2[bankBitStart + i] = equation.xor2[i];
                     pEquation->numBits++;
                 }
-
-                FillEqBitComponents(pEquation);
             }
         }
     }
@@ -1794,7 +1810,6 @@ UINT_64 EgBasedLib::ComputeSurfaceAddrFromCoordMacroTiled(
                                 bankSwizzle,
                                 tileSplitSlice,
                                 pTileInfo);
-
 
     //
     // Split the offset to put some bits below the pipe+bank bits and some above.
@@ -2139,7 +2154,6 @@ VOID EgBasedLib::HwlComputePixelCoordFromOffset(
     *pSlice += z;
 }
 
-
 /**
 ****************************************************************************************************
 *   EgBasedLib::DispatchComputeSurfaceCoordFromAddrDispatch
@@ -2284,7 +2298,6 @@ VOID EgBasedLib::DispatchComputeSurfaceCoordFromAddr(
     }
 }
 
-
 /**
 ****************************************************************************************************
 *   EgBasedLib::ComputeSurfaceCoordFromAddrMacroTiled
@@ -2328,7 +2341,6 @@ VOID EgBasedLib::ComputeSurfaceCoordFromAddrMacroTiled(
     UINT_64 macroTileIndex;
     UINT_32 tileIndex;
     UINT_64 totalOffset;
-
 
     UINT_32 bank;
     UINT_32 pipe;
@@ -2651,7 +2663,6 @@ ADDR_E_RETURNCODE EgBasedLib::HwlExtractBankPipeSwizzle(
     return ADDR_OK;
 }
 
-
 /**
 ****************************************************************************************************
 *   EgBasedLib::HwlCombineBankPipeSwizzle
@@ -2713,6 +2724,7 @@ ADDR_E_RETURNCODE EgBasedLib::HwlComputeBaseSwizzle(
     };
 
     UINT_32 pipes = HwlGetPipes(pTileInfo);
+    (void)pipes;
     UINT_32 banks = pTileInfo ? pTileInfo->banks : 2;
     UINT_32 hwNumBanks;
 
@@ -3020,7 +3032,6 @@ UINT_32 EgBasedLib::ComputeBankFromCoord(
             break;
     }
 
-
     //
     // Compute bank rotation for the tile split slice.
     //
@@ -3118,8 +3129,6 @@ UINT_32 EgBasedLib::ComputePipeRotation(
     return rotation;
 }
 
-
-
 /**
 ****************************************************************************************************
 *   EgBasedLib::ComputeBankRotation
@@ -3161,7 +3170,6 @@ UINT_32 EgBasedLib::ComputeBankRotation(
 
     return rotation;
 }
-
 
 /**
 ****************************************************************************************************
@@ -4087,7 +4095,7 @@ UINT_64 EgBasedLib::HwlGetSizeAdjustmentMicroTiled(
     ) const
 {
     UINT_64 logicalSliceSize;
-    UINT_64 physicalSliceSize;
+    ASSERTED UINT_64 physicalSliceSize;
 
     UINT_32 pitch   = *pPitch;
     UINT_32 height  = *pHeight;

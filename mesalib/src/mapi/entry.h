@@ -37,4 +37,10 @@ entry_patch_public(void);
 mapi_func
 entry_get_public(int slot);
 
+mapi_func
+entry_generate(int slot);
+
+void
+entry_patch(mapi_func entry, int slot);
+
 #endif /* _ENTRY_H_ */

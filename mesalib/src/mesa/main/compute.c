@@ -21,17 +21,10 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#include "util/glheader.h"
+#include "glheader.h"
 #include "bufferobj.h"
+#include "compute.h"
 #include "context.h"
-#include "state.h"
-#include "api_exec_decl.h"
-
-#include "pipe/p_state.h"
-
-#include "state_tracker/st_context.h"
-#include "state_tracker/st_cb_bitmap.h"
-#include "state_tracker/st_util.h"
 
 static bool
 check_valid_to_compute(struct gl_context *ctx, const char *function)
@@ -59,7 +52,7 @@ check_valid_to_compute(struct gl_context *ctx, const char *function)
 }
 
 static bool
-validate_DispatchCompute(struct gl_context *ctx, struct pipe_grid_info *info)
+validate_DispatchCompute(struct gl_context *ctx, const GLuint *num_groups)
 {
    if (!check_valid_to_compute(ctx, "glDispatchCompute"))
       return GL_FALSE;
@@ -83,7 +76,7 @@ validate_DispatchCompute(struct gl_context *ctx, struct pipe_grid_info *info)
        * Additionally, the OpenGLES 3.1 specification does not contain "or
        * equal to" as an error condition.
        */
-      if (info->grid[i] > ctx->Const.MaxComputeWorkGroupCount[i]) {
+      if (num_groups[i] > ctx->Const.MaxComputeWorkGroupCount[i]) {
          _mesa_error(ctx, GL_INVALID_VALUE,
                      "glDispatchCompute(num_groups_%c)", 'x' + i);
          return GL_FALSE;
@@ -96,7 +89,7 @@ validate_DispatchCompute(struct gl_context *ctx, struct pipe_grid_info *info)
     *  program for the compute shader stage has a variable work group size."
     */
    struct gl_program *prog = ctx->_Shader->CurrentProgram[MESA_SHADER_COMPUTE];
-   if (prog->info.workgroup_size_variable) {
+   if (prog->info.cs.local_size_variable) {
       _mesa_error(ctx, GL_INVALID_OPERATION,
                   "glDispatchCompute(variable work group size forbidden)");
       return GL_FALSE;
@@ -107,8 +100,11 @@ validate_DispatchCompute(struct gl_context *ctx, struct pipe_grid_info *info)
 
 static bool
 validate_DispatchComputeGroupSizeARB(struct gl_context *ctx,
-                                     struct pipe_grid_info *info)
+                                     const GLuint *num_groups,
+                                     const GLuint *group_size)
 {
+   GLuint total_invocations = 1;
+
    if (!check_valid_to_compute(ctx, "glDispatchComputeGroupSizeARB"))
       return GL_FALSE;
 
@@ -119,7 +115,7 @@ validate_DispatchComputeGroupSizeARB(struct gl_context *ctx,
     *  shader stage has a fixed work group size."
     */
    struct gl_program *prog = ctx->_Shader->CurrentProgram[MESA_SHADER_COMPUTE];
-   if (!prog->info.workgroup_size_variable) {
+   if (!prog->info.cs.local_size_variable) {
       _mesa_error(ctx, GL_INVALID_OPERATION,
                   "glDispatchComputeGroupSizeARB(fixed work group size "
                   "forbidden)");
@@ -133,7 +129,7 @@ validate_DispatchComputeGroupSizeARB(struct gl_context *ctx,
        *  num_groups_y and num_groups_z are greater than or equal to the
        *  maximum work group count for the corresponding dimension."
        */
-      if (info->grid[i] > ctx->Const.MaxComputeWorkGroupCount[i]) {
+      if (num_groups[i] > ctx->Const.MaxComputeWorkGroupCount[i]) {
          _mesa_error(ctx, GL_INVALID_VALUE,
                      "glDispatchComputeGroupSizeARB(num_groups_%c)", 'x' + i);
          return GL_FALSE;
@@ -151,12 +147,14 @@ validate_DispatchComputeGroupSizeARB(struct gl_context *ctx,
        * However, the "less than" is a spec bug because they are declared as
        * unsigned integers.
        */
-      if (info->block[i] == 0 ||
-          info->block[i] > ctx->Const.MaxComputeVariableGroupSize[i]) {
+      if (group_size[i] == 0 ||
+          group_size[i] > ctx->Const.MaxComputeVariableGroupSize[i]) {
          _mesa_error(ctx, GL_INVALID_VALUE,
                      "glDispatchComputeGroupSizeARB(group_size_%c)", 'x' + i);
          return GL_FALSE;
       }
+
+      total_invocations *= group_size[i];
    }
 
    /* The ARB_compute_variable_group_size spec says:
@@ -167,51 +165,12 @@ validate_DispatchComputeGroupSizeARB(struct gl_context *ctx,
     *  for compute shaders with variable group size
     *  (MAX_COMPUTE_VARIABLE_GROUP_INVOCATIONS_ARB)."
     */
-   uint64_t total_invocations = info->block[0] * info->block[1];
-   if (total_invocations <= UINT32_MAX) {
-      /* Only bother multiplying the third value if total still fits in
-       * 32-bit, since MaxComputeVariableGroupInvocations is also 32-bit.
-       */
-      total_invocations *= info->block[2];
-   }
    if (total_invocations > ctx->Const.MaxComputeVariableGroupInvocations) {
       _mesa_error(ctx, GL_INVALID_VALUE,
                   "glDispatchComputeGroupSizeARB(product of local_sizes "
                   "exceeds MAX_COMPUTE_VARIABLE_GROUP_INVOCATIONS_ARB "
-                  "(%u * %u * %u > %u))",
-                  info->block[0], info->block[1], info->block[2],
+                  "(%d > %d))", total_invocations,
                   ctx->Const.MaxComputeVariableGroupInvocations);
-      return GL_FALSE;
-   }
-
-   /* The NV_compute_shader_derivatives spec says:
-    *
-    * "An INVALID_VALUE error is generated by DispatchComputeGroupSizeARB if
-    *  the active program for the compute shader stage has a compute shader
-    *  using the "derivative_group_quadsNV" layout qualifier and
-    *  <group_size_x> or <group_size_y> is not a multiple of two.
-    *
-    *  An INVALID_VALUE error is generated by DispatchComputeGroupSizeARB if
-    *  the active program for the compute shader stage has a compute shader
-    *  using the "derivative_group_linearNV" layout qualifier and the product
-    *  of <group_size_x>, <group_size_y>, and <group_size_z> is not a multiple
-    *  of four."
-    */
-   if (prog->info.derivative_group == DERIVATIVE_GROUP_QUADS &&
-       ((info->block[0] & 1) || (info->block[1] & 1))) {
-      _mesa_error(ctx, GL_INVALID_VALUE,
-                  "glDispatchComputeGroupSizeARB(derivative_group_quadsNV "
-                  "requires group_size_x (%d) and group_size_y (%d) to be "
-                  "divisble by 2)", info->block[0], info->block[1]);
-      return GL_FALSE;
-   }
-
-   if (prog->info.derivative_group == DERIVATIVE_GROUP_LINEAR &&
-       total_invocations & 3) {
-      _mesa_error(ctx, GL_INVALID_VALUE,
-                  "glDispatchComputeGroupSizeARB(derivative_group_linearNV "
-                  "requires product of group sizes (%"PRIu64") to be divisible "
-                  "by 4)", total_invocations);
       return GL_FALSE;
    }
 
@@ -251,7 +210,7 @@ valid_dispatch_indirect(struct gl_context *ctx,  GLintptr indirect)
     *  DRAW_INDIRECT_BUFFER binding, or if the command would source data
     *  beyond the end of the buffer object."
     */
-   if (!ctx->DispatchIndirectBuffer) {
+   if (!_mesa_is_bufferobj(ctx->DispatchIndirectBuffer)) {
       _mesa_error(ctx, GL_INVALID_OPERATION,
                   "%s: no buffer bound to DISPATCH_INDIRECT_BUFFER", name);
       return GL_FALSE;
@@ -275,7 +234,7 @@ valid_dispatch_indirect(struct gl_context *ctx,  GLintptr indirect)
     *  compute shader stage has a variable work group size."
     */
    struct gl_program *prog = ctx->_Shader->CurrentProgram[MESA_SHADER_COMPUTE];
-   if (prog->info.workgroup_size_variable) {
+   if (prog->info.cs.local_size_variable) {
       _mesa_error(ctx, GL_INVALID_OPERATION,
                   "%s(variable work group size forbidden)", name);
       return GL_FALSE;
@@ -284,54 +243,26 @@ valid_dispatch_indirect(struct gl_context *ctx,  GLintptr indirect)
    return GL_TRUE;
 }
 
-static void
-prepare_compute(struct gl_context *ctx)
-{
-   struct st_context *st = st_context(ctx);
-
-   st_flush_bitmap_cache(st);
-   st_invalidate_readpix_cache(st);
-
-   if (ctx->NewState)
-      _mesa_update_state(ctx);
-
-   st_validate_state(st, ST_PIPELINE_COMPUTE_STATE_MASK);
-}
-
 static ALWAYS_INLINE void
 dispatch_compute(GLuint num_groups_x, GLuint num_groups_y,
                  GLuint num_groups_z, bool no_error)
 {
    GET_CURRENT_CONTEXT(ctx);
-   struct pipe_grid_info info = { 0 };
+   const GLuint num_groups[3] = { num_groups_x, num_groups_y, num_groups_z };
 
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_CURRENT(ctx, 0);
 
    if (MESA_VERBOSE & VERBOSE_API)
       _mesa_debug(ctx, "glDispatchCompute(%d, %d, %d)\n",
                   num_groups_x, num_groups_y, num_groups_z);
 
-   info.grid[0] = num_groups_x;
-   info.grid[1] = num_groups_y;
-   info.grid[2] = num_groups_z;
-
-   if (!no_error && !validate_DispatchCompute(ctx, &info))
+   if (!no_error && !validate_DispatchCompute(ctx, num_groups))
       return;
 
    if (num_groups_x == 0u || num_groups_y == 0u || num_groups_z == 0u)
        return;
 
-   struct gl_program *prog =
-      ctx->_Shader->CurrentProgram[MESA_SHADER_COMPUTE];
-   info.block[0] = prog->info.workgroup_size[0];
-   info.block[1] = prog->info.workgroup_size[1];
-   info.block[2] = prog->info.workgroup_size[2];
-
-   prepare_compute(ctx);
-   ctx->pipe->launch_grid(ctx->pipe, &info);
-
-   if (MESA_DEBUG_FLAGS & DEBUG_ALWAYS_FLUSH)
-      _mesa_flush(ctx);
+   ctx->Driver.DispatchCompute(ctx, num_groups);
 }
 
 void GLAPIENTRY
@@ -354,7 +285,7 @@ dispatch_compute_indirect(GLintptr indirect, bool no_error)
 {
    GET_CURRENT_CONTEXT(ctx);
 
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_CURRENT(ctx, 0);
 
    if (MESA_VERBOSE & VERBOSE_API)
       _mesa_debug(ctx, "glDispatchComputeIndirect(%ld)\n", (long) indirect);
@@ -362,21 +293,7 @@ dispatch_compute_indirect(GLintptr indirect, bool no_error)
    if (!no_error && !valid_dispatch_indirect(ctx, indirect))
       return;
 
-   struct pipe_grid_info info = { 0 };
-   info.indirect_offset = indirect;
-   info.indirect = ctx->DispatchIndirectBuffer->buffer;
-
-   struct gl_program *prog =
-      ctx->_Shader->CurrentProgram[MESA_SHADER_COMPUTE];
-   info.block[0] = prog->info.workgroup_size[0];
-   info.block[1] = prog->info.workgroup_size[1];
-   info.block[2] = prog->info.workgroup_size[2];
-
-   prepare_compute(ctx);
-   ctx->pipe->launch_grid(ctx->pipe, &info);
-
-   if (MESA_DEBUG_FLAGS & DEBUG_ALWAYS_FLUSH)
-      _mesa_flush(ctx);
+   ctx->Driver.DispatchComputeIndirect(ctx, indirect);
 }
 
 extern void GLAPIENTRY
@@ -398,7 +315,10 @@ dispatch_compute_group_size(GLuint num_groups_x, GLuint num_groups_y,
                             bool no_error)
 {
    GET_CURRENT_CONTEXT(ctx);
-   FLUSH_VERTICES(ctx, 0, 0);
+   const GLuint num_groups[3] = { num_groups_x, num_groups_y, num_groups_z };
+   const GLuint group_size[3] = { group_size_x, group_size_y, group_size_z };
+
+   FLUSH_CURRENT(ctx, 0);
 
    if (MESA_VERBOSE & VERBOSE_API)
       _mesa_debug(ctx,
@@ -406,27 +326,14 @@ dispatch_compute_group_size(GLuint num_groups_x, GLuint num_groups_y,
                   num_groups_x, num_groups_y, num_groups_z,
                   group_size_x, group_size_y, group_size_z);
 
-   struct pipe_grid_info info = { 0 };
-   info.grid[0] = num_groups_x;
-   info.grid[1] = num_groups_y;
-   info.grid[2] = num_groups_z;
-
-   info.block[0] = group_size_x;
-   info.block[1] = group_size_y;
-   info.block[2] = group_size_z;
-
    if (!no_error &&
-       !validate_DispatchComputeGroupSizeARB(ctx, &info))
+       !validate_DispatchComputeGroupSizeARB(ctx, num_groups, group_size))
       return;
 
    if (num_groups_x == 0u || num_groups_y == 0u || num_groups_z == 0u)
        return;
 
-   prepare_compute(ctx);
-   ctx->pipe->launch_grid(ctx->pipe, &info);
-
-   if (MESA_DEBUG_FLAGS & DEBUG_ALWAYS_FLUSH)
-      _mesa_flush(ctx);
+   ctx->Driver.DispatchComputeGroupSize(ctx, num_groups, group_size);
 }
 
 void GLAPIENTRY

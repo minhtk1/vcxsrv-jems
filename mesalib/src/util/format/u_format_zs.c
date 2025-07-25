@@ -111,8 +111,8 @@ z32_unorm_to_z32_float(uint32_t z)
 
 
 void
-util_format_s8_uint_unpack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stride,
-                                         const uint8_t *restrict src_row, unsigned src_stride,
+util_format_s8_uint_unpack_s_8uint(uint8_t *dst_row, unsigned dst_stride,
+                                         const uint8_t *src_row, unsigned src_stride,
                                          unsigned width, unsigned height)
 {
    unsigned y;
@@ -124,8 +124,8 @@ util_format_s8_uint_unpack_s_8uint(uint8_t *restrict dst_row, unsigned dst_strid
 }
 
 void
-util_format_s8_uint_pack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stride,
-                                       const uint8_t *restrict src_row, unsigned src_stride,
+util_format_s8_uint_pack_s_8uint(uint8_t *dst_row, unsigned dst_stride,
+                                       const uint8_t *src_row, unsigned src_stride,
                                        unsigned width, unsigned height)
 {
    unsigned y;
@@ -137,8 +137,8 @@ util_format_s8_uint_pack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stride,
 }
 
 void
-util_format_z16_unorm_unpack_z_float(float *restrict dst_row, unsigned dst_stride,
-                                     const uint8_t *restrict src_row, unsigned src_stride,
+util_format_z16_unorm_unpack_z_float(float *dst_row, unsigned dst_stride,
+                                     const uint8_t *src_row, unsigned src_stride,
                                      unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -146,7 +146,8 @@ util_format_z16_unorm_unpack_z_float(float *restrict dst_row, unsigned dst_strid
       float *dst = dst_row;
       const uint16_t *src = (const uint16_t *)src_row;
       for(x = 0; x < width; ++x) {
-         *dst++ = z16_unorm_to_z32_float(*src++);
+         uint16_t value = util_cpu_to_le16(*src++);
+         *dst++ = z16_unorm_to_z32_float(value);
       }
       src_row += src_stride/sizeof(*src_row);
       dst_row += dst_stride/sizeof(*dst_row);
@@ -154,8 +155,8 @@ util_format_z16_unorm_unpack_z_float(float *restrict dst_row, unsigned dst_strid
 }
 
 void
-util_format_z16_unorm_pack_z_float(uint8_t *restrict dst_row, unsigned dst_stride,
-                                   const float *restrict src_row, unsigned src_stride,
+util_format_z16_unorm_pack_z_float(uint8_t *dst_row, unsigned dst_stride,
+                                   const float *src_row, unsigned src_stride,
                                    unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -163,7 +164,9 @@ util_format_z16_unorm_pack_z_float(uint8_t *restrict dst_row, unsigned dst_strid
       const float *src = src_row;
       uint16_t *dst = (uint16_t *)dst_row;
       for(x = 0; x < width; ++x) {
-         *dst++ = z32_float_to_z16_unorm(*src++);
+         uint16_t value;
+         value = z32_float_to_z16_unorm(*src++);
+         *dst++ = util_le16_to_cpu(value);
       }
       dst_row += dst_stride/sizeof(*dst_row);
       src_row += src_stride/sizeof(*src_row);
@@ -171,8 +174,8 @@ util_format_z16_unorm_pack_z_float(uint8_t *restrict dst_row, unsigned dst_strid
 }
 
 void
-util_format_z16_unorm_unpack_z_32unorm(uint32_t *restrict dst_row, unsigned dst_stride,
-                                       const uint8_t *restrict src_row, unsigned src_stride,
+util_format_z16_unorm_unpack_z_32unorm(uint32_t *dst_row, unsigned dst_stride,
+                                       const uint8_t *src_row, unsigned src_stride,
                                        unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -180,7 +183,8 @@ util_format_z16_unorm_unpack_z_32unorm(uint32_t *restrict dst_row, unsigned dst_
       uint32_t *dst = dst_row;
       const uint16_t *src = (const uint16_t *)src_row;
       for(x = 0; x < width; ++x) {
-         *dst++ = z16_unorm_to_z32_unorm(*src++);
+         uint16_t value = util_cpu_to_le16(*src++);
+         *dst++ = z16_unorm_to_z32_unorm(value);
       }
       src_row += src_stride/sizeof(*src_row);
       dst_row += dst_stride/sizeof(*dst_row);
@@ -188,8 +192,8 @@ util_format_z16_unorm_unpack_z_32unorm(uint32_t *restrict dst_row, unsigned dst_
 }
 
 void
-util_format_z16_unorm_pack_z_32unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                                     const uint32_t *restrict src_row, unsigned src_stride,
+util_format_z16_unorm_pack_z_32unorm(uint8_t *dst_row, unsigned dst_stride,
+                                     const uint32_t *src_row, unsigned src_stride,
                                      unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -197,7 +201,9 @@ util_format_z16_unorm_pack_z_32unorm(uint8_t *restrict dst_row, unsigned dst_str
       const uint32_t *src = src_row;
       uint16_t *dst = (uint16_t *)dst_row;
       for(x = 0; x < width; ++x) {
-         *dst++ = z32_unorm_to_z16_unorm(*src++);
+         uint16_t value;
+         value = z32_unorm_to_z16_unorm(*src++);
+         *dst++ = util_le16_to_cpu(value);
       }
       dst_row += dst_stride/sizeof(*dst_row);
       src_row += src_stride/sizeof(*src_row);
@@ -205,8 +211,8 @@ util_format_z16_unorm_pack_z_32unorm(uint8_t *restrict dst_row, unsigned dst_str
 }
 
 void
-util_format_z32_unorm_unpack_z_float(float *restrict dst_row, unsigned dst_stride,
-                                     const uint8_t *restrict src_row, unsigned src_stride,
+util_format_z32_unorm_unpack_z_float(float *dst_row, unsigned dst_stride,
+                                     const uint8_t *src_row, unsigned src_stride,
                                      unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -214,7 +220,8 @@ util_format_z32_unorm_unpack_z_float(float *restrict dst_row, unsigned dst_strid
       float *dst = dst_row;
       const uint32_t *src = (const uint32_t *)src_row;
       for(x = 0; x < width; ++x) {
-         *dst++ = z32_unorm_to_z32_float(*src++);
+         uint32_t value = util_cpu_to_le32(*src++);
+         *dst++ = z32_unorm_to_z32_float(value);
       }
       src_row += src_stride/sizeof(*src_row);
       dst_row += dst_stride/sizeof(*dst_row);
@@ -222,8 +229,8 @@ util_format_z32_unorm_unpack_z_float(float *restrict dst_row, unsigned dst_strid
 }
 
 void
-util_format_z32_unorm_pack_z_float(uint8_t *restrict dst_row, unsigned dst_stride,
-                                   const float *restrict src_row, unsigned src_stride,
+util_format_z32_unorm_pack_z_float(uint8_t *dst_row, unsigned dst_stride,
+                                   const float *src_row, unsigned src_stride,
                                    unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -231,7 +238,9 @@ util_format_z32_unorm_pack_z_float(uint8_t *restrict dst_row, unsigned dst_strid
       const float *src = src_row;
       uint32_t *dst = (uint32_t *)dst_row;
       for(x = 0; x < width; ++x) {
-         *dst++ =z32_float_to_z32_unorm(*src++);
+         uint32_t value;
+         value = z32_float_to_z32_unorm(*src++);
+         *dst++ = util_le32_to_cpu(value);
       }
       dst_row += dst_stride/sizeof(*dst_row);
       src_row += src_stride/sizeof(*src_row);
@@ -239,8 +248,8 @@ util_format_z32_unorm_pack_z_float(uint8_t *restrict dst_row, unsigned dst_strid
 }
 
 void
-util_format_z32_unorm_unpack_z_32unorm(uint32_t *restrict dst_row, unsigned dst_stride,
-                                       const uint8_t *restrict src_row, unsigned src_stride,
+util_format_z32_unorm_unpack_z_32unorm(uint32_t *dst_row, unsigned dst_stride,
+                                       const uint8_t *src_row, unsigned src_stride,
                                        unsigned width, unsigned height)
 {
    unsigned y;
@@ -252,8 +261,8 @@ util_format_z32_unorm_unpack_z_32unorm(uint32_t *restrict dst_row, unsigned dst_
 }
 
 void
-util_format_z32_unorm_pack_z_32unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                                     const uint32_t *restrict src_row, unsigned src_stride,
+util_format_z32_unorm_pack_z_32unorm(uint8_t *dst_row, unsigned dst_stride,
+                                     const uint32_t *src_row, unsigned src_stride,
                                      unsigned width, unsigned height)
 {
    unsigned y;
@@ -265,8 +274,8 @@ util_format_z32_unorm_pack_z_32unorm(uint8_t *restrict dst_row, unsigned dst_str
 }
 
 void
-util_format_z32_float_unpack_z_float(float *restrict dst_row, unsigned dst_stride,
-                                     const uint8_t *restrict src_row, unsigned src_stride,
+util_format_z32_float_unpack_z_float(float *dst_row, unsigned dst_stride,
+                                     const uint8_t *src_row, unsigned src_stride,
                                      unsigned width, unsigned height)
 {
    unsigned y;
@@ -278,8 +287,8 @@ util_format_z32_float_unpack_z_float(float *restrict dst_row, unsigned dst_strid
 }
 
 void
-util_format_z32_float_pack_z_float(uint8_t *restrict dst_row, unsigned dst_stride,
-                                   const float *restrict src_row, unsigned src_stride,
+util_format_z32_float_pack_z_float(uint8_t *dst_row, unsigned dst_stride,
+                                   const float *src_row, unsigned src_stride,
                                    unsigned width, unsigned height)
 {
    unsigned y;
@@ -291,8 +300,8 @@ util_format_z32_float_pack_z_float(uint8_t *restrict dst_row, unsigned dst_strid
 }
 
 void
-util_format_z32_float_unpack_z_32unorm(uint32_t *restrict dst_row, unsigned dst_stride,
-                                       const uint8_t *restrict src_row, unsigned src_stride,
+util_format_z32_float_unpack_z_32unorm(uint32_t *dst_row, unsigned dst_stride,
+                                       const uint8_t *src_row, unsigned src_stride,
                                        unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -300,8 +309,7 @@ util_format_z32_float_unpack_z_32unorm(uint32_t *restrict dst_row, unsigned dst_
       uint32_t *dst = dst_row;
       const float *src = (const float *)src_row;
       for(x = 0; x < width; ++x) {
-         float z = *src++;
-         *dst++ = z32_float_to_z32_unorm(CLAMP(z, 0.0f, 1.0f));
+         *dst++ = z32_float_to_z32_unorm(*src++);
       }
       src_row += src_stride/sizeof(*src_row);
       dst_row += dst_stride/sizeof(*dst_row);
@@ -309,8 +317,8 @@ util_format_z32_float_unpack_z_32unorm(uint32_t *restrict dst_row, unsigned dst_
 }
 
 void
-util_format_z32_float_pack_z_32unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                                     const uint32_t *restrict src_row, unsigned src_stride,
+util_format_z32_float_pack_z_32unorm(uint8_t *dst_row, unsigned dst_stride,
+                                     const uint32_t *src_row, unsigned src_stride,
                                      unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -326,56 +334,8 @@ util_format_z32_float_pack_z_32unorm(uint8_t *restrict dst_row, unsigned dst_str
 }
 
 void
-util_format_z16_unorm_s8_uint_unpack_z_float(float *restrict dst_row, unsigned dst_stride,
-                                             const uint8_t *restrict src_row, unsigned src_stride,
-                                             unsigned width, unsigned height)
-{
-   unreachable("z16_s8 packing/unpacking is not implemented.");
-}
-
-void
-util_format_z16_unorm_s8_uint_pack_z_float(uint8_t *restrict dst_row, unsigned dst_stride,
-                                           const float *restrict src_row, unsigned src_stride,
-                                           unsigned width, unsigned height)
-{
-   unreachable("z16_s8 packing/unpacking is not implemented.");
-}
-
-void
-util_format_z16_unorm_s8_uint_unpack_z_32unorm(uint32_t *restrict dst_row, unsigned dst_stride,
-                                               const uint8_t *restrict src_row, unsigned src_stride,
-                                               unsigned width, unsigned height)
-{
-   unreachable("z16_s8 packing/unpacking is not implemented.");
-}
-
-void
-util_format_z16_unorm_s8_uint_pack_z_32unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                                             const uint32_t *restrict src_row, unsigned src_stride,
-                                             unsigned width, unsigned height)
-{
-   unreachable("z16_s8 packing/unpacking is not implemented.");
-}
-
-void
-util_format_z16_unorm_s8_uint_unpack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stride,
-                                             const uint8_t *restrict src_row, unsigned src_stride,
-                                             unsigned width, unsigned height)
-{
-   unreachable("z16_s8 packing/unpacking is not implemented.");
-}
-
-void
-util_format_z16_unorm_s8_uint_pack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stride,
-                                           const uint8_t *restrict src_row, unsigned src_stride,
-                                           unsigned width, unsigned height)
-{
-   unreachable("z16_s8 packing/unpacking is not implemented.");
-}
-
-void
-util_format_z24_unorm_s8_uint_unpack_z_float(float *restrict dst_row, unsigned dst_stride,
-                                                const uint8_t *restrict src_row, unsigned src_stride,
+util_format_z24_unorm_s8_uint_unpack_z_float(float *dst_row, unsigned dst_stride,
+                                                const uint8_t *src_row, unsigned src_stride,
                                                 unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -383,7 +343,8 @@ util_format_z24_unorm_s8_uint_unpack_z_float(float *restrict dst_row, unsigned d
       float *dst = dst_row;
       const uint32_t *src = (const uint32_t *)src_row;
       for(x = 0; x < width; ++x) {
-         *dst++ = z24_unorm_to_z32_float((*src++) & 0xffffff);
+         uint32_t value =  util_cpu_to_le32(*src++);
+         *dst++ = z24_unorm_to_z32_float(value & 0xffffff);
       }
       src_row += src_stride/sizeof(*src_row);
       dst_row += dst_stride/sizeof(*dst_row);
@@ -391,8 +352,8 @@ util_format_z24_unorm_s8_uint_unpack_z_float(float *restrict dst_row, unsigned d
 }
 
 void
-util_format_z24_unorm_s8_uint_pack_z_float(uint8_t *restrict dst_row, unsigned dst_stride,
-                                              const float *restrict src_row, unsigned src_stride,
+util_format_z24_unorm_s8_uint_pack_z_float(uint8_t *dst_row, unsigned dst_stride,
+                                              const float *src_row, unsigned src_stride,
                                               unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -400,49 +361,10 @@ util_format_z24_unorm_s8_uint_pack_z_float(uint8_t *restrict dst_row, unsigned d
       const float *src = src_row;
       uint32_t *dst = (uint32_t *)dst_row;
       for(x = 0; x < width; ++x) {
-         uint32_t value = *dst;
+         uint32_t value = util_le32_to_cpu(*dst);
          value &= 0xff000000;
          value |= z32_float_to_z24_unorm(*src++);
-         *dst++ = value;
-      }
-      dst_row += dst_stride/sizeof(*dst_row);
-      src_row += src_stride/sizeof(*src_row);
-   }
-}
-
-
-void
-util_format_z24_unorm_s8_uint_unpack_z24(uint8_t *restrict dst_row, unsigned dst_stride,
-                                         const uint8_t *restrict src_row, unsigned src_stride,
-                                         unsigned width, unsigned height)
-{
-   unsigned x, y;
-   for(y = 0; y < height; ++y) {
-      uint32_t *dst = (uint32_t *)dst_row;
-      const uint32_t *src = (const uint32_t *)src_row;
-      for(x = 0; x < width; ++x) {
-         *dst++ = ((*src++) & 0xffffff);
-      }
-      src_row += src_stride/sizeof(*src_row);
-      dst_row += dst_stride/sizeof(*dst_row);
-   }
-}
-
-void
-util_format_z24_unorm_s8_uint_pack_z24(uint8_t *restrict dst_row, unsigned dst_stride,
-                                       const uint8_t *restrict src_row, unsigned src_stride,
-                                       unsigned width, unsigned height)
-{
-   unsigned x, y;
-   for(y = 0; y < height; ++y) {
-      const uint32_t *src = (const uint32_t *)src_row;
-      uint32_t *dst = (uint32_t *)dst_row;
-      for(x = 0; x < width; ++x) {
-         uint32_t value = *dst;
-         value &= 0xff000000;
-         value |= *src & 0xffffff;
-         src++;
-         *dst++ = value;
+         *dst++ = util_cpu_to_le32(value);
       }
       dst_row += dst_stride/sizeof(*dst_row);
       src_row += src_stride/sizeof(*src_row);
@@ -450,8 +372,8 @@ util_format_z24_unorm_s8_uint_pack_z24(uint8_t *restrict dst_row, unsigned dst_s
 }
 
 void
-util_format_z24_unorm_s8_uint_unpack_z_32unorm(uint32_t *restrict dst_row, unsigned dst_stride,
-                                                  const uint8_t *restrict src_row, unsigned src_stride,
+util_format_z24_unorm_s8_uint_unpack_z_32unorm(uint32_t *dst_row, unsigned dst_stride,
+                                                  const uint8_t *src_row, unsigned src_stride,
                                                   unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -459,7 +381,8 @@ util_format_z24_unorm_s8_uint_unpack_z_32unorm(uint32_t *restrict dst_row, unsig
       uint32_t *dst = dst_row;
       const uint32_t *src = (const uint32_t *)src_row;
       for(x = 0; x < width; ++x) {
-         *dst++ = z24_unorm_to_z32_unorm((*src++) & 0xffffff);
+         uint32_t value = util_cpu_to_le32(*src++);
+         *dst++ = z24_unorm_to_z32_unorm(value & 0xffffff);
       }
       src_row += src_stride/sizeof(*src_row);
       dst_row += dst_stride/sizeof(*dst_row);
@@ -467,8 +390,8 @@ util_format_z24_unorm_s8_uint_unpack_z_32unorm(uint32_t *restrict dst_row, unsig
 }
 
 void
-util_format_z24_unorm_s8_uint_pack_z_32unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                                                const uint32_t *restrict src_row, unsigned src_stride,
+util_format_z24_unorm_s8_uint_pack_z_32unorm(uint8_t *dst_row, unsigned dst_stride,
+                                                const uint32_t *src_row, unsigned src_stride,
                                                 unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -476,10 +399,10 @@ util_format_z24_unorm_s8_uint_pack_z_32unorm(uint8_t *restrict dst_row, unsigned
       const uint32_t *src = src_row;
       uint32_t *dst = (uint32_t *)dst_row;
       for(x = 0; x < width; ++x) {
-         uint32_t value = *dst;
+         uint32_t value = util_le32_to_cpu(*dst);
          value &= 0xff000000;
          value |= z32_unorm_to_z24_unorm(*src++);
-         *dst++ = value;
+         *dst++ = util_cpu_to_le32(value);
       }
       dst_row += dst_stride/sizeof(*dst_row);
       src_row += src_stride/sizeof(*src_row);
@@ -487,8 +410,8 @@ util_format_z24_unorm_s8_uint_pack_z_32unorm(uint8_t *restrict dst_row, unsigned
 }
 
 void
-util_format_z24_unorm_s8_uint_unpack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stride,
-                                                   const uint8_t *restrict src_row, unsigned src_stride,
+util_format_z24_unorm_s8_uint_unpack_s_8uint(uint8_t *dst_row, unsigned dst_stride,
+                                                   const uint8_t *src_row, unsigned src_stride,
                                                    unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -496,7 +419,8 @@ util_format_z24_unorm_s8_uint_unpack_s_8uint(uint8_t *restrict dst_row, unsigned
       uint8_t *dst = dst_row;
       const uint32_t *src = (const uint32_t *)src_row;
       for(x = 0; x < width; ++x) {
-         *dst++ = (*src++) >> 24;
+         uint32_t value = util_cpu_to_le32(*src++);
+         *dst++ = value >> 24;
       }
       src_row += src_stride/sizeof(*src_row);
       dst_row += dst_stride/sizeof(*dst_row);
@@ -504,8 +428,8 @@ util_format_z24_unorm_s8_uint_unpack_s_8uint(uint8_t *restrict dst_row, unsigned
 }
 
 void
-util_format_z24_unorm_s8_uint_pack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stride,
-                                                 const uint8_t *restrict src_row, unsigned src_stride,
+util_format_z24_unorm_s8_uint_pack_s_8uint(uint8_t *dst_row, unsigned dst_stride,
+                                                 const uint8_t *src_row, unsigned src_stride,
                                                  unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -516,7 +440,7 @@ util_format_z24_unorm_s8_uint_pack_s_8uint(uint8_t *restrict dst_row, unsigned d
          uint32_t value = util_le32_to_cpu(*dst);
          value &= 0x00ffffff;
          value |= (uint32_t)*src++ << 24;
-         *dst++ = value;
+         *dst++ = util_cpu_to_le32(value);
       }
       dst_row += dst_stride/sizeof(*dst_row);
       src_row += src_stride/sizeof(*src_row);
@@ -524,7 +448,7 @@ util_format_z24_unorm_s8_uint_pack_s_8uint(uint8_t *restrict dst_row, unsigned d
 }
 
 void
-util_format_z24_unorm_s8_uint_pack_separate(uint8_t *restrict dst_row, unsigned dst_stride,
+util_format_z24_unorm_s8_uint_pack_separate(uint8_t *dst_row, unsigned dst_stride,
                                             const uint32_t *z_src_row, unsigned z_src_stride,
                                             const uint8_t *s_src_row, unsigned s_src_stride,
                                             unsigned width, unsigned height)
@@ -544,28 +468,8 @@ util_format_z24_unorm_s8_uint_pack_separate(uint8_t *restrict dst_row, unsigned 
 }
 
 void
-util_format_z24_unorm_s8_uint_pack_separate_z32(uint8_t *restrict dst_row, unsigned dst_stride,
-                                                const float *z_src_row, unsigned z_src_stride,
-                                                const uint8_t *s_src_row, unsigned s_src_stride,
-                                                unsigned width, unsigned height)
-{
-   unsigned x, y;
-   for (y = 0; y < height; ++y) {
-      const float *z_src = z_src_row;
-      const uint8_t *s_src = s_src_row;
-      uint32_t *dst = (uint32_t *)dst_row;
-      for (x = 0; x < width; ++x) {
-         *dst++ = (z32_float_to_z24_unorm(*z_src++) & 0x00ffffff) | ((uint32_t)*s_src++ << 24);
-      }
-      dst_row += dst_stride / sizeof(*dst_row);
-      z_src_row += z_src_stride / sizeof(*z_src_row);
-      s_src_row += s_src_stride / sizeof(*s_src_row);
-   }
-}
-
-void
-util_format_s8_uint_z24_unorm_unpack_z_float(float *restrict dst_row, unsigned dst_stride,
-                                                const uint8_t *restrict src_row, unsigned src_stride,
+util_format_s8_uint_z24_unorm_unpack_z_float(float *dst_row, unsigned dst_stride,
+                                                const uint8_t *src_row, unsigned src_stride,
                                                 unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -573,7 +477,8 @@ util_format_s8_uint_z24_unorm_unpack_z_float(float *restrict dst_row, unsigned d
       float *dst = dst_row;
       const uint32_t *src = (const uint32_t *)src_row;
       for(x = 0; x < width; ++x) {
-         *dst++ = z24_unorm_to_z32_float((*src++) >> 8);
+         uint32_t value = util_cpu_to_le32(*src++);
+         *dst++ = z24_unorm_to_z32_float(value >> 8);
       }
       src_row += src_stride/sizeof(*src_row);
       dst_row += dst_stride/sizeof(*dst_row);
@@ -581,8 +486,8 @@ util_format_s8_uint_z24_unorm_unpack_z_float(float *restrict dst_row, unsigned d
 }
 
 void
-util_format_s8_uint_z24_unorm_pack_z_float(uint8_t *restrict dst_row, unsigned dst_stride,
-                                              const float *restrict src_row, unsigned src_stride,
+util_format_s8_uint_z24_unorm_pack_z_float(uint8_t *dst_row, unsigned dst_stride,
+                                              const float *src_row, unsigned src_stride,
                                               unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -590,10 +495,10 @@ util_format_s8_uint_z24_unorm_pack_z_float(uint8_t *restrict dst_row, unsigned d
       const float *src = src_row;
       uint32_t *dst = (uint32_t *)dst_row;
       for(x = 0; x < width; ++x) {
-         uint32_t value = *dst;
+         uint32_t value = util_le32_to_cpu(*dst);
          value &= 0x000000ff;
          value |= z32_float_to_z24_unorm(*src++) << 8;
-         *dst++ = value;
+         *dst++ = util_cpu_to_le32(value);
       }
       dst_row += dst_stride/sizeof(*dst_row);
       src_row += src_stride/sizeof(*src_row);
@@ -601,8 +506,8 @@ util_format_s8_uint_z24_unorm_pack_z_float(uint8_t *restrict dst_row, unsigned d
 }
 
 void
-util_format_s8_uint_z24_unorm_unpack_z_32unorm(uint32_t *restrict dst_row, unsigned dst_stride,
-                                                  const uint8_t *restrict src_row, unsigned src_stride,
+util_format_s8_uint_z24_unorm_unpack_z_32unorm(uint32_t *dst_row, unsigned dst_stride,
+                                                  const uint8_t *src_row, unsigned src_stride,
                                                   unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -610,7 +515,7 @@ util_format_s8_uint_z24_unorm_unpack_z_32unorm(uint32_t *restrict dst_row, unsig
       uint32_t *dst = dst_row;
       const uint32_t *src = (const uint32_t *)src_row;
       for(x = 0; x < width; ++x) {
-         uint32_t value = *src++;
+         uint32_t value = util_cpu_to_le32(*src++);
          *dst++ = z24_unorm_to_z32_unorm(value >> 8);
       }
       src_row += src_stride/sizeof(*src_row);
@@ -619,8 +524,8 @@ util_format_s8_uint_z24_unorm_unpack_z_32unorm(uint32_t *restrict dst_row, unsig
 }
 
 void
-util_format_s8_uint_z24_unorm_pack_z_32unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                                                const uint32_t *restrict src_row, unsigned src_stride,
+util_format_s8_uint_z24_unorm_pack_z_32unorm(uint8_t *dst_row, unsigned dst_stride,
+                                                const uint32_t *src_row, unsigned src_stride,
                                                 unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -628,10 +533,10 @@ util_format_s8_uint_z24_unorm_pack_z_32unorm(uint8_t *restrict dst_row, unsigned
       const uint32_t *src = src_row;
       uint32_t *dst = (uint32_t *)dst_row;
       for(x = 0; x < width; ++x) {
-         uint32_t value = *dst;
+         uint32_t value = util_le32_to_cpu(*dst);
          value &= 0x000000ff;
          value |= *src++ & 0xffffff00;
-         *dst++ = value;
+         *dst++ = util_cpu_to_le32(value);
       }
       dst_row += dst_stride/sizeof(*dst_row);
       src_row += src_stride/sizeof(*src_row);
@@ -639,8 +544,8 @@ util_format_s8_uint_z24_unorm_pack_z_32unorm(uint8_t *restrict dst_row, unsigned
 }
 
 void
-util_format_s8_uint_z24_unorm_unpack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stride,
-                                                   const uint8_t *restrict src_row, unsigned src_stride,
+util_format_s8_uint_z24_unorm_unpack_s_8uint(uint8_t *dst_row, unsigned dst_stride,
+                                                   const uint8_t *src_row, unsigned src_stride,
                                                    unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -648,7 +553,8 @@ util_format_s8_uint_z24_unorm_unpack_s_8uint(uint8_t *restrict dst_row, unsigned
       uint8_t *dst = dst_row;
       const uint32_t *src = (const uint32_t *)src_row;
       for(x = 0; x < width; ++x) {
-         *dst++ = (*src++) & 0xff;
+         uint32_t value = util_cpu_to_le32(*src++);
+         *dst++ = value & 0xff;
       }
       src_row += src_stride/sizeof(*src_row);
       dst_row += dst_stride/sizeof(*dst_row);
@@ -656,8 +562,8 @@ util_format_s8_uint_z24_unorm_unpack_s_8uint(uint8_t *restrict dst_row, unsigned
 }
 
 void
-util_format_s8_uint_z24_unorm_pack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stride,
-                                                 const uint8_t *restrict src_row, unsigned src_stride,
+util_format_s8_uint_z24_unorm_pack_s_8uint(uint8_t *dst_row, unsigned dst_stride,
+                                                 const uint8_t *src_row, unsigned src_stride,
                                                  unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -665,10 +571,10 @@ util_format_s8_uint_z24_unorm_pack_s_8uint(uint8_t *restrict dst_row, unsigned d
       const uint8_t *src = src_row;
       uint32_t *dst = (uint32_t *)dst_row;
       for(x = 0; x < width; ++x) {
-         uint32_t value = *dst;
+         uint32_t value = util_le32_to_cpu(*dst);
          value &= 0xffffff00;
          value |= *src++;
-         *dst++ = value;
+         *dst++ = util_cpu_to_le32(value);
       }
       dst_row += dst_stride/sizeof(*dst_row);
       src_row += src_stride/sizeof(*src_row);
@@ -676,8 +582,8 @@ util_format_s8_uint_z24_unorm_pack_s_8uint(uint8_t *restrict dst_row, unsigned d
 }
 
 void
-util_format_z24x8_unorm_unpack_z_float(float *restrict dst_row, unsigned dst_stride,
-                                       const uint8_t *restrict src_row, unsigned src_stride,
+util_format_z24x8_unorm_unpack_z_float(float *dst_row, unsigned dst_stride,
+                                       const uint8_t *src_row, unsigned src_stride,
                                        unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -685,7 +591,8 @@ util_format_z24x8_unorm_unpack_z_float(float *restrict dst_row, unsigned dst_str
       float *dst = dst_row;
       const uint32_t *src = (const uint32_t *)src_row;
       for(x = 0; x < width; ++x) {
-         *dst++ = z24_unorm_to_z32_float((*src++) & 0xffffff);
+         uint32_t value = util_cpu_to_le32(*src++);
+         *dst++ = z24_unorm_to_z32_float(value & 0xffffff);
       }
       src_row += src_stride/sizeof(*src_row);
       dst_row += dst_stride/sizeof(*dst_row);
@@ -693,8 +600,8 @@ util_format_z24x8_unorm_unpack_z_float(float *restrict dst_row, unsigned dst_str
 }
 
 void
-util_format_z24x8_unorm_pack_z_float(uint8_t *restrict dst_row, unsigned dst_stride,
-                                     const float *restrict src_row, unsigned src_stride,
+util_format_z24x8_unorm_pack_z_float(uint8_t *dst_row, unsigned dst_stride,
+                                     const float *src_row, unsigned src_stride,
                                      unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -702,7 +609,9 @@ util_format_z24x8_unorm_pack_z_float(uint8_t *restrict dst_row, unsigned dst_str
       const float *src = src_row;
       uint32_t *dst = (uint32_t *)dst_row;
       for(x = 0; x < width; ++x) {
-         *dst++ = z32_float_to_z24_unorm(*src++);
+         uint32_t value;
+         value = z32_float_to_z24_unorm(*src++);
+         *dst++ = util_le32_to_cpu(value);
       }
       dst_row += dst_stride/sizeof(*dst_row);
       src_row += src_stride/sizeof(*src_row);
@@ -710,8 +619,8 @@ util_format_z24x8_unorm_pack_z_float(uint8_t *restrict dst_row, unsigned dst_str
 }
 
 void
-util_format_z24x8_unorm_unpack_z_32unorm(uint32_t *restrict dst_row, unsigned dst_stride,
-                                         const uint8_t *restrict src_row, unsigned src_stride,
+util_format_z24x8_unorm_unpack_z_32unorm(uint32_t *dst_row, unsigned dst_stride,
+                                         const uint8_t *src_row, unsigned src_stride,
                                          unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -719,7 +628,8 @@ util_format_z24x8_unorm_unpack_z_32unorm(uint32_t *restrict dst_row, unsigned ds
       uint32_t *dst = dst_row;
       const uint32_t *src = (const uint32_t *)src_row;
       for(x = 0; x < width; ++x) {
-         *dst++ = z24_unorm_to_z32_unorm((*src++) & 0xffffff);
+         uint32_t value = util_cpu_to_le32(*src++);
+         *dst++ = z24_unorm_to_z32_unorm(value & 0xffffff);
       }
       src_row += src_stride/sizeof(*src_row);
       dst_row += dst_stride/sizeof(*dst_row);
@@ -727,8 +637,8 @@ util_format_z24x8_unorm_unpack_z_32unorm(uint32_t *restrict dst_row, unsigned ds
 }
 
 void
-util_format_z24x8_unorm_pack_z_32unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                                       const uint32_t *restrict src_row, unsigned src_stride,
+util_format_z24x8_unorm_pack_z_32unorm(uint8_t *dst_row, unsigned dst_stride,
+                                       const uint32_t *src_row, unsigned src_stride,
                                        unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -736,7 +646,9 @@ util_format_z24x8_unorm_pack_z_32unorm(uint8_t *restrict dst_row, unsigned dst_s
       const uint32_t *src = src_row;
       uint32_t *dst = (uint32_t *)dst_row;
       for(x = 0; x < width; ++x) {
-         *dst++ = z32_unorm_to_z24_unorm(*src++);
+         uint32_t value;
+         value = z32_unorm_to_z24_unorm(*src++);
+         *dst++ = util_cpu_to_le32(value);
       }
       dst_row += dst_stride/sizeof(*dst_row);
       src_row += src_stride/sizeof(*src_row);
@@ -744,8 +656,8 @@ util_format_z24x8_unorm_pack_z_32unorm(uint8_t *restrict dst_row, unsigned dst_s
 }
 
 void
-util_format_x8z24_unorm_unpack_z_float(float *restrict dst_row, unsigned dst_stride,
-                                       const uint8_t *restrict src_row, unsigned src_stride,
+util_format_x8z24_unorm_unpack_z_float(float *dst_row, unsigned dst_stride,
+                                       const uint8_t *src_row, unsigned src_stride,
                                        unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -753,7 +665,8 @@ util_format_x8z24_unorm_unpack_z_float(float *restrict dst_row, unsigned dst_str
       float *dst = dst_row;
       const uint32_t *src = (uint32_t *)src_row;
       for(x = 0; x < width; ++x) {
-         *dst++ = z24_unorm_to_z32_float((*src++) >> 8);
+         uint32_t value = util_cpu_to_le32(*src++);
+         *dst++ = z24_unorm_to_z32_float(value >> 8);
       }
       src_row += src_stride/sizeof(*src_row);
       dst_row += dst_stride/sizeof(*dst_row);
@@ -761,8 +674,8 @@ util_format_x8z24_unorm_unpack_z_float(float *restrict dst_row, unsigned dst_str
 }
 
 void
-util_format_x8z24_unorm_pack_z_float(uint8_t *restrict dst_row, unsigned dst_stride,
-                                     const float *restrict src_row, unsigned src_stride,
+util_format_x8z24_unorm_pack_z_float(uint8_t *dst_row, unsigned dst_stride,
+                                     const float *src_row, unsigned src_stride,
                                      unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -770,7 +683,9 @@ util_format_x8z24_unorm_pack_z_float(uint8_t *restrict dst_row, unsigned dst_str
       const float *src = src_row;
       uint32_t *dst = (uint32_t *)dst_row;
       for(x = 0; x < width; ++x) {
-         *dst++ = z32_float_to_z24_unorm(*src++) << 8;
+         uint32_t value;
+         value = z32_float_to_z24_unorm(*src++) << 8;
+         *dst++ = util_cpu_to_le32(value);
       }
       dst_row += dst_stride/sizeof(*dst_row);
       src_row += src_stride/sizeof(*src_row);
@@ -778,8 +693,8 @@ util_format_x8z24_unorm_pack_z_float(uint8_t *restrict dst_row, unsigned dst_str
 }
 
 void
-util_format_x8z24_unorm_unpack_z_32unorm(uint32_t *restrict dst_row, unsigned dst_stride,
-                                         const uint8_t *restrict src_row, unsigned src_stride,
+util_format_x8z24_unorm_unpack_z_32unorm(uint32_t *dst_row, unsigned dst_stride,
+                                         const uint8_t *src_row, unsigned src_stride,
                                          unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -787,7 +702,8 @@ util_format_x8z24_unorm_unpack_z_32unorm(uint32_t *restrict dst_row, unsigned ds
       uint32_t *dst = dst_row;
       const uint32_t *src = (const uint32_t *)src_row;
       for(x = 0; x < width; ++x) {
-         *dst++ = z24_unorm_to_z32_unorm((*src++) >> 8);
+         uint32_t value = util_cpu_to_le32(*src++);
+         *dst++ = z24_unorm_to_z32_unorm(value >> 8);
       }
       src_row += src_stride/sizeof(*src_row);
       dst_row += dst_stride/sizeof(*dst_row);
@@ -795,8 +711,8 @@ util_format_x8z24_unorm_unpack_z_32unorm(uint32_t *restrict dst_row, unsigned ds
 }
 
 void
-util_format_x8z24_unorm_pack_z_32unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                                       const uint32_t *restrict src_row, unsigned src_stride,
+util_format_x8z24_unorm_pack_z_32unorm(uint8_t *dst_row, unsigned dst_stride,
+                                       const uint32_t *src_row, unsigned src_stride,
                                        unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -804,7 +720,9 @@ util_format_x8z24_unorm_pack_z_32unorm(uint8_t *restrict dst_row, unsigned dst_s
       const uint32_t *src = src_row;
       uint32_t *dst = (uint32_t *)dst_row;
       for(x = 0; x < width; ++x) {
-         *dst++ = z32_unorm_to_z24_unorm(*src++) << 8;
+         uint32_t value;
+         value = z32_unorm_to_z24_unorm(*src++) << 8;
+         *dst++ = util_cpu_to_le32(value);
       }
       dst_row += dst_stride/sizeof(*dst_row);
       src_row += src_stride/sizeof(*src_row);
@@ -812,8 +730,8 @@ util_format_x8z24_unorm_pack_z_32unorm(uint8_t *restrict dst_row, unsigned dst_s
 }
 
 void
-util_format_z32_float_s8x24_uint_unpack_z_float(float *restrict dst_row, unsigned dst_stride,
-                                                   const uint8_t *restrict src_row, unsigned src_stride,
+util_format_z32_float_s8x24_uint_unpack_z_float(float *dst_row, unsigned dst_stride,
+                                                   const uint8_t *src_row, unsigned src_stride,
                                                    unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -831,8 +749,8 @@ util_format_z32_float_s8x24_uint_unpack_z_float(float *restrict dst_row, unsigne
 }
 
 void
-util_format_z32_float_s8x24_uint_pack_z_float(uint8_t *restrict dst_row, unsigned dst_stride,
-                                                 const float *restrict src_row, unsigned src_stride,
+util_format_z32_float_s8x24_uint_pack_z_float(uint8_t *dst_row, unsigned dst_stride,
+                                                 const float *src_row, unsigned src_stride,
                                                  unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -850,8 +768,8 @@ util_format_z32_float_s8x24_uint_pack_z_float(uint8_t *restrict dst_row, unsigne
 }
 
 void
-util_format_z32_float_s8x24_uint_unpack_z_32unorm(uint32_t *restrict dst_row, unsigned dst_stride,
-                                                     const uint8_t *restrict src_row, unsigned src_stride,
+util_format_z32_float_s8x24_uint_unpack_z_32unorm(uint32_t *dst_row, unsigned dst_stride,
+                                                     const uint8_t *src_row, unsigned src_stride,
                                                      unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -859,7 +777,7 @@ util_format_z32_float_s8x24_uint_unpack_z_32unorm(uint32_t *restrict dst_row, un
       uint32_t *dst = dst_row;
       const float *src = (const float *)src_row;
       for(x = 0; x < width; ++x) {
-         *dst = z32_float_to_z32_unorm(CLAMP(*src, 0.0f, 1.0f));
+         *dst = z32_float_to_z32_unorm(*src);
          src += 2;
          dst += 1;
       }
@@ -869,8 +787,8 @@ util_format_z32_float_s8x24_uint_unpack_z_32unorm(uint32_t *restrict dst_row, un
 }
 
 void
-util_format_z32_float_s8x24_uint_pack_z_32unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                                                   const uint32_t *restrict src_row, unsigned src_stride,
+util_format_z32_float_s8x24_uint_pack_z_32unorm(uint8_t *dst_row, unsigned dst_stride,
+                                                   const uint32_t *src_row, unsigned src_stride,
                                                    unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -878,8 +796,7 @@ util_format_z32_float_s8x24_uint_pack_z_32unorm(uint8_t *restrict dst_row, unsig
       const uint32_t *src = src_row;
       float *dst = (float *)dst_row;
       for(x = 0; x < width; ++x) {
-         *dst = z32_unorm_to_z32_float(*src++);
-         dst += 2;
+         *dst++ = z32_unorm_to_z32_float(*src++);
       }
       dst_row += dst_stride/sizeof(*dst_row);
       src_row += src_stride/sizeof(*src_row);
@@ -887,17 +804,17 @@ util_format_z32_float_s8x24_uint_pack_z_32unorm(uint8_t *restrict dst_row, unsig
 }
 
 void
-util_format_z32_float_s8x24_uint_unpack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stride,
-                                                      const uint8_t *restrict src_row, unsigned src_stride,
+util_format_z32_float_s8x24_uint_unpack_s_8uint(uint8_t *dst_row, unsigned dst_stride,
+                                                      const uint8_t *src_row, unsigned src_stride,
                                                       unsigned width, unsigned height)
 {
    unsigned x, y;
    for(y = 0; y < height; ++y) {
       uint8_t *dst = dst_row;
-      const uint32_t *src = (uint32_t *)(src_row + 4);
+      const uint8_t *src = src_row + 4;
       for(x = 0; x < width; ++x) {
          *dst = *src;
-         src += 2;
+         src += 8;
          dst += 1;
       }
       src_row += src_stride/sizeof(*src_row);
@@ -906,8 +823,8 @@ util_format_z32_float_s8x24_uint_unpack_s_8uint(uint8_t *restrict dst_row, unsig
 }
 
 void
-util_format_z32_float_s8x24_uint_pack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stride,
-                                                    const uint8_t *restrict src_row, unsigned src_stride,
+util_format_z32_float_s8x24_uint_pack_s_8uint(uint8_t *dst_row, unsigned dst_stride,
+                                                    const uint8_t *src_row, unsigned src_stride,
                                                     unsigned width, unsigned height)
 {
    unsigned x, y;
@@ -915,7 +832,7 @@ util_format_z32_float_s8x24_uint_pack_s_8uint(uint8_t *restrict dst_row, unsigne
       const uint8_t *src = src_row;
       uint32_t *dst = ((uint32_t *)dst_row) + 1;
       for(x = 0; x < width; ++x) {
-         *dst = *src;
+         *dst = util_cpu_to_le32(*src);
          src += 1;
          dst += 2;
       }
@@ -926,7 +843,7 @@ util_format_z32_float_s8x24_uint_pack_s_8uint(uint8_t *restrict dst_row, unsigne
 
 
 void
-util_format_x24s8_uint_unpack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stride, const uint8_t *restrict src_row, unsigned src_stride, unsigned width, unsigned height)
+util_format_x24s8_uint_unpack_s_8uint(uint8_t *dst_row, unsigned dst_stride, const uint8_t *src_row, unsigned src_stride, unsigned width, unsigned height)
 {
    util_format_z24_unorm_s8_uint_unpack_s_8uint(dst_row, dst_stride,
 						      src_row, src_stride,
@@ -934,7 +851,7 @@ util_format_x24s8_uint_unpack_s_8uint(uint8_t *restrict dst_row, unsigned dst_st
 }
 
 void
-util_format_x24s8_uint_pack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stride, const uint8_t *restrict src_row, unsigned src_stride, unsigned width, unsigned height)
+util_format_x24s8_uint_pack_s_8uint(uint8_t *dst_row, unsigned dst_stride, const uint8_t *src_row, unsigned src_stride, unsigned width, unsigned height)
 {
    util_format_z24_unorm_s8_uint_pack_s_8uint(dst_row, dst_stride,
 						    src_row, src_stride,
@@ -942,7 +859,7 @@ util_format_x24s8_uint_pack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stri
 }
 
 void
-util_format_s8x24_uint_unpack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stride, const uint8_t *restrict src_row, unsigned src_stride, unsigned width, unsigned height)
+util_format_s8x24_uint_unpack_s_8uint(uint8_t *dst_row, unsigned dst_stride, const uint8_t *src_row, unsigned src_stride, unsigned width, unsigned height)
 {
    util_format_s8_uint_z24_unorm_unpack_s_8uint(dst_row, dst_stride,
 						      src_row, src_stride,
@@ -950,7 +867,7 @@ util_format_s8x24_uint_unpack_s_8uint(uint8_t *restrict dst_row, unsigned dst_st
 }
 
 void
-util_format_s8x24_uint_pack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stride, const uint8_t *restrict src_row, unsigned src_stride, unsigned width, unsigned height)
+util_format_s8x24_uint_pack_s_8uint(uint8_t *dst_row, unsigned dst_stride, const uint8_t *src_row, unsigned src_stride, unsigned width, unsigned height)
 {
    util_format_s8_uint_z24_unorm_pack_s_8uint(dst_row, dst_stride,
 						      src_row, src_stride,
@@ -958,8 +875,8 @@ util_format_s8x24_uint_pack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stri
 }
 
 void
-util_format_x32_s8x24_uint_unpack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stride,
-						const uint8_t *restrict src_row, unsigned src_stride,
+util_format_x32_s8x24_uint_unpack_s_8uint(uint8_t *dst_row, unsigned dst_stride,
+						const uint8_t *src_row, unsigned src_stride,
 						unsigned width, unsigned height)
 {
    util_format_z32_float_s8x24_uint_unpack_s_8uint(dst_row, dst_stride,
@@ -969,8 +886,8 @@ util_format_x32_s8x24_uint_unpack_s_8uint(uint8_t *restrict dst_row, unsigned ds
 }
 
 void
-util_format_x32_s8x24_uint_pack_s_8uint(uint8_t *restrict dst_row, unsigned dst_stride,
-					      const uint8_t *restrict src_row, unsigned src_stride,
+util_format_x32_s8x24_uint_pack_s_8uint(uint8_t *dst_row, unsigned dst_stride,
+					      const uint8_t *src_row, unsigned src_stride,
 					      unsigned width, unsigned height)
 {
    util_format_z32_float_s8x24_uint_pack_s_8uint(dst_row, dst_stride,

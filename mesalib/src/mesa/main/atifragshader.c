@@ -21,20 +21,15 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include "util/glheader.h"
+#include "main/glheader.h"
 #include "main/context.h"
 #include "main/hash.h"
-
+#include "main/imports.h"
 #include "main/macros.h"
 #include "main/enums.h"
 #include "main/mtypes.h"
 #include "main/atifragshader.h"
 #include "program/program.h"
-#include "program/prog_instruction.h"
-#include "util/u_memory.h"
-#include "api_exec_decl.h"
-
-#include "state_tracker/st_program.h"
 
 #define MESA_DEBUG_ATI_FS 0
 
@@ -56,17 +51,6 @@ _mesa_new_ati_fragment_shader(struct gl_context *ctx, GLuint id)
    return s;
 }
 
-static struct gl_program *
-new_ati_fs(struct gl_context *ctx, struct ati_fragment_shader *curProg)
-{
-   struct gl_program *prog = rzalloc(NULL, struct gl_program);
-   if (!prog)
-      return NULL;
-
-   _mesa_init_gl_program(prog, MESA_SHADER_FRAGMENT, curProg->Id, true);
-   prog->ati_fs = curProg;
-   return prog;
-}
 
 /**
  * Delete the given ati fragment shader
@@ -84,7 +68,7 @@ _mesa_delete_ati_fragment_shader(struct gl_context *ctx, struct ati_fragment_sha
       free(s->SetupInst[i]);
    }
    _mesa_reference_program(ctx, &s->Program, NULL);
-   FREE(s);
+   free(s);
 }
 
 
@@ -125,7 +109,7 @@ create_dst_mod_str(GLuint mod)
    return ret_str;
 }
 
-static char *atifs_ops[] = {"ColorFragmentOp1ATI", "ColorFragmentOp2ATI", "ColorFragmentOp3ATI",
+static char *atifs_ops[] = {"ColorFragmentOp1ATI", "ColorFragmentOp2ATI", "ColorFragmentOp3ATI", 
 			    "AlphaFragmentOp1ATI", "AlphaFragmentOp2ATI", "AlphaFragmentOp3ATI" };
 
 static void debug_op(GLint optype, GLuint arg_count, GLenum op, GLuint dst,
@@ -137,14 +121,14 @@ static void debug_op(GLint optype, GLuint arg_count, GLenum op, GLuint dst,
   char *op_name;
 
   op_name = atifs_ops[(arg_count-1)+(optype?3:0)];
-
+  
   fprintf(stderr, "%s(%s, %s", op_name, _mesa_enum_to_string(op),
 	      _mesa_enum_to_string(dst));
   if (optype == ATI_FRAGMENT_SHADER_COLOR_OP)
     fprintf(stderr, ", %d", dstMask);
-
+  
   fprintf(stderr, ", %s", create_dst_mod_str(dstMod));
-
+  
   fprintf(stderr, ", %s, %s, %d", _mesa_enum_to_string(arg1),
 	      _mesa_enum_to_string(arg1Rep), arg1Mod);
   if (arg_count>1)
@@ -216,14 +200,14 @@ _mesa_GenFragmentShadersATI(GLuint range)
       return 0;
    }
 
-   _mesa_HashLockMutex(&ctx->Shared->ATIShaders);
+   _mesa_HashLockMutex(ctx->Shared->ATIShaders);
 
-   first = _mesa_HashFindFreeKeyBlock(&ctx->Shared->ATIShaders, range);
+   first = _mesa_HashFindFreeKeyBlock(ctx->Shared->ATIShaders, range);
    for (i = 0; i < range; i++) {
-      _mesa_HashInsertLocked(&ctx->Shared->ATIShaders, first + i, &DummyShader);
+      _mesa_HashInsertLocked(ctx->Shared->ATIShaders, first + i, &DummyShader);
    }
 
-   _mesa_HashUnlockMutex(&ctx->Shared->ATIShaders);
+   _mesa_HashUnlockMutex(ctx->Shared->ATIShaders);
 
    return first;
 }
@@ -240,7 +224,7 @@ _mesa_BindFragmentShaderATI(GLuint id)
       return;
    }
 
-   FLUSH_VERTICES(ctx, _NEW_PROGRAM, 0);
+   FLUSH_VERTICES(ctx, _NEW_PROGRAM);
 
    if (curProg->Id == id) {
       return;
@@ -250,7 +234,7 @@ _mesa_BindFragmentShaderATI(GLuint id)
    if (curProg->Id != 0) {
       curProg->RefCount--;
       if (curProg->RefCount <= 0) {
-	 _mesa_HashRemove(&ctx->Shared->ATIShaders, id);
+	 _mesa_HashRemove(ctx->Shared->ATIShaders, id);
       }
    }
 
@@ -260,7 +244,7 @@ _mesa_BindFragmentShaderATI(GLuint id)
    }
    else {
       newProg = (struct ati_fragment_shader *)
-         _mesa_HashLookup(&ctx->Shared->ATIShaders, id);
+         _mesa_HashLookup(ctx->Shared->ATIShaders, id);
       if (!newProg || newProg == &DummyShader) {
 	 /* allocate a new program now */
 	 newProg = _mesa_new_ati_fragment_shader(ctx, id);
@@ -268,7 +252,7 @@ _mesa_BindFragmentShaderATI(GLuint id)
 	    _mesa_error(ctx, GL_OUT_OF_MEMORY, "glBindFragmentShaderATI");
 	    return;
 	 }
-	 _mesa_HashInsert(&ctx->Shared->ATIShaders, id, newProg);
+	 _mesa_HashInsert(ctx->Shared->ATIShaders, id, newProg);
       }
 
    }
@@ -293,20 +277,20 @@ _mesa_DeleteFragmentShaderATI(GLuint id)
 
    if (id != 0) {
       struct ati_fragment_shader *prog = (struct ati_fragment_shader *)
-	 _mesa_HashLookup(&ctx->Shared->ATIShaders, id);
+	 _mesa_HashLookup(ctx->Shared->ATIShaders, id);
       if (prog == &DummyShader) {
-	 _mesa_HashRemove(&ctx->Shared->ATIShaders, id);
+	 _mesa_HashRemove(ctx->Shared->ATIShaders, id);
       }
       else if (prog) {
 	 if (ctx->ATIFragmentShader.Current &&
 	     ctx->ATIFragmentShader.Current->Id == id) {
-	     FLUSH_VERTICES(ctx, _NEW_PROGRAM, 0);
+	     FLUSH_VERTICES(ctx, _NEW_PROGRAM);
 	    _mesa_BindFragmentShaderATI(0);
 	 }
       }
 
       /* The ID is immediately available for re-use now */
-      _mesa_HashRemove(&ctx->Shared->ATIShaders, id);
+      _mesa_HashRemove(ctx->Shared->ATIShaders, id);
       if (prog) {
 	 prog->RefCount--;
 	 if (prog->RefCount <= 0) {
@@ -328,7 +312,7 @@ _mesa_BeginFragmentShaderATI(void)
       return;
    }
 
-   FLUSH_VERTICES(ctx, _NEW_PROGRAM, 0);
+   FLUSH_VERTICES(ctx, _NEW_PROGRAM);
 
    /* if the shader was already defined free instructions and get new ones
       (or, could use the same mem but would need to reinitialize) */
@@ -424,38 +408,17 @@ _mesa_EndFragmentShaderATI(void)
    }
 #endif
 
-   struct gl_program *prog = new_ati_fs(ctx,
-                                        ctx->ATIFragmentShader.Current);
-   _mesa_reference_program(ctx, &ctx->ATIFragmentShader.Current->Program,
-                           NULL);
-   /* Don't use _mesa_reference_program(), just take ownership */
-   ctx->ATIFragmentShader.Current->Program = prog;
-
-   prog->SamplersUsed = 0;
-   prog->Parameters = _mesa_new_parameter_list();
-
-   /* fill in SamplersUsed, TexturesUsed */
-   for (unsigned pass = 0; pass < curProg->NumPasses; pass++) {
-      for (unsigned r = 0; r < MAX_NUM_FRAGMENT_REGISTERS_ATI; r++) {
-         struct atifs_setupinst *texinst = &curProg->SetupInst[pass][r];
-
-         if (texinst->Opcode == ATI_FRAGMENT_SHADER_SAMPLE_OP) {
-            /* by default there is 1:1 mapping between samplers and textures */
-            prog->SamplersUsed |= (1 << r);
-            /* the target is unknown here, it will be fixed in the draw call */
-            prog->TexturesUsed[r] = TEXTURE_2D_BIT;
-         }
-      }
+   if (ctx->Driver.NewATIfs) {
+      struct gl_program *prog = ctx->Driver.NewATIfs(ctx,
+                                                     ctx->ATIFragmentShader.Current);
+      _mesa_reference_program(ctx, &ctx->ATIFragmentShader.Current->Program,
+                                   NULL);
+      /* Don't use _mesa_reference_program(), just take ownership */
+      ctx->ATIFragmentShader.Current->Program = prog;
    }
 
-   /* we always have the ATI_fs constants */
-   for (unsigned i = 0; i < MAX_NUM_FRAGMENT_CONSTANTS_ATI; i++) {
-      _mesa_add_parameter(prog->Parameters, PROGRAM_UNIFORM,
-                          NULL, 4, GL_FLOAT, NULL, NULL, true);
-   }
-
-   if (!st_program_string_notify(ctx, GL_FRAGMENT_SHADER_ATI,
-                                 curProg->Program)) {
+   if (!ctx->Driver.ProgramStringNotify(ctx, GL_FRAGMENT_SHADER_ATI,
+                                        curProg->Program)) {
       ctx->ATIFragmentShader.Current->isValid = GL_FALSE;
       /* XXX is this the right error? */
       _mesa_error(ctx, GL_INVALID_OPERATION,
@@ -745,22 +708,7 @@ _mesa_FragmentOpXATI(GLint optype, GLuint arg_count, GLenum op, GLuint dst,
 
    curI->DstReg[optype].Index = dst;
    curI->DstReg[optype].dstMod = dstMod;
-   /* From the ATI_fs spec:
-    *
-    *     "The <dstMask> parameter specifies which of the color components in
-    *      <dst> will be written (ColorFragmentOp[1..3]ATI only).  This can
-    *      either be NONE, in which case there is no mask and everything is
-    *      written, or the bitwise-or of RED_BIT_ATI, GREEN_BIT_ATI, and
-    *      BLUE_BIT_ATI."
-    *
-    * For AlphaFragmentOp, it always writes alpha.
-    */
-   if (optype == ATI_FRAGMENT_SHADER_ALPHA_OP)
-      curI->DstReg[optype].dstMask = WRITEMASK_W;
-   else if (dstMask == GL_NONE)
-      curI->DstReg[optype].dstMask = WRITEMASK_XYZ;
-   else
-      curI->DstReg[optype].dstMask = dstMask;
+   curI->DstReg[optype].dstMask = dstMask;
 
 #if MESA_DEBUG_ATI_FS
    debug_op(optype, arg_count, op, dst, dstMask, dstMod, arg1, arg1Rep, arg1Mod, arg2, arg2Rep, arg2Mod, arg3, arg3Rep, arg3Mod);
@@ -848,8 +796,7 @@ _mesa_SetFragmentShaderConstantATI(GLuint dst, const GLfloat * value)
       curProg->LocalConstDef |= 1 << dstindex;
    }
    else {
-      FLUSH_VERTICES(ctx, 0, 0);
-      ctx->NewDriverState |= ST_NEW_FS_CONSTANTS;
+      FLUSH_VERTICES(ctx, _NEW_PROGRAM);
       COPY_4V(ctx->ATIFragmentShader.GlobalConstants[dstindex], value);
    }
 }

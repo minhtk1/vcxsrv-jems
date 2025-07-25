@@ -47,10 +47,7 @@ extern "C" {
  */
 
 struct blob {
-   /* The data actually written to the blob. Never read or write this directly
-    * when serializing, use blob_reserve_* and blob_overwrite_* instead which
-    * check for out_of_memory and handle fixed-size blobs correctly.
-    */
+   /* The data actually written to the blob. */
    uint8_t *data;
 
    /** Number of bytes that have been allocated for \c data. */
@@ -66,7 +63,7 @@ struct blob {
    bool fixed_allocation;
 
    /**
-    * True if we've ever failed to realloc or if we go past the end of a fixed
+    * True if we've ever failed to realloc or if we go pas the end of a fixed
     * allocation blob.
     */
    bool out_of_memory;
@@ -122,16 +119,6 @@ blob_finish(struct blob *blob)
 
 void
 blob_finish_get_buffer(struct blob *blob, void **buffer, size_t *size);
-
-/**
- * Aligns the blob to the given alignment.
- *
- * \see blob_reader_align
- *
- * \return True unless allocation fails
- */
-bool
-blob_align(struct blob *blob, size_t alignment);
 
 /**
  * Add some unstructured, fixed-size data to a blob.
@@ -195,21 +182,6 @@ blob_overwrite_bytes(struct blob *blob,
  */
 bool
 blob_write_uint8(struct blob *blob, uint8_t value);
-
-/**
- * Overwrite a uint8_t previously written to the blob.
- *
- * Writes a uint8_t value to an existing portion of the blob at an offset of
- * \offset.  This data range must have previously been written to the blob by
- * one of the blob_write_* calls.
- *
- * \return True unless the requested position or position+to_write lie outside
- * the current blob's size.
- */
-bool
-blob_overwrite_uint8(struct blob *blob,
-                     size_t offset,
-                     uint8_t value);
 
 /**
  * Add a uint16_t to a blob.
@@ -325,17 +297,6 @@ blob_write_string(struct blob *blob, const char *str);
  */
 void
 blob_reader_init(struct blob_reader *blob, const void *data, size_t size);
-
-/**
- * Align the current offset of the blob reader to the given alignment.
- *
- * This may be useful if you need the result of blob_read_bytes to have a
- * particular alignment.  Note that this only aligns relative to blob->data
- * and the alignment of the resulting pointer is only guaranteed if blob->data
- * is also aligned to the requested alignment.
- */
-void
-blob_reader_align(struct blob_reader *blob, size_t alignment);
 
 /**
  * Read some unstructured, fixed-size data from the current location, (and

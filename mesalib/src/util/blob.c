@@ -23,8 +23,8 @@
 
 #include <string.h>
 
+#include "main/macros.h"
 #include "blob.h"
-#include "u_math.h"
 
 #ifdef HAVE_VALGRIND
 #include <valgrind.h>
@@ -82,10 +82,10 @@ grow_to_fit(struct blob *blob, size_t additional)
  *
  * \return True unless allocation fails
  */
-bool
-blob_align(struct blob *blob, size_t alignment)
+static bool
+align_blob(struct blob *blob, size_t alignment)
 {
-   const size_t new_size = align_uintptr(blob->size, alignment);
+   const size_t new_size = ALIGN(blob->size, alignment);
 
    if (blob->size < new_size) {
       if (!grow_to_fit(blob, new_size - blob->size))
@@ -99,10 +99,10 @@ blob_align(struct blob *blob, size_t alignment)
    return true;
 }
 
-void
-blob_reader_align(struct blob_reader *blob, size_t alignment)
+static void
+align_blob_reader(struct blob_reader *blob, size_t alignment)
 {
-   blob->current = blob->data + align_uintptr(blob->current - blob->data, alignment);
+   blob->current = blob->data + ALIGN(blob->current - blob->data, alignment);
 }
 
 void
@@ -160,10 +160,10 @@ blob_write_bytes(struct blob *blob, const void *bytes, size_t to_write)
    if (! grow_to_fit(blob, to_write))
        return false;
 
-   if (blob->data && to_write > 0) {
-      VG(VALGRIND_CHECK_MEM_IS_DEFINED(bytes, to_write));
+   VG(VALGRIND_CHECK_MEM_IS_DEFINED(bytes, to_write));
+
+   if (blob->data)
       memcpy(blob->data + blob->size, bytes, to_write);
-   }
    blob->size += to_write;
 
    return true;
@@ -186,14 +186,14 @@ blob_reserve_bytes(struct blob *blob, size_t to_write)
 intptr_t
 blob_reserve_uint32(struct blob *blob)
 {
-   blob_align(blob, sizeof(uint32_t));
+   align_blob(blob, sizeof(uint32_t));
    return blob_reserve_bytes(blob, sizeof(uint32_t));
 }
 
 intptr_t
 blob_reserve_intptr(struct blob *blob)
 {
-   blob_align(blob, sizeof(intptr_t));
+   align_blob(blob, sizeof(intptr_t));
    return blob_reserve_bytes(blob, sizeof(intptr_t));
 }
 
@@ -201,7 +201,7 @@ blob_reserve_intptr(struct blob *blob)
 bool                                                     \
 name(struct blob *blob, type value)                      \
 {                                                        \
-   blob_align(blob, sizeof(value));                      \
+   align_blob(blob, sizeof(value));                      \
    return blob_write_bytes(blob, &value, sizeof(value)); \
 }
 
@@ -212,16 +212,7 @@ BLOB_WRITE_TYPE(blob_write_uint64, uint64_t)
 BLOB_WRITE_TYPE(blob_write_intptr, intptr_t)
 
 #define ASSERT_ALIGNED(_offset, _align) \
-   assert(align_uintptr((_offset), (_align)) == (_offset))
-
-bool
-blob_overwrite_uint8 (struct blob *blob,
-                      size_t offset,
-                      uint8_t value)
-{
-   ASSERT_ALIGNED(offset, sizeof(value));
-   return blob_overwrite_bytes(blob, offset, &value, sizeof(value));
-}
+   assert(ALIGN((_offset), (_align)) == (_offset))
 
 bool
 blob_overwrite_uint32 (struct blob *blob,
@@ -295,7 +286,7 @@ blob_copy_bytes(struct blob_reader *blob, void *dest, size_t size)
    const void *bytes;
 
    bytes = blob_read_bytes(blob, size);
-   if (bytes == NULL || size == 0)
+   if (bytes == NULL)
       return;
 
    memcpy(dest, bytes, size);
@@ -308,14 +299,22 @@ blob_skip_bytes(struct blob_reader *blob, size_t size)
       blob->current += size;
 }
 
+/* These next three read functions have identical form. If we add any beyond
+ * these first three we should probably switch to generating these with a
+ * preprocessor macro.
+*/
+
 #define BLOB_READ_TYPE(name, type)         \
 type                                       \
 name(struct blob_reader *blob)             \
 {                                          \
-   type ret = 0;                           \
+   type ret;                               \
    int size = sizeof(ret);                 \
-   blob_reader_align(blob, size);          \
-   blob_copy_bytes(blob, &ret, size);      \
+   align_blob_reader(blob, size);          \
+   if (! ensure_can_read(blob, size))      \
+      return 0;                            \
+   ret = *((type*) blob->current);         \
+   blob->current += size;                  \
    return ret;                             \
 }
 

@@ -27,11 +27,10 @@
 #include <assert.h>
 #include <stdlib.h>
 
-#include "util/hash_table.h"
-#include "util/u_math.h"
-
 #include "etnaviv_drmif.h"
 #include "etnaviv_priv.h"
+
+static pthread_mutex_t idx_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void *grow(void *ptr, uint32_t nr, uint32_t *max, uint32_t sz)
 {
@@ -57,13 +56,13 @@ void etna_cmd_stream_realloc(struct etna_cmd_stream *stream, size_t n)
 	void *buffer;
 
 	/*
-	 * Increase the command buffer size by 4 kiB. Here we pick 4 kiB
+	 * Increase the command buffer size by 1 kiB. Here we pick 1 kiB
 	 * increment to prevent it from growing too much too quickly.
 	 */
-	size = align_uintptr(stream->size + n, 1024);
+	size = ALIGN(stream->size + n, 1024);
 
 	/* Command buffer is too big for older kernel versions */
-	if (size > 0x4000)
+	if (size >= 32768)
 		goto error;
 
 	buffer = realloc(stream->buffer, size * 4);
@@ -76,7 +75,7 @@ void etna_cmd_stream_realloc(struct etna_cmd_stream *stream, size_t n)
 	return;
 
 error:
-	DEBUG_MSG("command buffer too long, forcing flush.");
+	WARN_MSG("command buffer too long, forcing flush.");
 	etna_cmd_stream_force_flush(stream);
 }
 
@@ -118,8 +117,6 @@ struct etna_cmd_stream *etna_cmd_stream_new(struct etna_pipe *pipe,
 	stream->force_flush = force_flush;
 	stream->force_flush_priv = priv;
 
-	stream->bo_table = _mesa_pointer_hash_table_create(NULL);
-
 	return &stream->base;
 
 fail:
@@ -133,11 +130,7 @@ void etna_cmd_stream_del(struct etna_cmd_stream *stream)
 {
 	struct etna_cmd_stream_priv *priv = etna_cmd_stream_priv(stream);
 
-	_mesa_hash_table_destroy(priv->bo_table, NULL);
-
 	free(stream->buffer);
-	free(priv->bos);
-	free(priv->submit.bos);
 	free(priv->submit.relocs);
 	free(priv->submit.pmrs);
 	free(priv);
@@ -178,19 +171,31 @@ static uint32_t bo2idx(struct etna_cmd_stream *stream, struct etna_bo *bo,
 		uint32_t flags)
 {
 	struct etna_cmd_stream_priv *priv = etna_cmd_stream_priv(stream);
-	uint32_t hash = _mesa_hash_pointer(bo);
-	struct hash_entry *entry;
 	uint32_t idx;
 
-	entry = _mesa_hash_table_search_pre_hashed(priv->bo_table, hash, bo);
+	pthread_mutex_lock(&idx_lock);
 
-	if (entry) {
-		idx = (uint32_t)(uintptr_t)entry->data;
+	if (bo->current_stream == stream) {
+		idx = bo->idx;
 	} else {
-		idx = append_bo(stream, bo);
-		_mesa_hash_table_insert_pre_hashed(priv->bo_table, hash, bo,
-			(void *)(uintptr_t)idx);
+		void *val;
+
+		if (!priv->bo_table)
+			priv->bo_table = drmHashCreate();
+
+		if (!drmHashLookup(priv->bo_table, bo->handle, &val)) {
+			/* found */
+			idx = (uint32_t)(uintptr_t)val;
+		} else {
+			idx = append_bo(stream, bo);
+			val = (void *)(uintptr_t)idx;
+			drmHashInsert(priv->bo_table, bo->handle, val);
+		}
+
+		bo->current_stream = stream;
+		bo->idx = idx;
 	}
+	pthread_mutex_unlock(&idx_lock);
 
 	if (flags & ETNA_RELOC_READ)
 		priv->submit.bos[idx].flags |= ETNA_SUBMIT_BO_READ;
@@ -201,14 +206,15 @@ static uint32_t bo2idx(struct etna_cmd_stream *stream, struct etna_bo *bo,
 }
 
 void etna_cmd_stream_flush(struct etna_cmd_stream *stream, int in_fence_fd,
-		int *out_fence_fd, bool is_noop)
+		int *out_fence_fd)
 {
 	struct etna_cmd_stream_priv *priv = etna_cmd_stream_priv(stream);
+	int ret, id = priv->pipe->id;
 	struct etna_gpu *gpu = priv->pipe->gpu;
 
 	struct drm_etnaviv_gem_submit req = {
 		.pipe = gpu->core,
-		.exec_state = priv->pipe->id,
+		.exec_state = id,
 		.bos = VOID2U64(priv->submit.bos),
 		.nr_bos = priv->submit.nr_bos,
 		.relocs = VOID2U64(priv->submit.relocs),
@@ -230,26 +236,25 @@ void etna_cmd_stream_flush(struct etna_cmd_stream *stream, int in_fence_fd,
 	if (gpu->dev->use_softpin)
 		req.flags |= ETNA_SUBMIT_SOFTPIN;
 
-	if (stream->offset == priv->offset_end_of_context_init && !out_fence_fd &&
-	    !priv->submit.nr_pmrs)
-		is_noop = true;
+	ret = drmCommandWriteRead(gpu->dev->fd, DRM_ETNAVIV_GEM_SUBMIT,
+			&req, sizeof(req));
 
-	if (likely(!is_noop)) {
-		int ret;
+	if (ret)
+		ERROR_MSG("submit failed: %d (%s)", ret, strerror(errno));
+	else
+		priv->last_timestamp = req.fence;
 
-		ret = drmCommandWriteRead(gpu->dev->fd, DRM_ETNAVIV_GEM_SUBMIT,
-				&req, sizeof(req));
+	for (uint32_t i = 0; i < priv->nr_bos; i++) {
+		struct etna_bo *bo = priv->bos[i];
 
-		if (ret)
-			ERROR_MSG("submit failed: %d (%s)", ret, strerror(errno));
-		else
-			priv->last_timestamp = req.fence;
+		bo->current_stream = NULL;
+		etna_bo_del(bo);
 	}
 
-	for (uint32_t i = 0; i < priv->nr_bos; i++)
-		etna_bo_del(priv->bos[i]);
-
-	_mesa_hash_table_clear(priv->bo_table, NULL);
+	if (priv->bo_table) {
+		drmHashDestroy(priv->bo_table);
+		priv->bo_table = NULL;
+	}
 
 	if (out_fence_fd)
 		*out_fence_fd = req.fence_fd;
@@ -259,7 +264,6 @@ void etna_cmd_stream_flush(struct etna_cmd_stream *stream, int in_fence_fd,
 	priv->submit.nr_relocs = 0;
 	priv->submit.nr_pmrs = 0;
 	priv->nr_bos = 0;
-	priv->offset_end_of_context_init = 0;
 }
 
 void etna_cmd_stream_reloc(struct etna_cmd_stream *stream,
@@ -288,18 +292,6 @@ void etna_cmd_stream_ref_bo(struct etna_cmd_stream *stream, struct etna_bo *bo,
 		uint32_t flags)
 {
 	bo2idx(stream, bo, flags);
-}
-
-void etna_cmd_stream_mark_end_of_context_init(struct etna_cmd_stream *stream)
-{
-   struct etna_cmd_stream_priv *priv = etna_cmd_stream_priv(stream);
-
-   /* 
-    * All commands before the end of context init are guaranteed to only alter GPU internal
-    * state and have no externally visible side effects, so we can skip the submit if the
-    * command buffer contains only context init commands.
-    */
-   priv->offset_end_of_context_init = stream->offset;
 }
 
 void etna_cmd_stream_perf(struct etna_cmd_stream *stream, const struct etna_perf *p)

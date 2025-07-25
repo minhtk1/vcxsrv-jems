@@ -3,7 +3,7 @@ compiler/glsl/glcpp/glcpp-lex.c
 compiler/glsl/glcpp/glcpp-parse.c
 compiler/glsl/glcpp/glcpp-parse.h
 compiler/glsl/glcpp/glcpp-parse.output
-compiler/glsl/glsl_parser.hpp
+compiler/glsl/glsl_parser.h
 compiler/glsl/glsl_parser.output
 compiler/glsl/ir_expression_operation.h
 compiler/glsl/ir_expression_operation_constant.h
@@ -17,7 +17,6 @@ compiler/nir/nir_opcodes.h
 compiler/nir/nir_opt_algebraic.c
 compiler/spirv/spirv_info.c
 compiler/spirv/vtn_gather_types.c
-compiler/spirv/vtn_generator_ids.h
 mapi/glapi/gen/glapi_gentable.c
 mapi/glapi/gen/glapi_mapi_tmp.h
 mapi/glapi/gen/glapitable.h
@@ -40,12 +39,3 @@ mesa/program/program_parse.tab.c
 mesa/program/program_parse.tab.h
 util/format_srgb.c
 util/xmlpool/options.h
-util/driconf_static.h
-mesa/main/marshal_generated.h
-gallium/auxiliary/indices/u_indices_gen.c
-gallium/auxiliary/tr_util.h
-gallium/targets/dri/tr_util.c
-mesa/main/api_beginend_init.h
-mesa/main/unmarshal_table.c
-util/u_indices_gen.c
-util/u_unfilled_gen.c

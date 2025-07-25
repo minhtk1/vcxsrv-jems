@@ -39,10 +39,7 @@
 
 #include <stdint.h>
 #include <math.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "c99_compat.h"
 
 extern const float
 util_format_srgb_8unorm_to_linear_float_table[256];
@@ -162,8 +159,5 @@ util_format_srgb_to_linear_8unorm(uint8_t x)
    return util_format_srgb_to_linear_8unorm_table[x];
 }
 
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* U_FORMAT_SRGB_H_ */

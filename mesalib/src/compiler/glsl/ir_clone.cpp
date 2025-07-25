@@ -22,7 +22,7 @@
  */
 
 #include <string.h>
-#include "util/compiler.h"
+#include "main/compiler.h"
 #include "ir.h"
 #include "compiler/glsl_types.h"
 #include "util/hash_table.h"
@@ -210,7 +210,7 @@ ir_dereference_record::clone(void *mem_ctx, struct hash_table *ht) const
 ir_texture *
 ir_texture::clone(void *mem_ctx, struct hash_table *ht) const
 {
-   ir_texture *new_tex = new(mem_ctx) ir_texture(this->op, this->is_sparse);
+   ir_texture *new_tex = new(mem_ctx) ir_texture(this->op);
    new_tex->type = this->type;
 
    new_tex->sampler = this->sampler->clone(mem_ctx, ht);
@@ -218,10 +218,9 @@ ir_texture::clone(void *mem_ctx, struct hash_table *ht) const
       new_tex->coordinate = this->coordinate->clone(mem_ctx, ht);
    if (this->projector)
       new_tex->projector = this->projector->clone(mem_ctx, ht);
-   if (this->shadow_comparator)
+   if (this->shadow_comparator) {
       new_tex->shadow_comparator = this->shadow_comparator->clone(mem_ctx, ht);
-   if (this->clamp)
-      new_tex->clamp = this->clamp->clone(mem_ctx, ht);
+   }
 
    if (this->offset != NULL)
       new_tex->offset = this->offset->clone(mem_ctx, ht);
@@ -259,9 +258,17 @@ ir_texture::clone(void *mem_ctx, struct hash_table *ht) const
 ir_assignment *
 ir_assignment::clone(void *mem_ctx, struct hash_table *ht) const
 {
-   return new(mem_ctx) ir_assignment(this->lhs->clone(mem_ctx, ht),
-                                     this->rhs->clone(mem_ctx, ht),
-                                     this->write_mask);
+   ir_rvalue *new_condition = NULL;
+
+   if (this->condition)
+      new_condition = this->condition->clone(mem_ctx, ht);
+
+   ir_assignment *cloned =
+      new(mem_ctx) ir_assignment(this->lhs->clone(mem_ctx, ht),
+                                 this->rhs->clone(mem_ctx, ht),
+                                 new_condition);
+   cloned->write_mask = this->write_mask;
+   return cloned;
 }
 
 ir_function *
@@ -347,7 +354,6 @@ ir_constant::clone(void *mem_ctx, struct hash_table *ht) const
    case GLSL_TYPE_UINT8:
    case GLSL_TYPE_INT8:
    case GLSL_TYPE_SAMPLER:
-   case GLSL_TYPE_TEXTURE:
    case GLSL_TYPE_IMAGE:
       return new(mem_ctx) ir_constant(this->type, &this->value);
 
@@ -368,11 +374,9 @@ ir_constant::clone(void *mem_ctx, struct hash_table *ht) const
    case GLSL_TYPE_ERROR:
    case GLSL_TYPE_SUBROUTINE:
    case GLSL_TYPE_INTERFACE:
+   case GLSL_TYPE_FUNCTION:
       assert(!"Should not get here.");
       break;
-
-   case GLSL_TYPE_COOPERATIVE_MATRIX:
-      unreachable("unsupported base type cooperative matrix");
    }
 
    return NULL;

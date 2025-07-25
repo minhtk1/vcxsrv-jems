@@ -31,10 +31,10 @@
  * GL_ARB_texture_view functions
  */
 
-#include "util/glheader.h"
+#include "glheader.h"
 #include "context.h"
 #include "enums.h"
-
+#include "imports.h"
 #include "macros.h"
 #include "teximage.h"
 #include "texobj.h"
@@ -43,9 +43,6 @@
 #include "textureview.h"
 #include "stdbool.h"
 #include "mtypes.h"
-#include "api_exec_decl.h"
-
-#include "state_tracker/st_cb_texture.h"
 
 /* Table 3.X.2 (Compatible internal formats for TextureView)
     ---------------------------------------------------------------------------
@@ -172,7 +169,6 @@ static const struct internal_format_class_info compatible_internal_formats[] = {
    {GL_VIEW_CLASS_16_BITS, GL_RG8},
    {GL_VIEW_CLASS_16_BITS, GL_R16},
    {GL_VIEW_CLASS_16_BITS, GL_RG8_SNORM},
-   {GL_VIEW_CLASS_16_BITS, GL_SRG8_EXT},
    {GL_VIEW_CLASS_16_BITS, GL_R16_SNORM},
    {GL_VIEW_CLASS_8_BITS, GL_R8UI},
    {GL_VIEW_CLASS_8_BITS, GL_R8I},
@@ -489,35 +485,33 @@ _mesa_set_texture_view_state(struct gl_context *ctx,
     */
 
    texObj->Immutable = GL_TRUE;
-   texObj->External = GL_FALSE;
-   texObj->Attrib.ImmutableLevels = levels;
-   texObj->Attrib.MinLevel = 0;
-   texObj->Attrib.NumLevels = levels;
-   texObj->Attrib.MinLayer = 0;
-   texObj->Attrib.NumLayers = 1;
+   texObj->ImmutableLevels = levels;
+   texObj->MinLevel = 0;
+   texObj->NumLevels = levels;
+   texObj->MinLayer = 0;
+   texObj->NumLayers = 1;
    switch (target) {
    case GL_TEXTURE_1D_ARRAY:
-      texObj->Attrib.NumLayers = texImage->Height;
+      texObj->NumLayers = texImage->Height;
       break;
 
    case GL_TEXTURE_2D_MULTISAMPLE:
-      texObj->Attrib.NumLevels = 1;
-      texObj->Attrib.ImmutableLevels = 1;
+      texObj->NumLevels = 1;
+      texObj->ImmutableLevels = 1;
       break;
 
    case GL_TEXTURE_2D_MULTISAMPLE_ARRAY:
-      texObj->Attrib.NumLevels = 1;
-      texObj->Attrib.ImmutableLevels = 1;
-      FALLTHROUGH;
-      /* fallthrough to set NumLayers */
+      texObj->NumLevels = 1;
+      texObj->ImmutableLevels = 1;
+      /* fall through to set NumLayers */
 
    case GL_TEXTURE_2D_ARRAY:
    case GL_TEXTURE_CUBE_MAP_ARRAY:
-      texObj->Attrib.NumLayers = texImage->Depth;
+      texObj->NumLayers = texImage->Depth;
       break;
 
    case GL_TEXTURE_CUBE_MAP:
-      texObj->Attrib.NumLayers = 6;
+      texObj->NumLayers = 6;
       break;
    }
 }
@@ -544,8 +538,8 @@ texture_view(struct gl_context *ctx, struct gl_texture_object *origTexObj,
                                            internalformat, GL_NONE, GL_NONE);
    if (texFormat == MESA_FORMAT_NONE) return;
 
-   newViewNumLevels = MIN2(numlevels, origTexObj->Attrib.NumLevels - minlevel);
-   newViewNumLayers = MIN2(numlayers, origTexObj->Attrib.NumLayers - minlayer);
+   newViewNumLevels = MIN2(numlevels, origTexObj->NumLevels - minlevel);
+   newViewNumLayers = MIN2(numlayers, origTexObj->NumLayers - minlayer);
 
    faceTarget = _mesa_cube_face_target(origTexObj->Target, minlayer);
 
@@ -608,22 +602,6 @@ texture_view(struct gl_context *ctx, struct gl_texture_object *origTexObj,
    }
 
    if (!no_error) {
-      /* OpenGL 4.6 (Core Profile) - May 14, 2018, 8.18 Texture Views, p.271
-       *  An INVALID_OPERATION error is generated if the computed values of
-       * TEXTURE_VIEW_NUM_LEVELS or TEXTURE_VIEW_NUM_LAYERS for texture,
-       * as described above, are less than or equal to zero.
-       */
-      if (newViewNumLevels == 0) {
-         _mesa_error(ctx, GL_INVALID_OPERATION,
-                     "glTextureView(invalid minlevels or numlevels)");
-         return;
-      }
-      if (newViewNumLayers == 0) {
-         _mesa_error(ctx, GL_INVALID_OPERATION,
-                     "glTextureView(invalid minlayers or numlayers)");
-         return;
-      }
-
       /* If the dimensions of the original texture are larger than the maximum
        * supported dimensions of the new target, the error INVALID_OPERATION is
        * generated. For example, if the original texture has a TEXTURE_2D_ARRAY
@@ -639,9 +617,9 @@ texture_view(struct gl_context *ctx, struct gl_texture_object *origTexObj,
          return;
       }
 
-      sizeOK = st_TestProxyTexImage(ctx, target, 1, 0, texFormat,
-                                    origTexImage->NumSamples,
-                                    width, height, depth);
+      sizeOK = ctx->Driver.TestProxyTexImage(ctx, target, 1, 0, texFormat,
+                                             origTexImage->NumSamples,
+                                             width, height, depth);
       if (!sizeOK) {
          _mesa_error(ctx, GL_INVALID_OPERATION,
                      "glTextureView(invalid texture size)");
@@ -707,19 +685,18 @@ texture_view(struct gl_context *ctx, struct gl_texture_object *origTexObj,
       return; /* Already recorded error */
    }
 
-   texObj->Attrib.MinLevel = origTexObj->Attrib.MinLevel + minlevel;
-   texObj->Attrib.MinLayer = origTexObj->Attrib.MinLayer + minlayer;
-   texObj->Attrib.NumLevels = newViewNumLevels;
-   texObj->Attrib.NumLayers = newViewNumLayers;
+   texObj->MinLevel = origTexObj->MinLevel + minlevel;
+   texObj->MinLayer = origTexObj->MinLayer + minlayer;
+   texObj->NumLevels = newViewNumLevels;
+   texObj->NumLayers = newViewNumLayers;
    texObj->Immutable = GL_TRUE;
-   texObj->External = GL_FALSE;
-   texObj->Attrib.ImmutableLevels = origTexObj->Attrib.ImmutableLevels;
+   texObj->ImmutableLevels = origTexObj->ImmutableLevels;
    texObj->Target = target;
    texObj->TargetIndex = _mesa_tex_target_to_index(ctx, target);
    assert(texObj->TargetIndex < NUM_TEXTURE_TARGETS);
-   _mesa_update_texture_object_swizzle(ctx, texObj);
 
-   if (!st_TextureView(ctx, texObj, origTexObj)) {
+   if (ctx->Driver.TextureView != NULL &&
+       !ctx->Driver.TextureView(ctx, texObj, origTexObj)) {
       return; /* driver recorded error */
    }
 }
@@ -821,25 +798,21 @@ _mesa_TextureView(GLuint texture, GLenum target, GLuint origtexture,
     * If minlevel or minlayer is greater than level or layer, respectively,
     * return INVALID_VALUE.
     */
-   newViewMinLevel = origTexObj->Attrib.MinLevel + minlevel;
-   newViewMinLayer = origTexObj->Attrib.MinLayer + minlayer;
-   if (newViewMinLevel >= (origTexObj->Attrib.MinLevel +
-                           origTexObj->Attrib.NumLevels)) {
+   newViewMinLevel = origTexObj->MinLevel + minlevel;
+   newViewMinLayer = origTexObj->MinLayer + minlayer;
+   if (newViewMinLevel >= (origTexObj->MinLevel + origTexObj->NumLevels)) {
       _mesa_error(ctx, GL_INVALID_VALUE,
                   "glTextureView(new minlevel (%d) > orig minlevel (%d)"
                   " + orig numlevels (%d))",
-                  newViewMinLevel, origTexObj->Attrib.MinLevel,
-                  origTexObj->Attrib.NumLevels);
+                  newViewMinLevel, origTexObj->MinLevel, origTexObj->NumLevels);
       return;
    }
 
-   if (newViewMinLayer >= (origTexObj->Attrib.MinLayer +
-                           origTexObj->Attrib.NumLayers)) {
+   if (newViewMinLayer >= (origTexObj->MinLayer + origTexObj->NumLayers)) {
       _mesa_error(ctx, GL_INVALID_VALUE,
                   "glTextureView(new minlayer (%d) > orig minlayer (%d)"
                   " + orig numlayers (%d))",
-                  newViewMinLayer, origTexObj->Attrib.MinLayer,
-                  origTexObj->Attrib.NumLayers);
+                  newViewMinLayer, origTexObj->MinLayer, origTexObj->NumLayers);
       return;
    }
 

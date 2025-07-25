@@ -28,8 +28,6 @@
 #include "drm-uapi/v3d_drm.h"
 #include "drm-shim/drm_shim.h"
 
-bool drm_shim_driver_prefers_first_render_node = true;
-
 struct v3d_bo {
         struct shim_bo base;
         uint32_t offset;
@@ -122,15 +120,6 @@ v3d_ioctl_get_param(int fd, unsigned long request, void *arg)
         case DRM_V3D_PARAM_SUPPORTS_TFU:
                 gp->value = 1;
                 return 0;
-        case DRM_V3D_PARAM_SUPPORTS_CSD:
-                gp->value = 1;
-                return 0;
-        case DRM_V3D_PARAM_SUPPORTS_CACHE_FLUSH:
-                gp->value = 1;
-                return 0;
-        case DRM_V3D_PARAM_SUPPORTS_PERFMON:
-                gp->value = 1;
-                return 0;
         default:
                 break;
         }
@@ -157,14 +146,13 @@ static ioctl_fn_t driver_ioctls[] = {
 void
 drm_shim_driver_init(void)
 {
-        shim_device.bus_type = DRM_BUS_PLATFORM;
         shim_device.driver_name = "v3d";
         shim_device.driver_ioctls = driver_ioctls;
         shim_device.driver_ioctl_count = ARRAY_SIZE(driver_ioctls);
 
         drm_shim_override_file("OF_FULLNAME=/rdb/v3d\n"
                                "OF_COMPATIBLE_N=1\n"
-                               "OF_COMPATIBLE_0=brcm,2711-v3d\n",
+                               "OF_COMPATIBLE_0=brcm,7278-v3d\n",
                                "/sys/dev/char/%d:%d/device/uevent",
                                DRM_MAJOR, render_node_minor);
 }

@@ -64,17 +64,11 @@
 #include "uniforms.h"
 #include "program/prog_instruction.h"
 
-/** Wrapper around nir_state_variable_create to pick the name automatically. */
-nir_variable *
-st_nir_state_variable_create(nir_shader *shader,
-                             const struct glsl_type *type,
-                             const gl_state_index16 tokens[STATE_LENGTH])
-{
-   char *name = _mesa_program_state_string(tokens);
-   nir_variable *var = nir_state_variable_create(shader, type, name, tokens);
-   free(name);
-   return var;
-}
+typedef struct {
+   nir_shader *shader;
+   nir_builder builder;
+   void *mem_ctx;
+} lower_builtin_state;
 
 static const struct gl_builtin_uniform_element *
 get_element(const struct gl_builtin_uniform_desc *desc, nir_deref_path *path)
@@ -103,10 +97,10 @@ get_element(const struct gl_builtin_uniform_desc *desc, nir_deref_path *path)
 }
 
 static nir_variable *
-get_variable(nir_builder *b, nir_deref_path *path,
+get_variable(lower_builtin_state *state, nir_deref_path *path,
              const struct gl_builtin_uniform_element *element)
 {
-   nir_shader *shader = b->shader;
+   nir_shader *shader = state->shader;
    gl_state_index16 tokens[STATE_LENGTH];
    int idx = 1;
 
@@ -116,25 +110,10 @@ get_variable(nir_builder *b, nir_deref_path *path,
       /* we need to fixup the array index slot: */
       switch (tokens[0]) {
       case STATE_MODELVIEW_MATRIX:
-      case STATE_MODELVIEW_MATRIX_INVERSE:
-      case STATE_MODELVIEW_MATRIX_TRANSPOSE:
-      case STATE_MODELVIEW_MATRIX_INVTRANS:
       case STATE_PROJECTION_MATRIX:
-      case STATE_PROJECTION_MATRIX_INVERSE:
-      case STATE_PROJECTION_MATRIX_TRANSPOSE:
-      case STATE_PROJECTION_MATRIX_INVTRANS:
       case STATE_MVP_MATRIX:
-      case STATE_MVP_MATRIX_INVERSE:
-      case STATE_MVP_MATRIX_TRANSPOSE:
-      case STATE_MVP_MATRIX_INVTRANS:
       case STATE_TEXTURE_MATRIX:
-      case STATE_TEXTURE_MATRIX_INVERSE:
-      case STATE_TEXTURE_MATRIX_TRANSPOSE:
-      case STATE_TEXTURE_MATRIX_INVTRANS:
       case STATE_PROGRAM_MATRIX:
-      case STATE_PROGRAM_MATRIX_INVERSE:
-      case STATE_PROGRAM_MATRIX_TRANSPOSE:
-      case STATE_PROGRAM_MATRIX_INVTRANS:
       case STATE_LIGHT:
       case STATE_LIGHTPROD:
       case STATE_TEXGEN:
@@ -145,106 +124,135 @@ get_variable(nir_builder *b, nir_deref_path *path,
       }
    }
 
-   nir_variable *var = nir_find_state_variable(shader, tokens);
-   if (var)
-      return var;
+   char *name = _mesa_program_state_string(tokens);
+
+   nir_foreach_variable(var, &shader->uniforms) {
+      if (strcmp(var->name, name) == 0) {
+         free(name);
+         return var;
+      }
+   }
 
    /* variable doesn't exist yet, so create it: */
-   return st_nir_state_variable_create(shader, glsl_vec4_type(), tokens);
+   nir_variable *var =
+      nir_variable_create(shader, nir_var_uniform, glsl_vec4_type(), name);
+
+   var->num_state_slots = 1;
+   var->state_slots = ralloc_array(var, nir_state_slot, 1);
+   memcpy(var->state_slots[0].tokens, tokens,
+          sizeof(var->state_slots[0].tokens));
+
+   free(name);
+
+   return var;
 }
 
 static bool
-lower_builtin_instr(nir_builder *b, nir_intrinsic_instr *intrin,
-                    UNUSED void *_data)
+lower_builtin_block(lower_builtin_state *state, nir_block *block)
 {
-   if (intrin->intrinsic != nir_intrinsic_load_deref)
-      return false;
+   nir_builder *b = &state->builder;
+   bool progress = false;
 
-   nir_deref_instr *deref = nir_src_as_deref(intrin->src[0]);
-   if (!nir_deref_mode_is(deref, nir_var_uniform))
-      return false;
+   nir_foreach_instr_safe(instr, block) {
+      if (instr->type != nir_instr_type_intrinsic)
+         continue;
 
-   /* built-in's will always start with "gl_" */
-   nir_variable *var = nir_deref_instr_get_variable(deref);
-   if (strncmp(var->name, "gl_", 3) != 0)
-      return false;
+      nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
 
-   const struct gl_builtin_uniform_desc *desc =
-      _mesa_glsl_get_builtin_uniform_desc(var->name);
+      if (intrin->intrinsic != nir_intrinsic_load_deref)
+         continue;
 
-   /* if no descriptor, it isn't something we need to handle specially: */
-   if (!desc)
-      return false;
+      nir_variable *var =
+         nir_deref_instr_get_variable(nir_src_as_deref(intrin->src[0]));
+      if (var->data.mode != nir_var_uniform)
+         continue;
 
-   nir_deref_path path;
-   nir_deref_path_init(&path, nir_src_as_deref(intrin->src[0]), NULL);
+      /* built-in's will always start with "gl_" */
+      if (strncmp(var->name, "gl_", 3) != 0)
+         continue;
 
-   const struct gl_builtin_uniform_element *element = get_element(desc, &path);
+      const struct gl_builtin_uniform_desc *desc =
+         _mesa_glsl_get_builtin_uniform_desc(var->name);
 
-   /* matrix elements (array_deref) do not need special handling: */
-   if (!element) {
+      /* if no descriptor, it isn't something we need to handle specially: */
+      if (!desc)
+         continue;
+
+      nir_deref_path path;
+      nir_deref_path_init(&path, nir_src_as_deref(intrin->src[0]), NULL);
+
+      const struct gl_builtin_uniform_element *element = get_element(desc, &path);
+
+      /* matrix elements (array_deref) do not need special handling: */
+      if (!element) {
+         nir_deref_path_finish(&path);
+         continue;
+      }
+
+      /* remove existing var from uniform list: */
+      exec_node_remove(&var->node);
+      /* the _self_link() ensures we can remove multiple times, rather than
+       * trying to keep track of what we have already removed:
+       */
+      exec_node_self_link(&var->node);
+
+      nir_variable *new_var = get_variable(state, &path, element);
       nir_deref_path_finish(&path);
-      return false;
+
+      b->cursor = nir_before_instr(instr);
+
+      nir_ssa_def *def = nir_load_var(b, new_var);
+
+      /* swizzle the result: */
+      unsigned swiz[4];
+      for (unsigned i = 0; i < 4; i++) {
+         swiz[i] = GET_SWZ(element->swizzle, i);
+         assert(swiz[i] <= SWIZZLE_W);
+      }
+      def = nir_swizzle(b, def, swiz, intrin->num_components);
+
+      /* and rewrite uses of original instruction: */
+      assert(intrin->dest.is_ssa);
+      nir_ssa_def_rewrite_uses(&intrin->dest.ssa, nir_src_for_ssa(def));
+
+      /* at this point intrin should be unused.  We need to remove it
+       * (rather than waiting for DCE pass) to avoid dangling reference
+       * to remove'd var.  And we have to remove the original uniform
+       * var since we don't want it to get uniform space allocated.
+       */
+      nir_instr_remove(&intrin->instr);
+
+      progress = true;
    }
 
-   /* remove existing var from uniform list: */
-   exec_node_remove(&var->node);
-   /* the _self_link() ensures we can remove multiple times, rather than
-    * trying to keep track of what we have already removed:
-    */
-   exec_node_self_link(&var->node);
-
-   nir_variable *new_var = get_variable(b, &path, element);
-   nir_deref_path_finish(&path);
-
-   b->cursor = nir_before_instr(&intrin->instr);
-
-   nir_def *def = nir_load_var(b, new_var);
-
-   /* swizzle the result: */
-   unsigned swiz[NIR_MAX_VEC_COMPONENTS] = {0};
-   for (unsigned i = 0; i < 4; i++) {
-      swiz[i] = GET_SWZ(element->swizzle, i);
-      assert(swiz[i] <= SWIZZLE_W);
-   }
-   def = nir_swizzle(b, def, swiz, intrin->num_components);
-
-   /* and rewrite uses of original instruction: */
-   nir_def_replace(&intrin->def, def);
-
-   return true;
+   return progress;
 }
 
-bool
+static void
+lower_builtin_impl(lower_builtin_state *state, nir_function_impl *impl)
+{
+   nir_builder_init(&state->builder, impl);
+   state->mem_ctx = ralloc_parent(impl);
+
+   bool progress = false;
+   nir_foreach_block(block, impl) {
+      progress |= lower_builtin_block(state, block);
+   }
+
+   if (progress)
+      nir_remove_dead_derefs_impl(impl);
+
+   nir_metadata_preserve(impl, nir_metadata_block_index |
+                               nir_metadata_dominance);
+}
+
+void
 st_nir_lower_builtin(nir_shader *shader)
 {
-   bool progress = false;
-   struct set *vars = _mesa_pointer_set_create(NULL);
-
-   nir_foreach_uniform_variable(var, shader) {
-      /* built-in's will always start with "gl_" */
-      if (strncmp(var->name, "gl_", 3) == 0)
-         _mesa_set_add(vars, var);
+   lower_builtin_state state;
+   state.shader = shader;
+   nir_foreach_function(function, shader) {
+      if (function->impl)
+         lower_builtin_impl(&state, function->impl);
    }
-
-   if (vars->entries > 0) {
-      /* at this point, array uniforms have been split into separate
-       * nir_variable structs where possible. this codepath can't handle
-       * dynamic array indexing, however, so all indirect uniform derefs must
-       * be eliminated beforehand to avoid trying to lower one of those
-       * builtins
-       */
-      progress |= nir_lower_indirect_var_derefs(shader, vars);
-
-      if (nir_shader_intrinsics_pass(shader, lower_builtin_instr,
-                                       nir_metadata_control_flow, NULL)) {
-         nir_remove_dead_derefs(shader);
-         progress = true;
-      }
-   } else {
-      nir_shader_preserve_all_metadata(shader);
-   }
-
-   _mesa_set_destroy(vars, NULL);
-   return progress;
 }

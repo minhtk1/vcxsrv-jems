@@ -45,7 +45,7 @@
  * Compare pipe_framebuffer_state objects.
  * \return TRUE if same, FALSE if different
  */
-bool
+boolean
 util_framebuffer_state_equal(const struct pipe_framebuffer_state *dst,
                              const struct pipe_framebuffer_state *src)
 {
@@ -53,34 +53,27 @@ util_framebuffer_state_equal(const struct pipe_framebuffer_state *dst,
 
    if (dst->width != src->width ||
        dst->height != src->height)
-      return false;
+      return FALSE;
 
    if (dst->samples != src->samples ||
        dst->layers  != src->layers)
-      return false;
+      return FALSE;
 
    if (dst->nr_cbufs != src->nr_cbufs) {
-      return false;
+      return FALSE;
    }
 
    for (i = 0; i < src->nr_cbufs; i++) {
       if (dst->cbufs[i] != src->cbufs[i]) {
-         return false;
+         return FALSE;
       }
    }
 
    if (dst->zsbuf != src->zsbuf) {
-      return false;
+      return FALSE;
    }
 
-   if (dst->resolve != src->resolve) {
-      return false;
-   }
-
-   if (dst->viewmask != src->viewmask)
-      return false;
-
-   return true;
+   return TRUE;
 }
 
 
@@ -109,9 +102,7 @@ util_copy_framebuffer_state(struct pipe_framebuffer_state *dst,
 
       dst->nr_cbufs = src->nr_cbufs;
 
-      dst->viewmask = src->viewmask;
       pipe_surface_reference(&dst->zsbuf, src->zsbuf);
-      pipe_resource_reference(&dst->resolve, src->resolve);
    } else {
       dst->width = 0;
       dst->height = 0;
@@ -124,10 +115,7 @@ util_copy_framebuffer_state(struct pipe_framebuffer_state *dst,
 
       dst->nr_cbufs = 0;
 
-      dst->viewmask = 0;
-
       pipe_surface_reference(&dst->zsbuf, NULL);
-      pipe_resource_reference(&dst->resolve, NULL);
    }
 }
 
@@ -142,20 +130,17 @@ util_unreference_framebuffer_state(struct pipe_framebuffer_state *fb)
    }
 
    pipe_surface_reference(&fb->zsbuf, NULL);
-   pipe_resource_reference(&fb->resolve, NULL);
 
    fb->samples = fb->layers = 0;
    fb->width = fb->height = 0;
    fb->nr_cbufs = 0;
-
-   fb->viewmask = 0;
 }
 
 
 /* Where multiple sizes are allowed for framebuffer surfaces, find the
  * minimum width and height of all bound surfaces.
  */
-bool
+boolean
 util_framebuffer_min_size(const struct pipe_framebuffer_state *fb,
                           unsigned *width,
                           unsigned *height)
@@ -180,12 +165,12 @@ util_framebuffer_min_size(const struct pipe_framebuffer_state *fb,
    if (w == ~0u) {
       *width = 0;
       *height = 0;
-      return false;
+      return FALSE;
    }
    else {
       *width = w;
       *height = h;
-      return true;
+      return TRUE;
    }
 }
 
@@ -245,7 +230,7 @@ util_framebuffer_get_num_samples(const struct pipe_framebuffer_state *fb)
       return MAX2(fb->samples, 1);
 
    /**
-    * If a driver doesn't advertise pipe_caps.surface_sample_count,
+    * If a driver doesn't advertise PIPE_CAP_SURFACE_SAMPLE_COUNT,
     * pipe_surface::nr_samples will always be 0.
     */
    for (i = 0; i < fb->nr_cbufs; i++) {
@@ -259,7 +244,7 @@ util_framebuffer_get_num_samples(const struct pipe_framebuffer_state *fb)
                   fb->zsbuf->nr_samples);
    }
 
-   return MAX2(fb->samples, 1);
+   return 1;
 }
 
 

@@ -32,11 +32,13 @@
  * @author Jose Fonseca <jfonseca@vmware.com>
  */
 
-#include "c11/threads.h"
-#include "util/detect_arch.h"
 #include "util/format/u_format.h"
 #include "util/format/u_format_s3tc.h"
 #include "util/u_math.h"
+
+#include "pipe/p_defines.h"
+#include "pipe/p_screen.h"
+
 
 /**
  * Copy 2D rect from one place to another.
@@ -44,20 +46,18 @@
  * src_stride may be negative to do vertical flip of pixels from source.
  */
 void
-util_copy_rect(void * dst_in,
+util_copy_rect(ubyte * dst,
                enum pipe_format format,
                unsigned dst_stride,
                unsigned dst_x,
                unsigned dst_y,
                unsigned width,
                unsigned height,
-               const void * src_in,
+               const ubyte * src,
                int src_stride,
                unsigned src_x,
                unsigned src_y)
 {
-   uint8_t *dst = dst_in;
-   const uint8_t *src = src_in;
    unsigned i;
    int src_stride_pos = src_stride < 0 ? -src_stride : src_stride;
    int blocksize = util_format_get_blocksize(format);
@@ -81,12 +81,9 @@ util_copy_rect(void * dst_in,
    src += src_y * src_stride_pos;
    width *= blocksize;
 
-   if (width == dst_stride && width == (unsigned)src_stride) {
-      uint64_t size = (uint64_t)height * width;
-
-      assert(size <= SIZE_MAX);
-      memcpy(dst, src, size);
-   } else {
+   if (width == dst_stride && width == (unsigned)src_stride)
+      memcpy(dst, src, height * width);
+   else {
       for (i = 0; i < height; i++) {
          memcpy(dst, src, width);
          dst += dst_stride;
@@ -96,23 +93,28 @@ util_copy_rect(void * dst_in,
 }
 
 
-bool
+boolean
 util_format_is_float(enum pipe_format format)
 {
    const struct util_format_description *desc = util_format_description(format);
    int i;
 
-   i = util_format_get_first_non_void_channel(format);
-   if (i < 0) {
-      return false;
+   assert(desc);
+   if (!desc) {
+      return FALSE;
    }
 
-   return desc->channel[i].type == UTIL_FORMAT_TYPE_FLOAT ? true : false;
+   i = util_format_get_first_non_void_channel(format);
+   if (i < 0) {
+      return FALSE;
+   }
+
+   return desc->channel[i].type == UTIL_FORMAT_TYPE_FLOAT ? TRUE : FALSE;
 }
 
 
 /** Test if the format contains RGB, but not alpha */
-bool
+boolean
 util_format_has_alpha(enum pipe_format format)
 {
    const struct util_format_description *desc =
@@ -123,20 +125,8 @@ util_format_has_alpha(enum pipe_format format)
           desc->swizzle[3] != PIPE_SWIZZLE_1;
 }
 
-/** Test if format has alpha as 1 (like RGBX) */
-bool
-util_format_has_alpha1(enum pipe_format format)
-{
-   const struct util_format_description *desc =
-      util_format_description(format);
 
-   return (desc->colorspace == UTIL_FORMAT_COLORSPACE_RGB ||
-           desc->colorspace == UTIL_FORMAT_COLORSPACE_SRGB) &&
-           desc->nr_channels == 4 &&
-           desc->swizzle[3] == PIPE_SWIZZLE_1;
-}
-
-bool
+boolean
 util_format_is_luminance(enum pipe_format format)
 {
    const struct util_format_description *desc =
@@ -148,12 +138,12 @@ util_format_is_luminance(enum pipe_format format)
        desc->swizzle[1] == PIPE_SWIZZLE_X &&
        desc->swizzle[2] == PIPE_SWIZZLE_X &&
        desc->swizzle[3] == PIPE_SWIZZLE_1) {
-      return true;
+      return TRUE;
    }
-   return false;
+   return FALSE;
 }
 
-bool
+boolean
 util_format_is_alpha(enum pipe_format format)
 {
    const struct util_format_description *desc =
@@ -165,34 +155,26 @@ util_format_is_alpha(enum pipe_format format)
        desc->swizzle[1] == PIPE_SWIZZLE_0 &&
        desc->swizzle[2] == PIPE_SWIZZLE_0 &&
        desc->swizzle[3] == PIPE_SWIZZLE_X) {
-      return true;
+      return TRUE;
    }
-   return false;
+   return FALSE;
 }
 
-bool
+boolean
 util_format_is_pure_integer(enum pipe_format format)
 {
    const struct util_format_description *desc = util_format_description(format);
    int i;
 
-   if (desc->colorspace == UTIL_FORMAT_COLORSPACE_ZS) {
-      if (util_format_has_depth(desc))
-         return false;
-
-      assert(util_format_has_stencil(desc));
-      return true;
-   }
-
    /* Find the first non-void channel. */
    i = util_format_get_first_non_void_channel(format);
    if (i == -1)
-      return false;
+      return FALSE;
 
-   return desc->channel[i].pure_integer ? true : false;
+   return desc->channel[i].pure_integer ? TRUE : FALSE;
 }
 
-bool
+boolean
 util_format_is_pure_sint(enum pipe_format format)
 {
    const struct util_format_description *desc = util_format_description(format);
@@ -200,12 +182,12 @@ util_format_is_pure_sint(enum pipe_format format)
 
    i = util_format_get_first_non_void_channel(format);
    if (i == -1)
-      return false;
+      return FALSE;
 
-   return (desc->channel[i].type == UTIL_FORMAT_TYPE_SIGNED && desc->channel[i].pure_integer) ? true : false;
+   return (desc->channel[i].type == UTIL_FORMAT_TYPE_SIGNED && desc->channel[i].pure_integer) ? TRUE : FALSE;
 }
 
-bool
+boolean
 util_format_is_pure_uint(enum pipe_format format)
 {
    const struct util_format_description *desc = util_format_description(format);
@@ -213,15 +195,15 @@ util_format_is_pure_uint(enum pipe_format format)
 
    i = util_format_get_first_non_void_channel(format);
    if (i == -1)
-      return false;
+      return FALSE;
 
-   return (desc->channel[i].type == UTIL_FORMAT_TYPE_UNSIGNED && desc->channel[i].pure_integer) ? true : false;
+   return (desc->channel[i].type == UTIL_FORMAT_TYPE_UNSIGNED && desc->channel[i].pure_integer) ? TRUE : FALSE;
 }
 
 /**
  * Returns true if the format contains normalized signed channels.
  */
-bool
+boolean
 util_format_is_snorm(enum pipe_format format)
 {
    const struct util_format_description *desc = util_format_description(format);
@@ -232,7 +214,7 @@ util_format_is_snorm(enum pipe_format format)
 /**
  * Returns true if the format contains normalized unsigned channels.
  */
-bool
+boolean
 util_format_is_unorm(enum pipe_format format)
 {
    const struct util_format_description *desc = util_format_description(format);
@@ -240,41 +222,18 @@ util_format_is_unorm(enum pipe_format format)
    return desc->is_unorm;
 }
 
-/**
- * Returns true if the format contains scaled integer format channels.
- */
-bool
-util_format_is_scaled(enum pipe_format format)
-{
-   const struct util_format_description *desc = util_format_description(format);
-   int i;
-
-   /* format none is described as scaled but not for this check */
-   if (format == PIPE_FORMAT_NONE)
-      return false;
-
-   /* Find the first non-void channel. */
-   i = util_format_get_first_non_void_channel(format);
-   if (i == -1)
-      return false;
-
-   return !desc->channel[i].pure_integer && !desc->channel[i].normalized &&
-      (desc->channel[i].type == UTIL_FORMAT_TYPE_SIGNED ||
-       desc->channel[i].type == UTIL_FORMAT_TYPE_UNSIGNED);
-}
-
-bool
+boolean
 util_format_is_snorm8(enum pipe_format format)
 {
    const struct util_format_description *desc = util_format_description(format);
    int i;
 
    if (desc->is_mixed)
-      return false;
+      return FALSE;
 
    i = util_format_get_first_non_void_channel(format);
    if (i == -1)
-      return false;
+      return FALSE;
 
    return desc->channel[i].type == UTIL_FORMAT_TYPE_SIGNED &&
           !desc->channel[i].pure_integer &&
@@ -282,7 +241,7 @@ util_format_is_snorm8(enum pipe_format format)
           desc->channel[i].size == 8;
 }
 
-bool
+boolean
 util_format_is_luminance_alpha(enum pipe_format format)
 {
    const struct util_format_description *desc =
@@ -294,46 +253,13 @@ util_format_is_luminance_alpha(enum pipe_format format)
        desc->swizzle[1] == PIPE_SWIZZLE_X &&
        desc->swizzle[2] == PIPE_SWIZZLE_X &&
        desc->swizzle[3] == PIPE_SWIZZLE_Y) {
-      return true;
+      return TRUE;
    }
-   return false;
+   return FALSE;
 }
 
-bool
-util_format_is_red_alpha(enum pipe_format format)
-{
-   const struct util_format_description *desc =
-      util_format_description(format);
 
-   if ((desc->colorspace == UTIL_FORMAT_COLORSPACE_RGB ||
-        desc->colorspace == UTIL_FORMAT_COLORSPACE_SRGB) &&
-       desc->swizzle[0] == PIPE_SWIZZLE_X &&
-       desc->swizzle[1] == PIPE_SWIZZLE_0 &&
-       desc->swizzle[2] == PIPE_SWIZZLE_0 &&
-       desc->swizzle[3] == PIPE_SWIZZLE_Y) {
-      return true;
-   }
-   return false;
-}
-
-bool
-util_format_is_red_green(enum pipe_format format)
-{
-   const struct util_format_description *desc =
-      util_format_description(format);
-
-   if ((desc->colorspace == UTIL_FORMAT_COLORSPACE_RGB ||
-        desc->colorspace == UTIL_FORMAT_COLORSPACE_SRGB) &&
-       desc->swizzle[0] == PIPE_SWIZZLE_X &&
-       desc->swizzle[1] == PIPE_SWIZZLE_Y &&
-       desc->swizzle[2] == PIPE_SWIZZLE_0 &&
-       desc->swizzle[3] == PIPE_SWIZZLE_1) {
-      return true;
-   }
-   return false;
-}
-
-bool
+boolean
 util_format_is_intensity(enum pipe_format format)
 {
    const struct util_format_description *desc =
@@ -345,12 +271,12 @@ util_format_is_intensity(enum pipe_format format)
        desc->swizzle[1] == PIPE_SWIZZLE_X &&
        desc->swizzle[2] == PIPE_SWIZZLE_X &&
        desc->swizzle[3] == PIPE_SWIZZLE_X) {
-      return true;
+      return TRUE;
    }
-   return false;
+   return FALSE;
 }
 
-bool
+boolean
 util_format_is_subsampled_422(enum pipe_format format)
 {
    const struct util_format_description *desc =
@@ -378,6 +304,8 @@ util_get_depth_format_mrd(const struct util_format_description *desc)
    double mrd = 1.0 / ((1 << 24) - 1);
    unsigned depth_channel;
 
+   assert(desc);
+
    /*
     * Some depth formats do not store the depth component in the first
     * channel, detect the format and adjust the depth channel. Get the
@@ -396,92 +324,48 @@ util_get_depth_format_mrd(const struct util_format_description *desc)
    return mrd;
 }
 
-void
-util_format_unpack_rgba_rect(enum pipe_format format,
-                   void *dst, unsigned dst_stride,
-                   const void *src, unsigned src_stride,
-                   unsigned w, unsigned h)
-{
-   const struct util_format_unpack_description *unpack =
-      util_format_unpack_description(format);
-
-   /* Optimized function for block-compressed formats */
-   if (unpack->unpack_rgba_rect) {
-      unpack->unpack_rgba_rect(dst, dst_stride, src, src_stride, w, h);
-   } else {
-     for (unsigned y = 0; y < h; y++) {
-        unpack->unpack_rgba(dst, src, w);
-        src = (const char *)src + src_stride;
-        dst = (char *)dst + dst_stride;
-     }
-  }
-}
 
 void
-util_format_unpack_rgba_8unorm_rect(enum pipe_format format,
-                   void *dst, unsigned dst_stride,
-                   const void *src, unsigned src_stride,
-                   unsigned w, unsigned h)
-{
-   const struct util_format_unpack_description *unpack =
-      util_format_unpack_description(format);
-
-   /* Optimized function for block-compressed formats */
-   if (unpack->unpack_rgba_8unorm_rect) {
-      unpack->unpack_rgba_8unorm_rect(dst, dst_stride, src, src_stride, w, h);
-   } else {
-     for (unsigned y = 0; y < h; y++) {
-        unpack->unpack_rgba_8unorm(dst, src, w);
-        src = (const char *)src + src_stride;
-        dst = (char *)dst + dst_stride;
-     }
-  }
-}
-
-void
-util_format_read_4(enum pipe_format format,
-                   void *dst, unsigned dst_stride,
-                   const void *src, unsigned src_stride,
-                   unsigned x, unsigned y, unsigned w, unsigned h)
+util_format_read_4f(enum pipe_format format,
+                    float *dst, unsigned dst_stride,
+                    const void *src, unsigned src_stride,
+                    unsigned x, unsigned y, unsigned w, unsigned h)
 {
    const struct util_format_description *format_desc;
    const uint8_t *src_row;
+   float *dst_row;
 
    format_desc = util_format_description(format);
 
    assert(x % format_desc->block.width == 0);
    assert(y % format_desc->block.height == 0);
 
-   src_row = (const uint8_t *)src + (uint64_t)y*src_stride + x*(format_desc->block.bits/8);
+   src_row = (const uint8_t *)src + y*src_stride + x*(format_desc->block.bits/8);
+   dst_row = dst;
 
-   util_format_unpack_rgba_rect(format, dst, dst_stride, src_row, src_stride, w, h);
+   format_desc->unpack_rgba_float(dst_row, dst_stride, src_row, src_stride, w, h);
 }
 
 
 void
-util_format_write_4(enum pipe_format format,
-                     const void *src, unsigned src_stride,
+util_format_write_4f(enum pipe_format format,
+                     const float *src, unsigned src_stride,
                      void *dst, unsigned dst_stride,
                      unsigned x, unsigned y, unsigned w, unsigned h)
 {
    const struct util_format_description *format_desc;
-   const struct util_format_pack_description *pack =
-      util_format_pack_description(format);
    uint8_t *dst_row;
+   const float *src_row;
 
    format_desc = util_format_description(format);
 
    assert(x % format_desc->block.width == 0);
    assert(y % format_desc->block.height == 0);
 
-   dst_row = (uint8_t *)dst + (uint64_t)y*dst_stride + x*(format_desc->block.bits/8);
+   dst_row = (uint8_t *)dst + y*dst_stride + x*(format_desc->block.bits/8);
+   src_row = src;
 
-   if (util_format_is_pure_uint(format))
-      pack->pack_rgba_uint(dst_row, dst_stride, src, src_stride, w, h);
-   else if (util_format_is_pure_sint(format))
-      pack->pack_rgba_sint(dst_row, dst_stride, src, src_stride, w, h);
-   else
-      pack->pack_rgba_float(dst_row, dst_stride, src, src_stride, w, h);
+   format_desc->pack_rgba_float(dst_row, dst_stride, src_row, src_stride, w, h);
 }
 
 
@@ -490,15 +374,17 @@ util_format_read_4ub(enum pipe_format format, uint8_t *dst, unsigned dst_stride,
 {
    const struct util_format_description *format_desc;
    const uint8_t *src_row;
+   uint8_t *dst_row;
 
    format_desc = util_format_description(format);
 
    assert(x % format_desc->block.width == 0);
    assert(y % format_desc->block.height == 0);
 
-   src_row = (const uint8_t *)src + (uint64_t)y*src_stride + x*(format_desc->block.bits/8);
+   src_row = (const uint8_t *)src + y*src_stride + x*(format_desc->block.bits/8);
+   dst_row = dst;
 
-   util_format_unpack_rgba_8unorm_rect(format, dst, dst_stride, src_row, src_stride, w, h);
+   format_desc->unpack_rgba_8unorm(dst_row, dst_stride, src_row, src_stride, w, h);
 }
 
 
@@ -506,8 +392,6 @@ void
 util_format_write_4ub(enum pipe_format format, const uint8_t *src, unsigned src_stride, void *dst, unsigned dst_stride, unsigned x, unsigned y, unsigned w, unsigned h)
 {
    const struct util_format_description *format_desc;
-   const struct util_format_pack_description *pack =
-      util_format_pack_description(format);
    uint8_t *dst_row;
    const uint8_t *src_row;
 
@@ -516,10 +400,94 @@ util_format_write_4ub(enum pipe_format format, const uint8_t *src, unsigned src_
    assert(x % format_desc->block.width == 0);
    assert(y % format_desc->block.height == 0);
 
-   dst_row = (uint8_t *)dst + (uint64_t)y*dst_stride + x*(format_desc->block.bits/8);
+   dst_row = (uint8_t *)dst + y*dst_stride + x*(format_desc->block.bits/8);
    src_row = src;
 
-   pack->pack_rgba_8unorm(dst_row, dst_stride, src_row, src_stride, w, h);
+   format_desc->pack_rgba_8unorm(dst_row, dst_stride, src_row, src_stride, w, h);
+}
+
+void
+util_format_read_4ui(enum pipe_format format,
+                     unsigned *dst, unsigned dst_stride,
+                     const void *src, unsigned src_stride,
+                     unsigned x, unsigned y, unsigned w, unsigned h)
+{
+   const struct util_format_description *format_desc;
+   const uint8_t *src_row;
+   uint32_t *dst_row;
+
+   format_desc = util_format_description(format);
+
+   assert(x % format_desc->block.width == 0);
+   assert(y % format_desc->block.height == 0);
+
+   src_row = (const uint8_t *)src + y*src_stride + x*(format_desc->block.bits/8);
+   dst_row = dst;
+
+   format_desc->unpack_rgba_uint(dst_row, dst_stride, src_row, src_stride, w, h);
+}
+
+void
+util_format_write_4ui(enum pipe_format format,
+                      const unsigned int *src, unsigned src_stride,
+                      void *dst, unsigned dst_stride,
+                      unsigned x, unsigned y, unsigned w, unsigned h)
+{
+   const struct util_format_description *format_desc;
+   uint8_t *dst_row;
+   const uint32_t *src_row;
+
+   format_desc = util_format_description(format);
+
+   assert(x % format_desc->block.width == 0);
+   assert(y % format_desc->block.height == 0);
+
+   dst_row = (uint8_t *)dst + y*dst_stride + x*(format_desc->block.bits/8);
+   src_row = src;
+
+   format_desc->pack_rgba_uint(dst_row, dst_stride, src_row, src_stride, w, h);
+}
+
+void
+util_format_read_4i(enum pipe_format format,
+                    int *dst, unsigned dst_stride,
+                    const void *src, unsigned src_stride,
+                    unsigned x, unsigned y, unsigned w, unsigned h)
+{
+   const struct util_format_description *format_desc;
+   const uint8_t *src_row;
+   int32_t *dst_row;
+
+   format_desc = util_format_description(format);
+
+   assert(x % format_desc->block.width == 0);
+   assert(y % format_desc->block.height == 0);
+
+   src_row = (const uint8_t *)src + y*src_stride + x*(format_desc->block.bits/8);
+   dst_row = dst;
+
+   format_desc->unpack_rgba_sint(dst_row, dst_stride, src_row, src_stride, w, h);
+}
+
+void
+util_format_write_4i(enum pipe_format format,
+                      const int *src, unsigned src_stride,
+                      void *dst, unsigned dst_stride,
+                      unsigned x, unsigned y, unsigned w, unsigned h)
+{
+   const struct util_format_description *format_desc;
+   uint8_t *dst_row;
+   const int32_t *src_row;
+
+   format_desc = util_format_description(format);
+
+   assert(x % format_desc->block.width == 0);
+   assert(y % format_desc->block.height == 0);
+
+   dst_row = (uint8_t *)dst + y*dst_stride + x*(format_desc->block.bits/8);
+   src_row = src;
+
+   format_desc->pack_rgba_sint(dst_row, dst_stride, src_row, src_stride, w, h);
 }
 
 /**
@@ -546,31 +514,31 @@ util_format_write_4ub(enum pipe_format format, const uint8_t *src, unsigned src_
  *    r10g10b10a2_uscaled -> r10g10b10x2_uscaled
  *    r10sg10sb10sa2u_norm -> r10g10b10x2_snorm
  */
-bool
+boolean
 util_is_format_compatible(const struct util_format_description *src_desc,
                           const struct util_format_description *dst_desc)
 {
    unsigned chan;
 
    if (src_desc->format == dst_desc->format) {
-      return true;
+      return TRUE;
    }
 
    if (src_desc->layout != UTIL_FORMAT_LAYOUT_PLAIN ||
        dst_desc->layout != UTIL_FORMAT_LAYOUT_PLAIN) {
-      return false;
+      return FALSE;
    }
 
    if (src_desc->block.bits != dst_desc->block.bits ||
        src_desc->nr_channels != dst_desc->nr_channels ||
        src_desc->colorspace != dst_desc->colorspace) {
-      return false;
+      return FALSE;
    }
 
    for (chan = 0; chan < 4; ++chan) {
       if (src_desc->channel[chan].size !=
           dst_desc->channel[chan].size) {
-         return false;
+         return FALSE;
       }
    }
 
@@ -579,22 +547,22 @@ util_is_format_compatible(const struct util_format_description *src_desc,
 
       if (swizzle < 4) {
          if (src_desc->swizzle[chan] != swizzle) {
-            return false;
+            return FALSE;
          }
          if ((src_desc->channel[swizzle].type !=
               dst_desc->channel[swizzle].type) ||
              (src_desc->channel[swizzle].normalized !=
               dst_desc->channel[swizzle].normalized)) {
-            return false;
+            return FALSE;
          }
       }
    }
 
-   return true;
+   return TRUE;
 }
 
 
-bool
+boolean
 util_format_fits_8unorm(const struct util_format_description *format_desc)
 {
    unsigned chan;
@@ -604,7 +572,7 @@ util_format_fits_8unorm(const struct util_format_description *format_desc)
     */
 
    if (format_desc->colorspace == UTIL_FORMAT_COLORSPACE_SRGB) {
-      return false;
+      return FALSE;
    }
 
    switch (format_desc->layout) {
@@ -613,23 +581,23 @@ util_format_fits_8unorm(const struct util_format_description *format_desc)
       /*
        * These are straight forward.
        */
-      return true;
+      return TRUE;
    case UTIL_FORMAT_LAYOUT_RGTC:
       if (format_desc->format == PIPE_FORMAT_RGTC1_SNORM ||
           format_desc->format == PIPE_FORMAT_RGTC2_SNORM ||
           format_desc->format == PIPE_FORMAT_LATC1_SNORM ||
           format_desc->format == PIPE_FORMAT_LATC2_SNORM)
-         return false;
-      return true;
+         return FALSE;
+      return TRUE;
    case UTIL_FORMAT_LAYOUT_BPTC:
       if (format_desc->format == PIPE_FORMAT_BPTC_RGBA_UNORM)
-         return true;
-      return false;
+         return TRUE;
+      return FALSE;
 
    case UTIL_FORMAT_LAYOUT_ETC:
       if (format_desc->format == PIPE_FORMAT_ETC1_RGB8)
-         return true;
-      return false;
+         return TRUE;
+      return FALSE;
 
    case UTIL_FORMAT_LAYOUT_PLAIN:
       /*
@@ -643,14 +611,14 @@ util_format_fits_8unorm(const struct util_format_description *format_desc)
          case UTIL_FORMAT_TYPE_UNSIGNED:
             if (!format_desc->channel[chan].normalized ||
                 format_desc->channel[chan].size > 8) {
-               return false;
+               return FALSE;
             }
             break;
          default:
-            return false;
+            return FALSE;
          }
       }
-      return true;
+      return TRUE;
 
    default:
       /*
@@ -660,21 +628,19 @@ util_format_fits_8unorm(const struct util_format_description *format_desc)
       switch (format_desc->format) {
       case PIPE_FORMAT_R1_UNORM:
       case PIPE_FORMAT_UYVY:
-      case PIPE_FORMAT_VYUY:
       case PIPE_FORMAT_YUYV:
-      case PIPE_FORMAT_YVYU:
       case PIPE_FORMAT_R8G8_B8G8_UNORM:
       case PIPE_FORMAT_G8R8_G8B8_UNORM:
-         return true;
+         return TRUE;
 
       default:
-         return false;
+         return FALSE;
       }
    }
 }
 
 
-bool
+boolean
 util_format_translate(enum pipe_format dst_format,
                       void *dst, unsigned dst_stride,
                       unsigned dst_x, unsigned dst_y,
@@ -685,10 +651,6 @@ util_format_translate(enum pipe_format dst_format,
 {
    const struct util_format_description *dst_format_desc;
    const struct util_format_description *src_format_desc;
-   const struct util_format_pack_description *pack =
-      util_format_pack_description(dst_format);
-   const struct util_format_unpack_description *unpack =
-      util_format_unpack_description(src_format);
    uint8_t *dst_row;
    const uint8_t *src_row;
    unsigned x_step, y_step;
@@ -706,7 +668,7 @@ util_format_translate(enum pipe_format dst_format,
       util_copy_rect(dst, dst_format, dst_stride,  dst_x, dst_y,
                      width, height, src, (int)src_stride,
                      src_x, src_y);
-      return true;
+      return TRUE;
    }
 
    assert(dst_x % dst_format_desc->block.width == 0);
@@ -714,8 +676,8 @@ util_format_translate(enum pipe_format dst_format,
    assert(src_x % src_format_desc->block.width == 0);
    assert(src_y % src_format_desc->block.height == 0);
 
-   dst_row = (uint8_t *)dst + (uint64_t)dst_y*dst_stride + dst_x*(dst_format_desc->block.bits/8);
-   src_row = (const uint8_t *)src + (uint64_t)src_y*src_stride + src_x*(src_format_desc->block.bits/8);
+   dst_row = (uint8_t *)dst + dst_y*dst_stride + dst_x*(dst_format_desc->block.bits/8);
+   src_row = (const uint8_t *)src + src_y*src_stride + src_x*(src_format_desc->block.bits/8);
 
    /*
     * This works because all pixel formats have pixel blocks with power of two
@@ -743,23 +705,25 @@ util_format_translate(enum pipe_format dst_format,
       assert(x_step == 1);
       assert(y_step == 1);
 
-      if (unpack->unpack_z_float && pack->pack_z_float) {
+      if (src_format_desc->unpack_z_float &&
+          dst_format_desc->pack_z_float) {
          tmp_z = malloc(width * sizeof *tmp_z);
       }
 
-      if (unpack->unpack_s_8uint && pack->pack_s_8uint) {
+      if (src_format_desc->unpack_s_8uint &&
+          dst_format_desc->pack_s_8uint) {
          tmp_s = malloc(width * sizeof *tmp_s);
       }
 
       while (height--) {
          if (tmp_z) {
-            util_format_unpack_z_float(src_format, tmp_z, src_row, width);
-            util_format_pack_z_float(dst_format, dst_row, tmp_z, width);
+            src_format_desc->unpack_z_float(tmp_z, 0, src_row, src_stride, width, 1);
+            dst_format_desc->pack_z_float(dst_row, dst_stride, tmp_z, 0, width, 1);
          }
 
          if (tmp_s) {
-            util_format_unpack_s_8uint(src_format, tmp_s, src_row, width);
-            util_format_pack_s_8uint(dst_format, dst_row, tmp_s, width);
+            src_format_desc->unpack_s_8uint(tmp_s, 0, src_row, src_stride, width, 1);
+            dst_format_desc->pack_s_8uint(dst_row, dst_stride, tmp_s, 0, width, 1);
          }
 
          dst_row += dst_step;
@@ -770,7 +734,7 @@ util_format_translate(enum pipe_format dst_format,
 
       free(tmp_z);
 
-      return true;
+      return TRUE;
    }
 
    if (util_format_fits_8unorm(src_format_desc) ||
@@ -778,19 +742,19 @@ util_format_translate(enum pipe_format dst_format,
       unsigned tmp_stride;
       uint8_t *tmp_row;
 
-      if ((!unpack->unpack_rgba_8unorm && !unpack->unpack_rgba_8unorm_rect) ||
-          !pack->pack_rgba_8unorm) {
-         return false;
+      if (!src_format_desc->unpack_rgba_8unorm ||
+          !dst_format_desc->pack_rgba_8unorm) {
+         return FALSE;
       }
 
       tmp_stride = MAX2(width, x_step) * 4 * sizeof *tmp_row;
-      tmp_row = malloc((uint64_t)y_step * tmp_stride);
+      tmp_row = malloc(y_step * tmp_stride);
       if (!tmp_row)
-         return false;
+         return FALSE;
 
       while (height >= y_step) {
-         util_format_unpack_rgba_8unorm_rect(src_format, tmp_row, tmp_stride, src_row, src_stride, width, y_step);
-         pack->pack_rgba_8unorm(dst_row, dst_stride, tmp_row, tmp_stride, width, y_step);
+         src_format_desc->unpack_rgba_8unorm(tmp_row, tmp_stride, src_row, src_stride, width, y_step);
+         dst_format_desc->pack_rgba_8unorm(dst_row, dst_stride, tmp_row, tmp_stride, width, y_step);
 
          dst_row += dst_step;
          src_row += src_step;
@@ -798,8 +762,8 @@ util_format_translate(enum pipe_format dst_format,
       }
 
       if (height) {
-         util_format_unpack_rgba_8unorm_rect(src_format, tmp_row, tmp_stride, src_row, src_stride, width, height);
-         pack->pack_rgba_8unorm(dst_row, dst_stride, tmp_row, tmp_stride, width, height);
+         src_format_desc->unpack_rgba_8unorm(tmp_row, tmp_stride, src_row, src_stride, width, height);
+         dst_format_desc->pack_rgba_8unorm(dst_row, dst_stride, tmp_row, tmp_stride, width, height);
       }
 
       free(tmp_row);
@@ -809,19 +773,19 @@ util_format_translate(enum pipe_format dst_format,
       unsigned tmp_stride;
       int *tmp_row;
 
-      if (util_format_is_pure_sint(src_format) !=
-          util_format_is_pure_sint(dst_format)) {
-         return false;
+      if (!src_format_desc->unpack_rgba_sint ||
+          !dst_format_desc->pack_rgba_sint) {
+         return FALSE;
       }
 
       tmp_stride = MAX2(width, x_step) * 4 * sizeof *tmp_row;
-      tmp_row = malloc((uint64_t)y_step * tmp_stride);
+      tmp_row = malloc(y_step * tmp_stride);
       if (!tmp_row)
-         return false;
+         return FALSE;
 
       while (height >= y_step) {
-         util_format_unpack_rgba_rect(src_format, tmp_row, tmp_stride, src_row, src_stride, width, y_step);
-         pack->pack_rgba_sint(dst_row, dst_stride, tmp_row, tmp_stride, width, y_step);
+         src_format_desc->unpack_rgba_sint(tmp_row, tmp_stride, src_row, src_stride, width, y_step);
+         dst_format_desc->pack_rgba_sint(dst_row, dst_stride, tmp_row, tmp_stride, width, y_step);
 
          dst_row += dst_step;
          src_row += src_step;
@@ -829,8 +793,8 @@ util_format_translate(enum pipe_format dst_format,
       }
 
       if (height) {
-         util_format_unpack_rgba_rect(src_format, tmp_row, tmp_stride, src_row, src_stride, width, height);
-         pack->pack_rgba_sint(dst_row, dst_stride, tmp_row, tmp_stride, width, height);
+         src_format_desc->unpack_rgba_sint(tmp_row, tmp_stride, src_row, src_stride, width, height);
+         dst_format_desc->pack_rgba_sint(dst_row, dst_stride, tmp_row, tmp_stride, width, height);
       }
 
       free(tmp_row);
@@ -840,19 +804,19 @@ util_format_translate(enum pipe_format dst_format,
       unsigned tmp_stride;
       unsigned int *tmp_row;
 
-      if ((!unpack->unpack_rgba && !unpack->unpack_rgba_rect) ||
-          !pack->pack_rgba_uint) {
-         return false;
+      if (!src_format_desc->unpack_rgba_uint ||
+          !dst_format_desc->pack_rgba_uint) {
+         return FALSE;
       }
 
       tmp_stride = MAX2(width, x_step) * 4 * sizeof *tmp_row;
-      tmp_row = malloc((uint64_t)y_step * tmp_stride);
+      tmp_row = malloc(y_step * tmp_stride);
       if (!tmp_row)
-         return false;
+         return FALSE;
 
       while (height >= y_step) {
-         util_format_unpack_rgba_rect(src_format, tmp_row, tmp_stride, src_row, src_stride, width, y_step);
-         pack->pack_rgba_uint(dst_row, dst_stride, tmp_row, tmp_stride, width, y_step);
+         src_format_desc->unpack_rgba_uint(tmp_row, tmp_stride, src_row, src_stride, width, y_step);
+         dst_format_desc->pack_rgba_uint(dst_row, dst_stride, tmp_row, tmp_stride, width, y_step);
 
          dst_row += dst_step;
          src_row += src_step;
@@ -860,8 +824,8 @@ util_format_translate(enum pipe_format dst_format,
       }
 
       if (height) {
-         util_format_unpack_rgba_rect(src_format, tmp_row, tmp_stride, src_row, src_stride, width, height);
-         pack->pack_rgba_uint(dst_row, dst_stride, tmp_row, tmp_stride, width, height);
+         src_format_desc->unpack_rgba_uint(tmp_row, tmp_stride, src_row, src_stride, width, height);
+         dst_format_desc->pack_rgba_uint(dst_row, dst_stride, tmp_row, tmp_stride, width, height);
       }
 
       free(tmp_row);
@@ -870,19 +834,19 @@ util_format_translate(enum pipe_format dst_format,
       unsigned tmp_stride;
       float *tmp_row;
 
-      if ((!unpack->unpack_rgba && !unpack->unpack_rgba_rect) ||
-          !pack->pack_rgba_float) {
-         return false;
+      if (!src_format_desc->unpack_rgba_float ||
+          !dst_format_desc->pack_rgba_float) {
+         return FALSE;
       }
 
       tmp_stride = MAX2(width, x_step) * 4 * sizeof *tmp_row;
-      tmp_row = malloc((uint64_t)y_step * tmp_stride);
+      tmp_row = malloc(y_step * tmp_stride);
       if (!tmp_row)
-         return false;
+         return FALSE;
 
       while (height >= y_step) {
-         util_format_unpack_rgba_rect(src_format, tmp_row, tmp_stride, src_row, src_stride, width, y_step);
-         pack->pack_rgba_float(dst_row, dst_stride, tmp_row, tmp_stride, width, y_step);
+         src_format_desc->unpack_rgba_float(tmp_row, tmp_stride, src_row, src_stride, width, y_step);
+         dst_format_desc->pack_rgba_float(dst_row, dst_stride, tmp_row, tmp_stride, width, y_step);
 
          dst_row += dst_step;
          src_row += src_step;
@@ -890,24 +854,24 @@ util_format_translate(enum pipe_format dst_format,
       }
 
       if (height) {
-         util_format_unpack_rgba_rect(src_format, tmp_row, tmp_stride, src_row, src_stride, width, height);
-         pack->pack_rgba_float(dst_row, dst_stride, tmp_row, tmp_stride, width, height);
+         src_format_desc->unpack_rgba_float(tmp_row, tmp_stride, src_row, src_stride, width, height);
+         dst_format_desc->pack_rgba_float(dst_row, dst_stride, tmp_row, tmp_stride, width, height);
       }
 
       free(tmp_row);
    }
-   return true;
+   return TRUE;
 }
 
-bool
+boolean
 util_format_translate_3d(enum pipe_format dst_format,
                          void *dst, unsigned dst_stride,
-                         uint64_t dst_slice_stride,
+                         unsigned dst_slice_stride,
                          unsigned dst_x, unsigned dst_y,
                          unsigned dst_z,
                          enum pipe_format src_format,
                          const void *src, unsigned src_stride,
-                         uint64_t src_slice_stride,
+                         unsigned src_slice_stride,
                          unsigned src_x, unsigned src_y,
                          unsigned src_z, unsigned width,
                          unsigned height, unsigned depth)
@@ -925,12 +889,12 @@ util_format_translate_3d(enum pipe_format dst_format,
                                  src_format, src_layer, src_stride,
                                  src_x, src_y,
                                  width, height))
-          return false;
+          return FALSE;
 
       dst_layer += dst_slice_stride;
       src_layer += src_slice_stride;
    }
-   return true;
+   return TRUE;
 }
 
 void util_format_compose_swizzles(const unsigned char swz1[4],
@@ -948,7 +912,7 @@ void util_format_compose_swizzles(const unsigned char swz1[4],
 void util_format_apply_color_swizzle(union pipe_color_union *dst,
                                      const union pipe_color_union *src,
                                      const unsigned char swz[4],
-                                     const bool is_integer)
+                                     const boolean is_integer)
 {
    unsigned c;
 
@@ -1018,47 +982,17 @@ void util_format_unswizzle_4f(float *dst, const float *src,
 }
 
 enum pipe_format
-util_format_snorm_to_sint(enum pipe_format format)
+util_format_snorm8_to_sint8(enum pipe_format format)
 {
    switch (format) {
-   case PIPE_FORMAT_R32_SNORM:
-      return PIPE_FORMAT_R32_SINT;
-   case PIPE_FORMAT_R32G32_SNORM:
-      return PIPE_FORMAT_R32G32_SINT;
-   case PIPE_FORMAT_R32G32B32_SNORM:
-      return PIPE_FORMAT_R32G32B32_SINT;
-   case PIPE_FORMAT_R32G32B32A32_SNORM:
-      return PIPE_FORMAT_R32G32B32A32_SINT;
-
-   case PIPE_FORMAT_R16_SNORM:
-      return PIPE_FORMAT_R16_SINT;
-   case PIPE_FORMAT_R16G16_SNORM:
-      return PIPE_FORMAT_R16G16_SINT;
-   case PIPE_FORMAT_R16G16B16_SNORM:
-      return PIPE_FORMAT_R16G16B16_SINT;
-   case PIPE_FORMAT_R16G16B16A16_SNORM:
-      return PIPE_FORMAT_R16G16B16A16_SINT;
-
    case PIPE_FORMAT_R8_SNORM:
       return PIPE_FORMAT_R8_SINT;
    case PIPE_FORMAT_R8G8_SNORM:
       return PIPE_FORMAT_R8G8_SINT;
    case PIPE_FORMAT_R8G8B8_SNORM:
       return PIPE_FORMAT_R8G8B8_SINT;
-   case PIPE_FORMAT_B8G8R8_SNORM:
-      return PIPE_FORMAT_B8G8R8_SINT;
    case PIPE_FORMAT_R8G8B8A8_SNORM:
       return PIPE_FORMAT_R8G8B8A8_SINT;
-   case PIPE_FORMAT_B8G8R8A8_SNORM:
-      return PIPE_FORMAT_B8G8R8A8_SINT;
-
-   case PIPE_FORMAT_R10G10B10A2_SNORM:
-      return PIPE_FORMAT_R10G10B10A2_SINT;
-   case PIPE_FORMAT_B10G10R10A2_SNORM:
-      return PIPE_FORMAT_B10G10R10A2_SINT;
-
-   case PIPE_FORMAT_R10G10B10X2_SNORM:
-      return PIPE_FORMAT_R10G10B10X2_SINT;
 
    case PIPE_FORMAT_A8_SNORM:
       return PIPE_FORMAT_A8_SINT;
@@ -1069,477 +1003,40 @@ util_format_snorm_to_sint(enum pipe_format format)
    case PIPE_FORMAT_I8_SNORM:
       return PIPE_FORMAT_I8_SINT;
 
-   case PIPE_FORMAT_A16_SNORM:
-      return PIPE_FORMAT_A16_SINT;
-   case PIPE_FORMAT_L16_SNORM:
-      return PIPE_FORMAT_L16_SINT;
-   case PIPE_FORMAT_L16A16_SNORM:
-      return PIPE_FORMAT_L16A16_SINT;
-   case PIPE_FORMAT_I16_SNORM:
-      return PIPE_FORMAT_I16_SINT;
-
    case PIPE_FORMAT_R8G8B8X8_SNORM:
       return PIPE_FORMAT_R8G8B8X8_SINT;
-   case PIPE_FORMAT_R16G16B16X16_SNORM:
-      return PIPE_FORMAT_R16G16B16X16_SINT;
-
    case PIPE_FORMAT_R8A8_SNORM:
       return PIPE_FORMAT_R8A8_SINT;
-   case PIPE_FORMAT_R16A16_SNORM:
-      return PIPE_FORMAT_R16A16_SINT;
-
    case PIPE_FORMAT_G8R8_SNORM:
       return PIPE_FORMAT_G8R8_SINT;
-   case PIPE_FORMAT_G16R16_SNORM:
-      return PIPE_FORMAT_G16R16_SINT;
-
    case PIPE_FORMAT_A8B8G8R8_SNORM:
       return PIPE_FORMAT_A8B8G8R8_SINT;
    case PIPE_FORMAT_X8B8G8R8_SNORM:
       return PIPE_FORMAT_X8B8G8R8_SINT;
 
-   case PIPE_FORMAT_B8G8R8X8_SNORM:
-      return PIPE_FORMAT_B8G8R8X8_SINT;
-   case PIPE_FORMAT_A8R8G8B8_SNORM:
-      return PIPE_FORMAT_A8R8G8B8_SINT;
-   case PIPE_FORMAT_X8R8G8B8_SNORM:
-      return PIPE_FORMAT_X8R8G8B8_SINT;
-   case PIPE_FORMAT_B10G10R10X2_SNORM:
-      return PIPE_FORMAT_B10G10R10X2_SINT;
-
    default:
       return format;
    }
 }
 
-/**
- * If the format is RGB, return BGR. If the format is BGR, return RGB.
- * This may fail by returning PIPE_FORMAT_NONE.
- */
-enum pipe_format
-util_format_rgb_to_bgr(enum pipe_format format)
+bool
+util_format_planar_is_supported(struct pipe_screen *screen,
+                                enum pipe_format format,
+                                enum pipe_texture_target target,
+                                unsigned sample_count,
+                                unsigned storage_sample_count,
+                                unsigned bind)
 {
-#define REMAP_RGB_ONE(r, rs, g, gs, b, bs, type) \
-   case PIPE_FORMAT_##r##rs##g##gs##b##bs##_##type: \
-      return PIPE_FORMAT_##b##bs##g##gs##r##rs##_##type;
+   unsigned num_planes = util_format_get_num_planes(format);
+   assert(num_planes >= 2);
 
-#define REMAP_RGB(rs, gs, bs, type) \
-   REMAP_RGB_ONE(R, rs, G, gs, B, bs, type) \
-   REMAP_RGB_ONE(B, bs, G, gs, R, rs, type) \
-
-#define REMAP_RGBA_ONE(r, rs, g, gs, b, bs, a, as, type) \
-   case PIPE_FORMAT_##r##rs##g##gs##b##bs##a##as##_##type: \
-      return PIPE_FORMAT_##b##bs##g##gs##r##rs##a##as##_##type;
-
-#define REMAP_ARGB_ONE(a, as, r, rs, g, gs, b, bs, type) \
-   case PIPE_FORMAT_##a##as##r##rs##g##gs##b##bs##_##type: \
-      return PIPE_FORMAT_##a##as##b##bs##g##gs##r##rs##_##type;
-
-#define REMAP_RGB_AX(A, rs, gs, bs, as, type) \
-   REMAP_RGBA_ONE(R, rs, G, gs, B, bs, A, as, type) \
-   REMAP_RGBA_ONE(B, bs, G, gs, R, rs, A, as, type) \
-
-#define REMAP_AX_RGB(A, rs, gs, bs, as, type) \
-   REMAP_ARGB_ONE(A, as, R, rs, G, gs, B, bs, type) \
-   REMAP_ARGB_ONE(A, as, B, bs, G, gs, R, rs, type) \
-
-#define REMAP_RGBA(rs, gs, bs, as, type) REMAP_RGB_AX(A, rs, gs, bs, as, type)
-#define REMAP_RGBX(rs, gs, bs, as, type) REMAP_RGB_AX(X, rs, gs, bs, as, type)
-#define REMAP_ARGB(rs, gs, bs, as, type) REMAP_AX_RGB(A, rs, gs, bs, as, type)
-#define REMAP_XRGB(rs, gs, bs, as, type) REMAP_AX_RGB(X, rs, gs, bs, as, type)
-
-#define REMAP_RGBA_ALL(rs, gs, bs, as, type) \
-   REMAP_RGBA(rs, gs, bs, as, type) \
-   REMAP_RGBX(rs, gs, bs, as, type) \
-   REMAP_ARGB(rs, gs, bs, as, type) \
-   REMAP_XRGB(rs, gs, bs, as, type)
-
-   switch (format) {
-   REMAP_RGB(3, 3, 2, UNORM);
-   REMAP_RGB(3, 3, 2, UINT);
-   REMAP_RGB(5, 6, 5, SRGB);
-   REMAP_RGB(5, 6, 5, UNORM);
-   REMAP_RGB(5, 6, 5, UINT);
-   REMAP_RGB(8, 8, 8, SRGB);
-   REMAP_RGB(8, 8, 8, UNORM);
-   REMAP_RGB(8, 8, 8, SNORM);
-   REMAP_RGB(8, 8, 8, UINT);
-   REMAP_RGB(8, 8, 8, SINT);
-   REMAP_RGB(8, 8, 8, USCALED);
-   REMAP_RGB(8, 8, 8, SSCALED);
-
-   /* Complete format sets. */
-   REMAP_RGBA_ALL(5, 5, 5, 1, UNORM);
-   REMAP_RGBA_ALL(8, 8, 8, 8, SRGB);
-   REMAP_RGBA_ALL(8, 8, 8, 8, UNORM);
-   REMAP_RGBA_ALL(8, 8, 8, 8, SNORM);
-   REMAP_RGBA_ALL(8, 8, 8, 8, SINT);
-
-   /* Format sets missing XRGB/XBGR. */
-   REMAP_RGBA(4, 4, 4, 4, UNORM);
-   REMAP_RGBX(4, 4, 4, 4, UNORM);
-   REMAP_ARGB(4, 4, 4, 4, UNORM);
-
-   REMAP_RGBA(8, 8, 8, 8, UINT);
-   REMAP_RGBX(8, 8, 8, 8, UINT);
-   REMAP_ARGB(8, 8, 8, 8, UINT);
-
-   REMAP_RGBA(10, 10, 10, 2, UNORM);
-   REMAP_RGBX(10, 10, 10, 2, UNORM);
-   REMAP_ARGB(10, 10, 10, 2, UNORM);
-
-   /* Format sets missing a half of combinations. */
-   REMAP_RGBA(4, 4, 4, 4, UINT);
-   REMAP_ARGB(4, 4, 4, 4, UINT);
-
-   REMAP_RGBA(5, 5, 5, 1, UINT);
-   REMAP_ARGB(5, 5, 5, 1, UINT);
-
-   REMAP_RGBA(10, 10, 10, 2, SNORM);
-   REMAP_RGBX(10, 10, 10, 2, SNORM);
-
-   REMAP_RGBA(10, 10, 10, 2, UINT);
-   REMAP_ARGB(10, 10, 10, 2, UINT);
-
-   REMAP_RGBA(10, 10, 10, 2, SINT);
-   REMAP_RGBX(10, 10, 10, 2, SINT);
-
-   /* Format sets having only RGBA/BGRA. */
-   REMAP_RGBA(8, 8, 8, 8, USCALED);
-   REMAP_RGBA(8, 8, 8, 8, SSCALED);
-   REMAP_RGBA(10, 10, 10, 2, USCALED);
-   REMAP_RGBA(10, 10, 10, 2, SSCALED);
-
-   default:
-      return PIPE_FORMAT_NONE;
-   }
-}
-
-static const struct util_format_unpack_description *util_format_unpack_table[PIPE_FORMAT_COUNT];
-
-static void
-util_format_unpack_table_init(void)
-{
-   for (enum pipe_format format = PIPE_FORMAT_NONE; format < PIPE_FORMAT_COUNT; format++) {
-#if (DETECT_ARCH_AARCH64 || DETECT_ARCH_ARM) && !defined(NO_FORMAT_ASM) && !defined(__SOFTFP__)
-      const struct util_format_unpack_description *unpack = util_format_unpack_description_neon(format);
-      if (unpack) {
-         util_format_unpack_table[format] = unpack;
-         continue;
-      }
-#endif
-
-      util_format_unpack_table[format] = util_format_unpack_description_generic(format);
-   }
-}
-
-const struct util_format_unpack_description *
-util_format_unpack_description(enum pipe_format format)
-{
-   static once_flag flag = ONCE_FLAG_INIT;
-   call_once(&flag, util_format_unpack_table_init);
-
-   return util_format_unpack_table[format];
-}
-
-enum pipe_format
-util_format_snorm_to_unorm(enum pipe_format format)
-{
-#define CASE(x) case PIPE_FORMAT_##x##_SNORM: return PIPE_FORMAT_##x##_UNORM
-
-   switch (format) {
-   CASE(R8G8B8A8);
-   CASE(R8G8B8X8);
-   CASE(B8G8R8A8);
-   CASE(B8G8R8X8);
-   CASE(A8R8G8B8);
-   CASE(X8R8G8B8);
-   CASE(A8B8G8R8);
-   CASE(X8B8G8R8);
-
-   CASE(R10G10B10A2);
-   CASE(R10G10B10X2);
-   CASE(B10G10R10A2);
-   CASE(B10G10R10X2);
-
-   CASE(R8);
-   CASE(R8G8);
-   CASE(G8R8);
-   CASE(R8G8B8);
-   CASE(B8G8R8);
-
-   CASE(R16);
-   CASE(R16G16);
-   CASE(G16R16);
-   CASE(R16G16B16);
-
-   CASE(R16G16B16A16);
-   CASE(R16G16B16X16);
-
-   CASE(R32);
-   CASE(R32G32);
-   CASE(R32G32B32);
-   CASE(R32G32B32A32);
-
-   CASE(RGTC1);
-   CASE(RGTC2);
-   CASE(ETC2_R11);
-   CASE(ETC2_RG11);
-
-   CASE(A8);
-   CASE(A16);
-   CASE(L8);
-   CASE(L16);
-   CASE(I8);
-   CASE(I16);
-
-   CASE(L8A8);
-   CASE(L16A16);
-   CASE(R8A8);
-   CASE(R16A16);
-
-   CASE(LATC1);
-   CASE(LATC2);
-
-   default:
-      return format;
+   for (unsigned i = 0; i < num_planes; i++) {
+      if (!screen->is_format_supported(screen,
+                                       util_format_get_plane_format(format, i),
+                                       target, sample_count,
+                                       storage_sample_count, bind))
+         return false;
    }
 
-#undef CASE
-}
-
-enum pipe_format
-util_format_rgbx_to_rgba(enum pipe_format format)
-{
-   switch (format) {
-   case PIPE_FORMAT_B8G8R8X8_UNORM:
-      return PIPE_FORMAT_B8G8R8A8_UNORM;
-   case PIPE_FORMAT_X8B8G8R8_UNORM:
-      return PIPE_FORMAT_A8B8G8R8_UNORM;
-   case PIPE_FORMAT_X8R8G8B8_UNORM:
-      return PIPE_FORMAT_A8R8G8B8_UNORM;
-   case PIPE_FORMAT_X8B8G8R8_SRGB:
-      return PIPE_FORMAT_A8B8G8R8_SRGB;
-   case PIPE_FORMAT_B8G8R8X8_SRGB:
-      return PIPE_FORMAT_B8G8R8A8_SRGB;
-   case PIPE_FORMAT_X8R8G8B8_SRGB:
-      return PIPE_FORMAT_A8R8G8B8_SRGB;
-   case PIPE_FORMAT_B5G5R5X1_UNORM:
-      return PIPE_FORMAT_B5G5R5A1_UNORM;
-   case PIPE_FORMAT_R10G10B10X2_USCALED:
-      return PIPE_FORMAT_R10G10B10A2_USCALED;
-   case PIPE_FORMAT_R10G10B10X2_SNORM:
-      return PIPE_FORMAT_R10G10B10A2_SNORM;
-   case PIPE_FORMAT_R8G8B8X8_UNORM:
-      return PIPE_FORMAT_R8G8B8A8_UNORM;
-   case PIPE_FORMAT_B4G4R4X4_UNORM:
-      return PIPE_FORMAT_B4G4R4A4_UNORM;
-   case PIPE_FORMAT_R8G8B8X8_SNORM:
-      return PIPE_FORMAT_R8G8B8A8_SNORM;
-   case PIPE_FORMAT_R8G8B8X8_SRGB:
-      return PIPE_FORMAT_R8G8B8A8_SRGB;
-   case PIPE_FORMAT_R8G8B8X8_UINT:
-      return PIPE_FORMAT_R8G8B8A8_UINT;
-   case PIPE_FORMAT_R8G8B8X8_SINT:
-      return PIPE_FORMAT_R8G8B8A8_SINT;
-   case PIPE_FORMAT_B10G10R10X2_UNORM:
-      return PIPE_FORMAT_B10G10R10A2_UNORM;
-   case PIPE_FORMAT_R16G16B16X16_UNORM:
-      return PIPE_FORMAT_R16G16B16A16_UNORM;
-   case PIPE_FORMAT_R16G16B16X16_SNORM:
-      return PIPE_FORMAT_R16G16B16A16_SNORM;
-   case PIPE_FORMAT_R16G16B16X16_FLOAT:
-      return PIPE_FORMAT_R16G16B16A16_FLOAT;
-   case PIPE_FORMAT_R16G16B16X16_UINT:
-      return PIPE_FORMAT_R16G16B16A16_UINT;
-   case PIPE_FORMAT_R16G16B16X16_SINT:
-      return PIPE_FORMAT_R16G16B16A16_SINT;
-   case PIPE_FORMAT_R32G32B32X32_FLOAT:
-      return PIPE_FORMAT_R32G32B32A32_FLOAT;
-   case PIPE_FORMAT_R32G32B32X32_UINT:
-      return PIPE_FORMAT_R32G32B32A32_UINT;
-   case PIPE_FORMAT_R32G32B32X32_SINT:
-      return PIPE_FORMAT_R32G32B32A32_SINT;
-   case PIPE_FORMAT_X8B8G8R8_SNORM:
-      return PIPE_FORMAT_A8B8G8R8_SNORM;
-   case PIPE_FORMAT_R10G10B10X2_UNORM:
-      return PIPE_FORMAT_R10G10B10A2_UNORM;
-   case PIPE_FORMAT_X1B5G5R5_UNORM:
-      return PIPE_FORMAT_A1B5G5R5_UNORM;
-   case PIPE_FORMAT_X8B8G8R8_SINT:
-      return PIPE_FORMAT_A8B8G8R8_SINT;
-   case PIPE_FORMAT_B8G8R8X8_SNORM:
-      return PIPE_FORMAT_B8G8R8A8_SNORM;
-   case PIPE_FORMAT_B8G8R8X8_UINT:
-      return PIPE_FORMAT_B8G8R8A8_UINT;
-   case PIPE_FORMAT_B8G8R8X8_SINT:
-      return PIPE_FORMAT_B8G8R8A8_SINT;
-   case PIPE_FORMAT_X8R8G8B8_SNORM:
-      return PIPE_FORMAT_A8R8G8B8_SNORM;
-   case PIPE_FORMAT_X8R8G8B8_SINT:
-      return PIPE_FORMAT_A8R8G8B8_SINT;
-   case PIPE_FORMAT_R5G5B5X1_UNORM:
-      return PIPE_FORMAT_R5G5B5A1_UNORM;
-   case PIPE_FORMAT_X1R5G5B5_UNORM:
-      return PIPE_FORMAT_A1R5G5B5_UNORM;
-   case PIPE_FORMAT_R4G4B4X4_UNORM:
-      return PIPE_FORMAT_R4G4B4A4_UNORM;
-   case PIPE_FORMAT_B10G10R10X2_SNORM:
-      return PIPE_FORMAT_B10G10R10A2_SNORM;
-   case PIPE_FORMAT_R10G10B10X2_SINT:
-      return PIPE_FORMAT_R10G10B10A2_SINT;
-   case PIPE_FORMAT_B10G10R10X2_SINT:
-      return PIPE_FORMAT_B10G10R10A2_SINT;
-   default: {
-      ASSERTED const struct util_format_description *desc = util_format_description(format);
-
-      /* Assert that the format doesn't contain X instead of A. */
-      assert(desc->colorspace != UTIL_FORMAT_COLORSPACE_ZS ||
-             (desc->channel[0].type != UTIL_FORMAT_TYPE_VOID &&
-              desc->channel[desc->nr_channels - 1].type != UTIL_FORMAT_TYPE_VOID));
-      return format;
-   }
-   }
-}
-
-enum pipe_format
-util_format_get_array(const enum util_format_type type, const unsigned bits,
-                      const unsigned nr_components, const bool normalized,
-                      const bool pure_integer)
-{
-#define CASE_BY_BIT_SWITCH_BY_NR_COMPONENTS_1TO4(TYPE, BITS, NR_VAR) \
-   case BITS: \
-      switch (NR_VAR) { \
-      case 1: \
-         return PIPE_FORMAT_R##BITS##_##TYPE; \
-      case 2: \
-         return PIPE_FORMAT_R##BITS##G##BITS##_##TYPE; \
-      case 3: \
-         return PIPE_FORMAT_R##BITS##G##BITS##B##BITS##_##TYPE; \
-      case 4: \
-         return PIPE_FORMAT_R##BITS##G##BITS##B##BITS##A##BITS##_##TYPE; \
-      default: \
-         return PIPE_FORMAT_NONE; \
-      }
-
-#define SWITCH_BY_BITS_CASEX3(TYPE, BITS_VAR, BITS1, BITS2, BITS3, NR_VAR) \
-   switch (BITS_VAR) { \
-   CASE_BY_BIT_SWITCH_BY_NR_COMPONENTS_1TO4(TYPE, BITS1, NR_VAR) \
-   CASE_BY_BIT_SWITCH_BY_NR_COMPONENTS_1TO4(TYPE, BITS2, NR_VAR) \
-   CASE_BY_BIT_SWITCH_BY_NR_COMPONENTS_1TO4(TYPE, BITS3, NR_VAR) \
-   default: \
-      return PIPE_FORMAT_NONE; \
-   }
-
-#define SWITCH_BY_BITS_CASEX4(TYPE, BITS_VAR, BITS1, BITS2, BITS3, BITS4, NR_VAR) \
-   switch (BITS_VAR) { \
-   CASE_BY_BIT_SWITCH_BY_NR_COMPONENTS_1TO4(TYPE, BITS1, NR_VAR) \
-   CASE_BY_BIT_SWITCH_BY_NR_COMPONENTS_1TO4(TYPE, BITS2, NR_VAR) \
-   CASE_BY_BIT_SWITCH_BY_NR_COMPONENTS_1TO4(TYPE, BITS3, NR_VAR) \
-   CASE_BY_BIT_SWITCH_BY_NR_COMPONENTS_1TO4(TYPE, BITS4, NR_VAR) \
-   default: \
-      return PIPE_FORMAT_NONE; \
-   }
-
-   switch (type) {
-   case UTIL_FORMAT_TYPE_UNSIGNED:
-      if (normalized)
-         SWITCH_BY_BITS_CASEX3(UNORM, bits, 8, 16, 32, nr_components)
-      else if (!pure_integer)
-         SWITCH_BY_BITS_CASEX3(USCALED, bits, 8, 16, 32, nr_components)
-      else
-         SWITCH_BY_BITS_CASEX4(UINT, bits, 8, 16, 32, 64, nr_components)
-   case UTIL_FORMAT_TYPE_SIGNED:
-      if (normalized)
-         SWITCH_BY_BITS_CASEX3(SNORM, bits, 8, 16, 32, nr_components)
-      else if (!pure_integer)
-         SWITCH_BY_BITS_CASEX3(SSCALED, bits, 8, 16, 32, nr_components)
-      else
-         SWITCH_BY_BITS_CASEX4(SINT, bits, 8, 16, 32, 64, nr_components)
-   case UTIL_FORMAT_TYPE_FLOAT:
-      SWITCH_BY_BITS_CASEX3(FLOAT, bits, 16, 32, 64, nr_components)
-   default:
-      return PIPE_FORMAT_NONE;
-   }
-
-#undef CASE_BY_BIT_SWITCH_BY_NR_COMPONENTS_1TO4
-#undef SWITCH_BY_BITS_CASEX3
-#undef SWITCH_BY_BITS_CASEX4
-
-   return PIPE_FORMAT_NONE;
-}
-
-unsigned
-util_format_get_last_component(enum pipe_format format)
-{
-   const struct util_format_description *desc = util_format_description(format);
-   unsigned num = 0;
-
-   for (unsigned i = 1; i < 4; i++) {
-      if (desc->swizzle[i] <= PIPE_SWIZZLE_W)
-         num = i;
-   }
-   return num;
-}
-
-int
-util_format_get_largest_non_void_channel(enum pipe_format format)
-{
-   const struct util_format_description *desc = util_format_description(format);
-   int chan = -1, max_size = 0;
-
-   for (int i = 0; i < 4; i++) {
-      if (desc->channel[i].type != UTIL_FORMAT_TYPE_VOID &&
-          desc->channel[i].size > max_size) {
-         chan = i;
-         max_size = desc->channel[i].size;
-      }
-   }
-
-   return chan;
-}
-
-unsigned
-util_format_get_max_channel_size(enum pipe_format format)
-{
-   const struct util_format_description *desc = util_format_description(format);
-   int max_src_chan = util_format_get_largest_non_void_channel(format);
-   assert(max_src_chan >= 0 || util_format_is_compressed(format));
-
-   switch (format) {
-   case PIPE_FORMAT_BPTC_RGB_FLOAT:
-   case PIPE_FORMAT_BPTC_RGB_UFLOAT:
-      return 16;
-   case PIPE_FORMAT_ETC2_R11_UNORM:
-   case PIPE_FORMAT_ETC2_R11_SNORM:
-   case PIPE_FORMAT_ETC2_RG11_UNORM:
-   case PIPE_FORMAT_ETC2_RG11_SNORM:
-      return 11;
-   default:
-      return util_format_is_compressed(format) ?
-               8 : desc->channel[max_src_chan].size;
-   }
-}
-
-static uint32_t blocksizes_64kb[5][6][3] = {
-/*   3D              2D 1 sample      2D 2 samples     2D 4 samples      2D 8 samples   2D 16 samples) */
-   { { 64, 32, 32 }, { 256, 256, 1 }, { 128, 256, 1 }, { 128, 128, 1 }, { 64, 128, 1 }, { 64, 64, 1 } }, /* 8 bits */
-   { { 32, 32, 32 }, { 256, 128, 1 }, { 128, 128, 1 }, { 128, 64,  1 }, { 64, 64,  1 }, { 64, 32, 1 } }, /* 16 bits */
-   { { 32, 32, 16 }, { 128, 128, 1 }, { 64,  128, 1 }, { 64,  64,  1 }, { 32, 64,  1 }, { 32, 32, 1 } }, /* 32 bits */
-   { { 32, 16, 16 }, { 128, 64,  1 }, { 64,  64,  1 }, { 64,  32,  1 }, { 32, 32,  1 }, { 32, 16, 1 } }, /* 64 bits */
-   { { 16, 16, 16 }, { 64,  64,  1 }, { 32,  64,  1 }, { 32,  32,  1 }, { 16, 32,  1 }, { 16, 16, 1 } }, /* 128 bits */
-};
-
-uint32_t
-util_format_get_tilesize(enum pipe_format format, uint32_t dimensions, uint32_t samples, uint32_t axis)
-{
-   if (dimensions == 1)
-      return axis == 0 ? 64 * 1024 : 1;
-
-   uint32_t kind = 0;
-   if (dimensions == 2)
-      kind = util_logbase2(samples) + 1;
-
-   uint32_t block_size_log2 = util_logbase2_ceil(util_format_get_blocksize(format));
-   return blocksizes_64kb[block_size_log2][kind][axis];
+   return true;
 }

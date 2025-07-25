@@ -27,12 +27,6 @@
 
 #include <string.h>
 
-#ifdef __CET__
-#define ENDBR "endbr32\n\t"
-#else
-#define ENDBR
-#endif
-
 #ifdef HAVE_FUNC_ATTRIBUTE_VISIBILITY
 #define HIDDEN __attribute__((visibility("hidden")))
 #else
@@ -48,7 +42,7 @@ __asm__("x86_current_tls:\n\t"
         "1:\n\t"
         "popl %eax\n\t"
 	"addl $_GLOBAL_OFFSET_TABLE_+[.-1b], %eax\n\t"
-	"movl _mesa_glapi_tls_Dispatch@GOTNTPOFF(%eax), %eax\n\t"
+	"movl " ENTRY_CURRENT_TABLE "@GOTNTPOFF(%eax), %eax\n\t"
 	"ret");
 
 #ifndef GLX_X86_READONLY_TEXT
@@ -65,12 +59,11 @@ __asm__(".balign 16\n"
    func ":"
 
 #define STUB_ASM_CODE(slot)                                 \
-   ENDBR                                                    \
    "call 1f\n"                                              \
    "1:\n\t"                                                 \
    "popl %eax\n\t"                                          \
    "addl $_GLOBAL_OFFSET_TABLE_+[.-1b], %eax\n\t"           \
-   "movl _mesa_glapi_tls_Dispatch@GOTNTPOFF(%eax), %eax\n\t" \
+   "movl " ENTRY_CURRENT_TABLE "@GOTNTPOFF(%eax), %eax\n\t" \
    "movl %gs:(%eax), %eax\n\t"                              \
    "jmp *(4 * " slot ")(%eax)"
 
@@ -84,6 +77,8 @@ __asm__(".text");
 #endif /* GLX_X86_READONLY_TEXT */
 
 #ifndef MAPI_MODE_BRIDGE
+
+#include "u_execmem.h"
 
 extern unsigned long
 x86_current_tls();
@@ -112,7 +107,7 @@ entry_get_public(int slot)
    return (mapi_func) (x86_entry_start + slot * X86_ENTRY_SIZE);
 }
 
-static void
+void
 entry_patch(mapi_func entry, int slot)
 {
    char *code = (char *) entry;
@@ -129,7 +124,11 @@ entry_generate_or_patch(int slot, char *code, size_t size)
    };
    mapi_func entry;
 
-   if (size < sizeof(code_templ))
+   if (code == NULL) {
+      size = sizeof(code_templ);
+      code = u_execmem_alloc(size);
+   }
+   if (!code || size < sizeof(code_templ))
       return NULL;
 
    memcpy(code, code_templ, sizeof(code_templ));
@@ -139,6 +138,12 @@ entry_generate_or_patch(int slot, char *code, size_t size)
    entry_patch(entry, slot);
 
    return entry;
+}
+
+mapi_func
+entry_generate(int slot)
+{
+   return entry_generate_or_patch(slot, NULL, 0);
 }
 
 #endif /* MAPI_MODE_BRIDGE */

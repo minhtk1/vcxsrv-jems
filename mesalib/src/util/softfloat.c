@@ -70,6 +70,25 @@
 typedef union { double f; int64_t i; uint64_t u; } di_type;
 typedef union { float f; int32_t i; uint32_t u; } fi_type;
 
+const uint8_t count_leading_zeros8[256] = {
+    8, 7, 6, 6, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4,
+    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};
+
 /**
  * \brief Shifts 'a' right by the number of bits given in 'dist', which must be in
  * the range 1 to 63.  If any nonzero bits are shifted off, they are "jammed"
@@ -192,7 +211,7 @@ uint16_t _mesa_roundtozero_f16(int16_t s, int16_t e, int16_t m)
         if (e < 0) {
             m = _mesa_shift_right_jam32(m, -e);
             e = 0;
-        } else if (e > 0x1d) {
+        } else if ((e > 0x1d) || (0x8000 <= m)) {
             e = 0x1f;
             m = 0;
             return (s << 15) + (e << 10) + m - 1;
@@ -374,7 +393,6 @@ _mesa_shift_right_jam_m(uint8_t size_words, const uint32_t *a, uint32_t dist, ui
 
     word_jam = 0;
     word_dist = dist >> 5;
-    tmp = NULL;
     if (word_dist) {
         if (size_words < word_dist)
             word_dist = size_words;
@@ -410,12 +428,10 @@ _mesa_shift_right_jam_m(uint8_t size_words, const uint32_t *a, uint32_t dist, ui
         }
         tmp = m_out + index_multiword_hi(size_words, word_dist);
     }
-    if (tmp) {
-       do {
-           *tmp++ = 0;
-           --word_dist;
-       } while (word_dist);
-    }
+    do {
+        *tmp++ = 0;
+        --word_dist;
+    } while (word_dist);
     if (word_jam)
         m_out[index_word_lo(size_words)] |= 1;
 }
@@ -1419,7 +1435,7 @@ _mesa_double_to_f32(double val, bool rtz)
  * From f32_to_f16()
  */
 uint16_t
-_mesa_float_to_half_rtz_slow(float val)
+_mesa_float_to_half_rtz(float val)
 {
     const fi_type fi = {val};
     const uint32_t flt_m = fi.u & 0x7fffff;
@@ -1433,12 +1449,7 @@ _mesa_float_to_half_rtz_slow(float val)
         if (flt_m != 0) {
             /* 'val' is a NaN, return NaN */
             e = 0x1f;
-            /* Retain the top bits of a NaN to make sure that the quiet/signaling
-            * status stays the same.
-            */
-            m = flt_m >> 13;
-            if (!m)
-               m = 1;
+            m = 0x1;
             return (s << 15) + (e << 10) + m;
         }
 

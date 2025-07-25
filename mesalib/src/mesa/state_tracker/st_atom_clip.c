@@ -45,14 +45,14 @@ void st_update_clip( struct st_context *st )
 {
    struct pipe_clip_state clip;
    const struct gl_context *ctx = st->ctx;
-   bool use_eye = false;
+   bool use_eye = FALSE;
 
    STATIC_ASSERT(sizeof(clip.ucp) <= sizeof(ctx->Transform._ClipUserPlane));
 
    /* if we have a vertex shader that writes clip vertex we need to pass
       the pre-projection transformed coordinates into the driver. */
    if (ctx->_Shader->CurrentProgram[MESA_SHADER_VERTEX])
-      use_eye = true;
+      use_eye = TRUE;
 
    /* _ClipUserPlane = _NEW_TRANSFORM | _NEW_PROJECTION
     * EyeUserPlane = _NEW_TRANSFORM

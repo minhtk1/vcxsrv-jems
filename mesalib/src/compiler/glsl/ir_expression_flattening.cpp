@@ -56,7 +56,10 @@ do_expression_flattening(exec_list *instructions,
 			 bool (*predicate)(ir_instruction *ir))
 {
    ir_expression_flattening_visitor v(predicate);
-   visit_list_elements(&v, instructions);
+
+   foreach_in_list(ir_instruction, ir, instructions) {
+      ir->accept(&v);
+   }
 }
 
 void

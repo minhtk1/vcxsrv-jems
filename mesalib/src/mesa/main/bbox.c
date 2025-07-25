@@ -30,7 +30,6 @@
 
 #include "bbox.h"
 #include "context.h"
-#include "api_exec_decl.h"
 
 void GLAPIENTRY
 _mesa_PrimitiveBoundingBox(

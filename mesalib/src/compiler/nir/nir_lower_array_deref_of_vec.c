@@ -24,16 +24,49 @@
 #include "nir.h"
 #include "nir_builder.h"
 
+static void
+build_write_masked_store(nir_builder *b, nir_deref_instr *vec_deref,
+                         nir_ssa_def *value, unsigned component)
+{
+   assert(value->num_components == 1);
+   unsigned num_components = glsl_get_components(vec_deref->type);
+   assert(num_components > 1 && num_components <= NIR_MAX_VEC_COMPONENTS);
+
+   nir_ssa_def *u = nir_ssa_undef(b, 1, value->bit_size);
+   nir_ssa_def *comps[NIR_MAX_VEC_COMPONENTS];
+   for (unsigned i = 0; i < num_components; i++)
+      comps[i] = (i == component) ? value : u;
+
+   nir_ssa_def *vec = nir_vec(b, comps, num_components);
+   nir_store_deref(b, vec_deref, vec, (1u << component));
+}
+
+static void
+build_write_masked_stores(nir_builder *b, nir_deref_instr *vec_deref,
+                          nir_ssa_def *value, nir_ssa_def *index,
+                          unsigned start, unsigned end)
+{
+   if (start == end - 1) {
+      build_write_masked_store(b, vec_deref, value, start);
+   } else {
+      unsigned mid = start + (end - start) / 2;
+      nir_push_if(b, nir_ilt(b, index, nir_imm_int(b, mid)));
+      build_write_masked_stores(b, vec_deref, value, index, start, mid);
+      nir_push_else(b, NULL);
+      build_write_masked_stores(b, vec_deref, value, index, mid, end);
+      nir_pop_if(b, NULL);
+   }
+}
+
 static bool
 nir_lower_array_deref_of_vec_impl(nir_function_impl *impl,
                                   nir_variable_mode modes,
-                                  bool (*filter)(nir_variable *),
                                   nir_lower_array_deref_of_vec_options options)
 {
    bool progress = false;
-   bool has_indirect_store = false;
 
-   nir_builder b = nir_builder_create(impl);
+   nir_builder b;
+   nir_builder_init(&b, impl);
 
    nir_foreach_block(block, impl) {
       nir_foreach_instr_safe(instr, block) {
@@ -47,16 +80,11 @@ nir_lower_array_deref_of_vec_impl(nir_function_impl *impl,
              intrin->intrinsic != nir_intrinsic_interp_deref_at_centroid &&
              intrin->intrinsic != nir_intrinsic_interp_deref_at_sample &&
              intrin->intrinsic != nir_intrinsic_interp_deref_at_offset &&
-             intrin->intrinsic != nir_intrinsic_interp_deref_at_vertex &&
              intrin->intrinsic != nir_intrinsic_store_deref)
             continue;
 
          nir_deref_instr *deref = nir_src_as_deref(intrin->src[0]);
-
-         /* We choose to be conservative here.  If the deref contains any
-          * modes which weren't specified, we bail and don't bother lowering.
-          */
-         if (!nir_deref_mode_must_be(deref, modes))
+         if (!(deref->mode & modes))
             continue;
 
          /* We only care about array derefs that act on vectors */
@@ -67,9 +95,6 @@ nir_lower_array_deref_of_vec_impl(nir_function_impl *impl,
          if (!glsl_type_is_vector(vec_deref->type))
             continue;
 
-         if (filter && !filter(nir_deref_instr_get_variable(deref)))
-            continue;
-
          assert(intrin->num_components == 1);
          unsigned num_components = glsl_get_components(vec_deref->type);
          assert(num_components > 1 && num_components <= NIR_MAX_VEC_COMPONENTS);
@@ -77,7 +102,8 @@ nir_lower_array_deref_of_vec_impl(nir_function_impl *impl,
          b.cursor = nir_after_instr(&intrin->instr);
 
          if (intrin->intrinsic == nir_intrinsic_store_deref) {
-            nir_def *value = intrin->src[1].ssa;
+            assert(intrin->src[1].is_ssa);
+            nir_ssa_def *value = intrin->src[1].ssa;
 
             if (nir_src_is_const(deref->arr.index)) {
                if (!(options & nir_lower_direct_array_deref_of_vec_store))
@@ -88,16 +114,14 @@ nir_lower_array_deref_of_vec_impl(nir_function_impl *impl,
                 * replace it with anything.
                 */
                if (index < num_components)
-                  nir_build_write_masked_store(&b, vec_deref, value, index);
+                  build_write_masked_store(&b, vec_deref, value, index);
             } else {
                if (!(options & nir_lower_indirect_array_deref_of_vec_store))
                   continue;
 
-               nir_def *index = deref->arr.index.ssa;
-               nir_build_write_masked_stores(&b, vec_deref, value, index,
-                                             0, num_components);
-
-               has_indirect_store = true;
+               nir_ssa_def *index = nir_ssa_for_src(&b, deref->arr.index, 1);
+               build_write_masked_stores(&b, vec_deref, value, index,
+                                         0, num_components);
             }
             nir_instr_remove(&intrin->instr);
 
@@ -112,27 +136,34 @@ nir_lower_array_deref_of_vec_impl(nir_function_impl *impl,
             }
 
             /* Turn the load into a vector load */
-            nir_src_rewrite(&intrin->src[0], &vec_deref->def);
-            intrin->def.num_components = num_components;
+            nir_instr_rewrite_src(&intrin->instr, &intrin->src[0],
+                                  nir_src_for_ssa(&vec_deref->dest.ssa));
+            intrin->dest.ssa.num_components = num_components;
             intrin->num_components = num_components;
 
-            nir_def *index = deref->arr.index.ssa;
-            nir_def *scalar =
-               nir_vector_extract(&b, &intrin->def, index);
-            if (scalar->parent_instr->type == nir_instr_type_undef) {
-               nir_def_replace(&intrin->def, scalar);
+            nir_ssa_def *index = nir_ssa_for_src(&b, deref->arr.index, 1);
+            nir_ssa_def *scalar =
+               nir_vector_extract(&b, &intrin->dest.ssa, index);
+            if (scalar->parent_instr->type == nir_instr_type_ssa_undef) {
+               nir_ssa_def_rewrite_uses(&intrin->dest.ssa,
+                                        nir_src_for_ssa(scalar));
+               nir_instr_remove(&intrin->instr);
             } else {
-               nir_def_rewrite_uses_after(&intrin->def,
-                                          scalar,
-                                          scalar->parent_instr);
+               nir_ssa_def_rewrite_uses_after(&intrin->dest.ssa,
+                                              nir_src_for_ssa(scalar),
+                                              scalar->parent_instr);
             }
             progress = true;
          }
       }
    }
 
-   return nir_progress(progress, impl,
-                       has_indirect_store ? nir_metadata_none : nir_metadata_control_flow);
+   if (progress) {
+      nir_metadata_preserve(impl, nir_metadata_block_index |
+                                  nir_metadata_dominance);
+   }
+
+   return progress;
 }
 
 /* Lowers away array dereferences on vectors
@@ -145,13 +176,13 @@ nir_lower_array_deref_of_vec_impl(nir_function_impl *impl,
  */
 bool
 nir_lower_array_deref_of_vec(nir_shader *shader, nir_variable_mode modes,
-                             bool (*filter)(nir_variable *),
                              nir_lower_array_deref_of_vec_options options)
 {
    bool progress = false;
 
-   nir_foreach_function_impl(impl, shader) {
-      if (nir_lower_array_deref_of_vec_impl(impl, modes, filter, options))
+   nir_foreach_function(function, shader) {
+      if (function->impl &&
+          nir_lower_array_deref_of_vec_impl(function->impl, modes, options))
          progress = true;
    }
 

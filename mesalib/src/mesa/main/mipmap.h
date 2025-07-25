@@ -26,7 +26,7 @@
 #ifndef MIPMAP_H
 #define MIPMAP_H
 
-#include "util/glheader.h"
+#include "glheader.h"
 
 struct gl_context;
 struct gl_texture_object;
@@ -35,6 +35,17 @@ unsigned
 _mesa_compute_num_levels(struct gl_context *ctx,
                          struct gl_texture_object *texObj,
                          GLenum target);
+
+extern void
+_mesa_generate_mipmap_level(GLenum target,
+                            GLenum datatype, GLuint comps,
+                            GLint border,
+                            GLint srcWidth, GLint srcHeight, GLint srcDepth,
+                            const GLubyte **srcData,
+                            GLint srcRowStride,
+                            GLint dstWidth, GLint dstHeight, GLint dstDepth,
+                            GLubyte **dstData,
+                            GLint dstRowStride);
 
 void
 _mesa_prepare_mipmap_levels(struct gl_context *ctx,

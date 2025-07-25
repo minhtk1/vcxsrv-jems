@@ -1,10 +1,28 @@
 /*
-************************************************************************************************************************
-*
-*  Copyright (C) 2007-2024 Advanced Micro Devices, Inc. All rights reserved.
-*  SPDX-License-Identifier: MIT
-*
-***********************************************************************************************************************/
+ * Copyright © 2007-2019 Advanced Micro Devices, Inc.
+ * All Rights Reserved.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sub license, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NON-INFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDERS, AUTHORS
+ * AND/OR ITS SUPPLIERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+ * USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ * The above copyright notice and this permission notice (including the
+ * next paragraph) shall be included in all copies or substantial portions
+ * of the Software.
+ */
 
 /**
 ****************************************************************************************************
@@ -126,14 +144,12 @@ Lib* Lib::GetLib(
         ADDR_ASSERT_ALWAYS();
         hLib = NULL;
     }
-    return static_cast<Lib*>(pAddrLib);
+    return static_cast<Lib*>(hLib);
 }
-
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                               Surface Methods
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
 
 /**
 ****************************************************************************************************
@@ -1212,8 +1228,6 @@ UINT_32 Lib::Thickness(
     return ModeFlags[tileMode].thickness;
 }
 
-
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                               CMASK/HTILE
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1994,7 +2008,6 @@ ADDR_E_RETURNCODE Lib::ComputeCmaskInfo(
     *pPitchOut = (pitchIn + macroWidth - 1) & ~(macroWidth - 1);
     *pHeightOut = (heightIn + macroHeight - 1) & ~(macroHeight - 1);
 
-
     sliceBytes = ComputeCmaskBytes(*pPitchOut,
                                    *pHeightOut,
                                    1);
@@ -2173,6 +2186,7 @@ VOID Lib::HwlComputeXmaskCoordFromAddr(
     UINT_32 pipe;
     UINT_32 numPipes;
     UINT_32 numGroupBits;
+    (void)numGroupBits;
     UINT_32 numPipeBits;
     UINT_32 macroTilePitch;
     UINT_32 macroTileHeight;
@@ -2220,7 +2234,6 @@ VOID Lib::HwlComputeXmaskCoordFromAddr(
 
     UINT_32 groupBits = 8 * m_pipeInterleaveBytes;
     UINT_32 pipes = numPipes;
-
 
     //
     // Compute the micro tile size, in bits. And macro tile pitch and height.
@@ -2274,19 +2287,16 @@ VOID Lib::HwlComputeXmaskCoordFromAddr(
     pitch = pitchAligned;
     height = heightAligned;
 
-
     //
     // Convert byte address to bit address.
     //
     bitAddr = BYTES_TO_BITS(addr) + bitPosition;
-
 
     //
     // Remove pipe bits from address.
     //
 
     bitAddr = (bitAddr % groupBits) + ((bitAddr/groupBits/pipes)*groupBits);
-
 
     elemOffset = bitAddr / elemBits;
 
@@ -2305,7 +2315,6 @@ VOID Lib::HwlComputeXmaskCoordFromAddr(
     macroY = static_cast<UINT_32>((macroNumber % macrosPerSlice) / macrosPerPitch);
     macroZ = static_cast<UINT_32>((macroNumber / macrosPerSlice));
 
-
     microX = microNumber % (macroTilePitch / factor / MicroTileWidth);
     microY = (microNumber / (macroTilePitch / factor / MicroTileHeight));
 
@@ -2315,7 +2324,6 @@ VOID Lib::HwlComputeXmaskCoordFromAddr(
 
     microTileCoordY = ComputeXmaskCoordYFromPipe(pipe,
                                                  *pX/MicroTileWidth);
-
 
     //
     // Assemble final coordinates.
@@ -2375,7 +2383,6 @@ UINT_64 Lib::HwlComputeXmaskAddrFromCoord(
     UINT_64 offsetLo;
     UINT_64 offsetHi;
     UINT_64 groupMask;
-
 
     UINT_32 elemBits = 0;
 
@@ -2978,7 +2985,6 @@ ADDR_E_RETURNCODE Lib::ComputeMicroTileEquation(
     // stackedDepthSlices is used for addressing mode that a tile block contains multiple slices,
     // which is not supported by our address lib
     pEquation->stackedDepthSlices = FALSE;
-    pEquation->numBitComponents   = 1;
 
     return retCode;
 }
@@ -3340,7 +3346,6 @@ VOID Lib::PadDimensions(
                      heightAlign);
 }
 
-
 /**
 ****************************************************************************************************
 *   Lib::HwlPreHandleBaseLvl3xPitch
@@ -3401,7 +3406,6 @@ UINT_32 Lib::HwlPostHandleBaseLvl3xPitch(
 
     return expPitch;
 }
-
 
 /**
 ****************************************************************************************************
@@ -3519,6 +3523,7 @@ VOID Lib::ComputeMipLevel(
 {
     // Check if HWL has handled
     BOOL_32 hwlHandled = FALSE;
+    (void)hwlHandled;
 
     if (ElemLib::IsBlockCompressed(pIn->format))
     {
@@ -3921,7 +3926,6 @@ VOID Lib::ComputeQbStereoInfo(
 
     // 1D surface on SI may break this rule, but we can force it to meet by checking .qbStereo.
 }
-
 
 /**
 ****************************************************************************************************

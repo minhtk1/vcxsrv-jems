@@ -33,27 +33,27 @@ u_split_draw(const struct pipe_draw_info *info, uint32_t max_verts,
    }
 
    switch (info->mode) {
-      case MESA_PRIM_POINTS:
+      case PIPE_PRIM_POINTS:
          *count = *step = max_verts;
          break;
-      case MESA_PRIM_LINES:
+      case PIPE_PRIM_LINES:
          *count = *step = max_verts - (max_verts % 2);
          break;
-      case MESA_PRIM_LINE_STRIP:
+      case PIPE_PRIM_LINE_STRIP:
          *count = max_verts;
          *step = max_verts - 1;
          break;
-      case MESA_PRIM_LINE_LOOP:
+      case PIPE_PRIM_LINE_LOOP:
          *count = max_verts;
          *step = max_verts - 1;
          debug_warn_once("unhandled line loop "
                          "looping behavior with "
                          ">max vert count\n");
          break;
-      case MESA_PRIM_TRIANGLES:
+      case PIPE_PRIM_TRIANGLES:
          *count = *step = max_verts - (max_verts % 3);
          break;
-      case MESA_PRIM_TRIANGLE_STRIP:
+      case PIPE_PRIM_TRIANGLE_STRIP:
          *count = max_verts;
          *step = max_verts - 2;
          break;

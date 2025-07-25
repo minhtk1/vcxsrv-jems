@@ -25,14 +25,12 @@
  *
  **************************************************************************/
 
-#include "util/format/format_utils.h"
 #include "util/u_cpu_detect.h"
 #include "util/u_helpers.h"
 #include "util/u_inlines.h"
 #include "util/u_upload_mgr.h"
 #include "util/u_thread.h"
 #include "util/os_time.h"
-#include "util/perf/cpu_trace.h"
 #include <inttypes.h>
 
 /**
@@ -47,34 +45,36 @@
 void util_set_vertex_buffers_mask(struct pipe_vertex_buffer *dst,
                                   uint32_t *enabled_buffers,
                                   const struct pipe_vertex_buffer *src,
-                                  unsigned count,
-                                  bool take_ownership)
+                                  unsigned start_slot, unsigned count)
 {
-   unsigned last_count = util_last_bit(*enabled_buffers);
+   unsigned i;
    uint32_t bitmask = 0;
-   unsigned i = 0;
 
-   assert(!count || src);
+   dst += start_slot;
+
+   *enabled_buffers &= ~u_bit_consecutive(start_slot, count);
 
    if (src) {
-      for (; i < count; i++) {
+      for (i = 0; i < count; i++) {
          if (src[i].buffer.resource)
             bitmask |= 1 << i;
 
          pipe_vertex_buffer_unreference(&dst[i]);
 
-         if (!take_ownership && !src[i].is_user_buffer)
+         if (!src[i].is_user_buffer)
             pipe_resource_reference(&dst[i].buffer.resource, src[i].buffer.resource);
       }
 
       /* Copy over the other members of pipe_vertex_buffer. */
       memcpy(dst, src, count * sizeof(struct pipe_vertex_buffer));
+
+      *enabled_buffers |= bitmask << start_slot;
    }
-
-   *enabled_buffers = bitmask;
-
-   for (; i < last_count; i++)
-      pipe_vertex_buffer_unreference(&dst[i]);
+   else {
+      /* Unreference the buffers. */
+      for (i = 0; i < count; i++)
+         pipe_vertex_buffer_unreference(&dst[i]);
+   }
 }
 
 /**
@@ -84,18 +84,18 @@ void util_set_vertex_buffers_mask(struct pipe_vertex_buffer *dst,
 void util_set_vertex_buffers_count(struct pipe_vertex_buffer *dst,
                                    unsigned *dst_count,
                                    const struct pipe_vertex_buffer *src,
-                                   unsigned count,
-                                   bool take_ownership)
+                                   unsigned start_slot, unsigned count)
 {
+   unsigned i;
    uint32_t enabled_buffers = 0;
 
-   for (unsigned i = 0; i < *dst_count; i++) {
+   for (i = 0; i < *dst_count; i++) {
       if (dst[i].buffer.resource)
          enabled_buffers |= (1ull << i);
    }
 
-   util_set_vertex_buffers_mask(dst, &enabled_buffers, src, count,
-                                take_ownership);
+   util_set_vertex_buffers_mask(dst, &enabled_buffers, src, start_slot,
+                                count);
 
    *dst_count = util_last_bit(enabled_buffers);
 }
@@ -143,14 +143,13 @@ void util_set_shader_buffers_mask(struct pipe_shader_buffer *dst,
 bool
 util_upload_index_buffer(struct pipe_context *pipe,
                          const struct pipe_draw_info *info,
-                         const struct pipe_draw_start_count_bias *draw,
                          struct pipe_resource **out_buffer,
                          unsigned *out_offset, unsigned alignment)
 {
-   unsigned start_offset = draw->start * info->index_size;
+   unsigned start_offset = info->start * info->index_size;
 
    u_upload_data(pipe->stream_uploader, start_offset,
-                 draw->count * info->index_size, alignment,
+                 info->count * info->index_size, alignment,
                  (char*)info->index.user + start_offset,
                  out_offset, out_buffer);
    u_upload_unmap(pipe->stream_uploader);
@@ -159,87 +158,40 @@ util_upload_index_buffer(struct pipe_context *pipe,
 }
 
 /**
- * Lower each UINT64 vertex element to 1 or 2 UINT32 vertex elements.
- * 3 and 4 component formats are expanded into 2 slots.
+ * Called by MakeCurrent. Used to notify the driver that the application
+ * thread may have been changed.
  *
- * @param velems        Original vertex elements, will be updated to contain
- *                      the lowered vertex elements.
- * @param velem_count   Original count, will be updated to contain the count
- *                      after lowering.
- * @param tmp           Temporary array of PIPE_MAX_ATTRIBS vertex elements.
+ * The function pins the current thread and driver threads to a group of
+ * CPU cores that share the same L3 cache. This is needed for good multi-
+ * threading performance on AMD Zen CPUs.
+ *
+ * \param upper_thread  thread in the state tracker that also needs to be
+ *                      pinned.
  */
 void
-util_lower_uint64_vertex_elements(const struct pipe_vertex_element **velems,
-                                  unsigned *velem_count,
-                                  struct pipe_vertex_element tmp[PIPE_MAX_ATTRIBS])
+util_pin_driver_threads_to_random_L3(struct pipe_context *ctx,
+                                     thrd_t *upper_thread)
 {
-   const struct pipe_vertex_element *input = *velems;
-   unsigned count = *velem_count;
-   bool has_64bit = false;
-
-   for (unsigned i = 0; i < count; i++) {
-      has_64bit |= input[i].src_format >= PIPE_FORMAT_R64_UINT &&
-                   input[i].src_format <= PIPE_FORMAT_R64G64B64A64_UINT;
-   }
-
-   /* Return the original vertex elements if there is nothing to do. */
-   if (!has_64bit)
+   /* If pinning has no effect, don't do anything. */
+   if (util_cpu_caps.nr_cpus == util_cpu_caps.cores_per_L3)
       return;
 
-   /* Lower 64_UINT to 32_UINT. */
-   unsigned new_count = 0;
+   unsigned num_L3_caches = util_cpu_caps.nr_cpus /
+                            util_cpu_caps.cores_per_L3;
 
-   for (unsigned i = 0; i < count; i++) {
-      enum pipe_format format = input[i].src_format;
+   /* Get a semi-random number. */
+   int64_t t = os_time_get_nano();
+   unsigned cache = (t ^ (t >> 8) ^ (t >> 16)) % num_L3_caches;
 
-      /* If the shader input is dvec2 or smaller, reduce the number of
-       * components to 2 at most. If the shader input is dvec3 or larger,
-       * expand the number of components to 3 at least. If the 3rd component
-       * is out of bounds, the hardware shouldn't skip loading the first
-       * 2 components.
-       */
-      if (format >= PIPE_FORMAT_R64_UINT &&
-          format <= PIPE_FORMAT_R64G64B64A64_UINT) {
-         if (input[i].dual_slot)
-            format = MAX2(format, PIPE_FORMAT_R64G64B64_UINT);
-         else
-            format = MIN2(format, PIPE_FORMAT_R64G64_UINT);
-      }
-
-      switch (format) {
-      case PIPE_FORMAT_R64_UINT:
-         tmp[new_count] = input[i];
-         tmp[new_count].src_format = PIPE_FORMAT_R32G32_UINT;
-         new_count++;
-         break;
-
-      case PIPE_FORMAT_R64G64_UINT:
-         tmp[new_count] = input[i];
-         tmp[new_count].src_format = PIPE_FORMAT_R32G32B32A32_UINT;
-         new_count++;
-         break;
-
-      case PIPE_FORMAT_R64G64B64_UINT:
-      case PIPE_FORMAT_R64G64B64A64_UINT:
-         assert(new_count + 2 <= PIPE_MAX_ATTRIBS);
-         tmp[new_count] = tmp[new_count + 1] = input[i];
-         tmp[new_count].src_format = PIPE_FORMAT_R32G32B32A32_UINT;
-         tmp[new_count + 1].src_format =
-            format == PIPE_FORMAT_R64G64B64_UINT ?
-                  PIPE_FORMAT_R32G32_UINT :
-                  PIPE_FORMAT_R32G32B32A32_UINT;
-         tmp[new_count + 1].src_offset += 16;
-         new_count += 2;
-         break;
-
-      default:
-         tmp[new_count++] = input[i];
-         break;
-      }
+   /* Tell the driver to pin its threads to the selected L3 cache. */
+   if (ctx->set_context_param) {
+      ctx->set_context_param(ctx, PIPE_CONTEXT_PARAM_PIN_THREADS_TO_L3_CACHE,
+                             cache);
    }
 
-   *velem_count = new_count;
-   *velems = tmp;
+   /* Do the same for the upper level thread if there is any (e.g. glthread) */
+   if (upper_thread)
+      util_pin_thread_to_L3(*upper_thread, cache, util_cpu_caps.cores_per_L3);
 }
 
 /* This is a helper for hardware bring-up. Don't remove. */
@@ -294,33 +246,6 @@ util_end_pipestat_query(struct pipe_context *ctx, struct pipe_query *q,
            stats.cs_invocations);
 }
 
-/* This is a helper for profiling. Don't remove. */
-struct pipe_query *
-util_begin_time_query(struct pipe_context *ctx)
-{
-   struct pipe_query *q =
-      ctx->create_query(ctx, PIPE_QUERY_TIME_ELAPSED, 0);
-   if (!q)
-      return NULL;
-
-   ctx->begin_query(ctx, q);
-   return q;
-}
-
-/* This is a helper for profiling. Don't remove. */
-void
-util_end_time_query(struct pipe_context *ctx, struct pipe_query *q, FILE *f,
-                    const char *name)
-{
-   union pipe_query_result result;
-
-   ctx->end_query(ctx, q);
-   ctx->get_query_result(ctx, q, true, &result);
-   ctx->destroy_query(ctx, q);
-
-   fprintf(f, "Time elapsed: %s - %"PRIu64".%u us\n", name, result.u64 / 1000, (unsigned)(result.u64 % 1000) / 100);
-}
-
 /* This is a helper for hardware bring-up. Don't remove. */
 void
 util_wait_for_idle(struct pipe_context *ctx)
@@ -328,7 +253,7 @@ util_wait_for_idle(struct pipe_context *ctx)
    struct pipe_fence_handle *fence = NULL;
 
    ctx->flush(ctx, &fence, 0);
-   ctx->screen->fence_finish(ctx->screen, NULL, fence, OS_TIMEOUT_INFINITE);
+   ctx->screen->fence_finish(ctx->screen, NULL, fence, PIPE_TIMEOUT_INFINITE);
 }
 
 void
@@ -387,8 +312,6 @@ util_throttle_memory_usage(struct pipe_context *pipe,
    if (!t->max_mem_usage)
       return;
 
-   MESA_TRACE_FUNC();
-
    struct pipe_screen *screen = pipe->screen;
    struct pipe_fence_handle **fence = NULL;
    unsigned ring_size = ARRAY_SIZE(t->ring);
@@ -414,7 +337,7 @@ util_throttle_memory_usage(struct pipe_context *pipe,
 
    /* Wait for the fence to decrease memory usage. */
    if (fence) {
-      screen->fence_finish(screen, pipe, *fence, OS_TIMEOUT_INFINITE);
+      screen->fence_finish(screen, pipe, *fence, PIPE_TIMEOUT_INFINITE);
       screen->fence_reference(screen, fence, NULL);
    }
 
@@ -442,7 +365,7 @@ util_throttle_memory_usage(struct pipe_context *pipe,
          t->wait_index = (t->wait_index + 1) % ring_size;
 
          assert(*fence);
-         screen->fence_finish(screen, pipe, *fence, OS_TIMEOUT_INFINITE);
+         screen->fence_finish(screen, pipe, *fence, PIPE_TIMEOUT_INFINITE);
          screen->fence_reference(screen, fence, NULL);
       }
 
@@ -451,142 +374,4 @@ util_throttle_memory_usage(struct pipe_context *pipe,
    }
 
    t->ring[t->flush_index].mem_usage += memory_size;
-}
-
-void
-util_sw_query_memory_info(struct pipe_screen *pscreen,
-                          struct pipe_memory_info *info)
-{
-   /* Provide query_memory_info from CPU reported memory */
-   uint64_t size;
-
-   if (!os_get_available_system_memory(&size))
-      return;
-   info->avail_staging_memory = size / 1024;
-   if (!os_get_total_physical_memory(&size))
-      return;
-   info->total_staging_memory = size / 1024;
-}
-
-void
-util_init_pipe_vertex_state(struct pipe_screen *screen,
-                            struct pipe_vertex_buffer *buffer,
-                            const struct pipe_vertex_element *elements,
-                            unsigned num_elements,
-                            struct pipe_resource *indexbuf,
-                            uint32_t full_velem_mask,
-                            struct pipe_vertex_state *state)
-{
-   assert(num_elements == util_bitcount(full_velem_mask));
-
-   pipe_reference_init(&state->reference, 1);
-   state->screen = screen;
-
-   pipe_vertex_buffer_reference(&state->input.vbuffer, buffer);
-   pipe_resource_reference(&state->input.indexbuf, indexbuf);
-   state->input.num_elements = num_elements;
-   for (unsigned i = 0; i < num_elements; i++)
-      state->input.elements[i] = elements[i];
-   state->input.full_velem_mask = full_velem_mask;
-}
-
-/**
- * Clamp color value to format range.
- */
-union pipe_color_union
-util_clamp_color(enum pipe_format format,
-                 const union pipe_color_union *color)
-{
-   union pipe_color_union clamp_color = *color;
-   int i;
-
-   for (i = 0; i < 4; i++) {
-      uint8_t bits = util_format_get_component_bits(format, UTIL_FORMAT_COLORSPACE_RGB, i);
-
-      if (!bits)
-         continue;
-
-      if (util_format_is_unorm(format))
-         clamp_color.f[i] = SATURATE(clamp_color.f[i]);
-      else if (util_format_is_snorm(format))
-         clamp_color.f[i] = CLAMP(clamp_color.f[i], -1.0, 1.0);
-      else if (util_format_is_pure_uint(format))
-         clamp_color.ui[i] = _mesa_unsigned_to_unsigned(clamp_color.ui[i], bits);
-      else if (util_format_is_pure_sint(format))
-         clamp_color.i[i] = _mesa_signed_to_signed(clamp_color.i[i], bits);
-   }
-
-   return clamp_color;
-}
-
-/*
- * Some hardware does not use a distinct descriptor for images, so it is
- * convenient for drivers to reuse their texture descriptor packing for shader
- * images. This helper constructs a synthetic, non-reference counted
- * pipe_sampler_view corresponding to a given pipe_image_view for drivers'
- * internal convenience.
- *
- * The returned descriptor is "synthetic" in the sense that it is not reference
- * counted and the context field is ignored. Otherwise it's complete.
- */
-struct pipe_sampler_view
-util_image_to_sampler_view(struct pipe_image_view *v)
-{
-   struct pipe_sampler_view out = {
-      .format = v->format,
-      .is_tex2d_from_buf = v->access & PIPE_IMAGE_ACCESS_TEX2D_FROM_BUFFER,
-      .target = v->resource->target,
-      .swizzle_r = PIPE_SWIZZLE_X,
-      .swizzle_g = PIPE_SWIZZLE_Y,
-      .swizzle_b = PIPE_SWIZZLE_Z,
-      .swizzle_a = PIPE_SWIZZLE_W,
-      .texture = v->resource,
-   };
-
-   if (out.target == PIPE_BUFFER) {
-      out.u.buf.offset = v->u.buf.offset;
-      out.u.buf.size = v->u.buf.size;
-   } else if (out.is_tex2d_from_buf) {
-      out.u.tex2d_from_buf.offset = v->u.tex2d_from_buf.offset;
-      out.u.tex2d_from_buf.row_stride = v->u.tex2d_from_buf.row_stride;
-      out.u.tex2d_from_buf.width = v->u.tex2d_from_buf.width;
-      out.u.tex2d_from_buf.height = v->u.tex2d_from_buf.height;
-   } else {
-      /* For a single layer view of a multilayer image, we need to swap in the
-       * non-layered texture target to match the texture instruction.
-       */
-      if (v->u.tex.single_layer_view) {
-         switch (out.target) {
-         case PIPE_TEXTURE_1D_ARRAY:
-            /* A single layer is a 1D image */
-            out.target = PIPE_TEXTURE_1D;
-            break;
-
-         case PIPE_TEXTURE_3D:
-         case PIPE_TEXTURE_CUBE:
-         case PIPE_TEXTURE_2D_ARRAY:
-         case PIPE_TEXTURE_CUBE_ARRAY:
-            /* A single layer/face is a 2D image.
-             *
-             * Note that OpenGL does not otherwise support 2D views of 3D.
-             * Drivers that use this helper must support that anyway.
-             */
-            out.target = PIPE_TEXTURE_2D;
-            break;
-
-         default:
-            /* Other texture targets already only have 1 layer, nothing to do */
-            break;
-         }
-      }
-
-      out.u.tex.first_layer = v->u.tex.first_layer;
-      out.u.tex.last_layer = v->u.tex.last_layer;
-
-      /* Single level only */
-      out.u.tex.first_level = v->u.tex.level;
-      out.u.tex.last_level = v->u.tex.level;
-   }
-
-   return out;
 }

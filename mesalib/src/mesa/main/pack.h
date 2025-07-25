@@ -28,7 +28,7 @@
 #define PACK_H
 
 
-#include "util/glheader.h"
+#include "glheader.h"
 
 struct gl_context;
 struct gl_pixelstore_attrib;

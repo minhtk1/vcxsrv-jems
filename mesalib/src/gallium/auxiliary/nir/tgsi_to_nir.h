@@ -24,24 +24,15 @@
 #ifndef TGSI_TO_NIR_H
 #define TGSI_TO_NIR_H
 
-#include "compiler/nir/nir_defines.h"
+#include "compiler/nir/nir.h"
 #include "pipe/p_screen.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 struct nir_shader *
 tgsi_to_nir(const void *tgsi_tokens,
-            struct pipe_screen *screen,
-            bool allow_disk_cache);
+            struct pipe_screen *screen);
 
 struct nir_shader *
 tgsi_to_nir_noscreen(const void *tgsi_tokens,
                      const nir_shader_compiler_options *options);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif

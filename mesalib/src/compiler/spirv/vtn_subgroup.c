@@ -23,11 +23,12 @@
 
 #include "vtn_private.h"
 
-static struct vtn_ssa_value *
+static void
 vtn_build_subgroup_instr(struct vtn_builder *b,
                          nir_intrinsic_op nir_op,
+                         struct vtn_ssa_value *dst,
                          struct vtn_ssa_value *src0,
-                         nir_def *index,
+                         nir_ssa_def *index,
                          unsigned const_idx0,
                          unsigned const_idx1)
 {
@@ -38,22 +39,21 @@ vtn_build_subgroup_instr(struct vtn_builder *b,
    if (index && index->bit_size != 32)
       index = nir_u2u32(&b->nb, index);
 
-   struct vtn_ssa_value *dst = vtn_create_ssa_value(b, src0->type);
-
    vtn_assert(dst->type == src0->type);
    if (!glsl_type_is_vector_or_scalar(dst->type)) {
       for (unsigned i = 0; i < glsl_get_length(dst->type); i++) {
-         dst->elems[0] =
-            vtn_build_subgroup_instr(b, nir_op, src0->elems[i], index,
-                                     const_idx0, const_idx1);
+         vtn_build_subgroup_instr(b, nir_op, dst->elems[i],
+                                  src0->elems[i], index,
+                                  const_idx0, const_idx1);
       }
-      return dst;
+      return;
    }
 
    nir_intrinsic_instr *intrin =
       nir_intrinsic_instr_create(b->nb.shader, nir_op);
-   nir_def_init_for_type(&intrin->instr, &intrin->def, dst->type);
-   intrin->num_components = intrin->def.num_components;
+   nir_ssa_dest_init_for_type(&intrin->instr, &intrin->dest,
+                              dst->type, NULL);
+   intrin->num_components = intrin->dest.ssa.num_components;
 
    intrin->src[0] = nir_src_for_ssa(src0->def);
    if (index)
@@ -64,47 +64,61 @@ vtn_build_subgroup_instr(struct vtn_builder *b,
 
    nir_builder_instr_insert(&b->nb, &intrin->instr);
 
-   dst->def = &intrin->def;
-
-   return dst;
+   dst->def = &intrin->dest.ssa;
 }
 
 void
 vtn_handle_subgroup(struct vtn_builder *b, SpvOp opcode,
                     const uint32_t *w, unsigned count)
 {
-   struct vtn_type *dest_type = vtn_get_type(b, w[1]);
+   struct vtn_value *val = vtn_push_value(b, w[2], vtn_value_type_ssa);
+
+   val->ssa = vtn_create_ssa_value(b, val->type->type);
 
    switch (opcode) {
    case SpvOpGroupNonUniformElect: {
-      vtn_fail_if(dest_type->type != glsl_bool_type(),
+      vtn_fail_if(val->type->type != glsl_bool_type(),
                   "OpGroupNonUniformElect must return a Bool");
       nir_intrinsic_instr *elect =
          nir_intrinsic_instr_create(b->nb.shader, nir_intrinsic_elect);
-      nir_def_init_for_type(&elect->instr, &elect->def, dest_type->type);
+      nir_ssa_dest_init_for_type(&elect->instr, &elect->dest,
+                                 val->type->type, NULL);
       nir_builder_instr_insert(&b->nb, &elect->instr);
-      vtn_push_nir_ssa(b, w[2], &elect->def);
+      val->ssa->def = &elect->dest.ssa;
       break;
    }
 
-   case SpvOpGroupNonUniformBallot:
+   case SpvOpGroupNonUniformBallot: ++w;
    case SpvOpSubgroupBallotKHR: {
-      bool has_scope = (opcode != SpvOpSubgroupBallotKHR);
-      vtn_fail_if(dest_type->type != glsl_vector_type(GLSL_TYPE_UINT, 4),
+      vtn_fail_if(val->type->type != glsl_vector_type(GLSL_TYPE_UINT, 4),
                   "OpGroupNonUniformBallot must return a uvec4");
       nir_intrinsic_instr *ballot =
          nir_intrinsic_instr_create(b->nb.shader, nir_intrinsic_ballot);
-      ballot->src[0] = nir_src_for_ssa(vtn_get_nir_ssa(b, w[3 + has_scope]));
-      nir_def_init(&ballot->instr, &ballot->def, 4, 32);
+      ballot->src[0] = nir_src_for_ssa(vtn_ssa_value(b, w[3])->def);
+      nir_ssa_dest_init(&ballot->instr, &ballot->dest, 4, 32, NULL);
       ballot->num_components = 4;
       nir_builder_instr_insert(&b->nb, &ballot->instr);
-      vtn_push_nir_ssa(b, w[2], &ballot->def);
+      val->ssa->def = &ballot->dest.ssa;
       break;
    }
 
    case SpvOpGroupNonUniformInverseBallot: {
-      nir_def *dest = nir_inverse_ballot(&b->nb, 1, vtn_get_nir_ssa(b, w[4]));
-      vtn_push_nir_ssa(b, w[2], dest);
+      /* This one is just a BallotBitfieldExtract with subgroup invocation.
+       * We could add a NIR intrinsic but it's easier to just lower it on the
+       * spot.
+       */
+      nir_intrinsic_instr *intrin =
+         nir_intrinsic_instr_create(b->nb.shader,
+                                    nir_intrinsic_ballot_bitfield_extract);
+
+      intrin->src[0] = nir_src_for_ssa(vtn_ssa_value(b, w[4])->def);
+      intrin->src[1] = nir_src_for_ssa(nir_load_subgroup_invocation(&b->nb));
+
+      nir_ssa_dest_init_for_type(&intrin->instr, &intrin->dest,
+                                 val->type->type, NULL);
+      nir_builder_instr_insert(&b->nb, &intrin->instr);
+
+      val->ssa->def = &intrin->dest.ssa;
       break;
    }
 
@@ -112,13 +126,13 @@ vtn_handle_subgroup(struct vtn_builder *b, SpvOp opcode,
    case SpvOpGroupNonUniformBallotBitCount:
    case SpvOpGroupNonUniformBallotFindLSB:
    case SpvOpGroupNonUniformBallotFindMSB: {
-      nir_def *src0, *src1 = NULL;
+      nir_ssa_def *src0, *src1 = NULL;
       nir_intrinsic_op op;
       switch (opcode) {
       case SpvOpGroupNonUniformBallotBitExtract:
          op = nir_intrinsic_ballot_bitfield_extract;
-         src0 = vtn_get_nir_ssa(b, w[4]);
-         src1 = vtn_get_nir_ssa(b, w[5]);
+         src0 = vtn_ssa_value(b, w[4])->def;
+         src1 = vtn_ssa_value(b, w[5])->def;
          break;
       case SpvOpGroupNonUniformBallotBitCount:
          switch ((SpvGroupOperation)w[4]) {
@@ -134,15 +148,15 @@ vtn_handle_subgroup(struct vtn_builder *b, SpvOp opcode,
          default:
             unreachable("Invalid group operation");
          }
-         src0 = vtn_get_nir_ssa(b, w[5]);
+         src0 = vtn_ssa_value(b, w[5])->def;
          break;
       case SpvOpGroupNonUniformBallotFindLSB:
          op = nir_intrinsic_ballot_find_lsb;
-         src0 = vtn_get_nir_ssa(b, w[4]);
+         src0 = vtn_ssa_value(b, w[4])->def;
          break;
       case SpvOpGroupNonUniformBallotFindMSB:
          op = nir_intrinsic_ballot_find_msb;
-         src0 = vtn_get_nir_ssa(b, w[4]);
+         src0 = vtn_ssa_value(b, w[4])->def;
          break;
       default:
          unreachable("Unhandled opcode");
@@ -155,34 +169,27 @@ vtn_handle_subgroup(struct vtn_builder *b, SpvOp opcode,
       if (src1)
          intrin->src[1] = nir_src_for_ssa(src1);
 
-      nir_def_init_for_type(&intrin->instr, &intrin->def,
-                            dest_type->type);
+      nir_ssa_dest_init_for_type(&intrin->instr, &intrin->dest,
+                                 val->type->type, NULL);
       nir_builder_instr_insert(&b->nb, &intrin->instr);
 
-      vtn_push_nir_ssa(b, w[2], &intrin->def);
+      val->ssa->def = &intrin->dest.ssa;
       break;
    }
 
-   case SpvOpGroupNonUniformBroadcastFirst:
-   case SpvOpSubgroupFirstInvocationKHR: {
-      bool has_scope = (opcode != SpvOpSubgroupFirstInvocationKHR);
-      vtn_push_ssa_value(b, w[2],
-         vtn_build_subgroup_instr(b, nir_intrinsic_read_first_invocation,
-                                  vtn_ssa_value(b, w[3 + has_scope]),
-                                  NULL, 0, 0));
+   case SpvOpGroupNonUniformBroadcastFirst: ++w;
+   case SpvOpSubgroupFirstInvocationKHR:
+      vtn_build_subgroup_instr(b, nir_intrinsic_read_first_invocation,
+                               val->ssa, vtn_ssa_value(b, w[3]), NULL, 0, 0);
       break;
-   }
 
    case SpvOpGroupNonUniformBroadcast:
-   case SpvOpGroupBroadcast:
-   case SpvOpSubgroupReadInvocationKHR: {
-      bool has_scope = (opcode != SpvOpSubgroupReadInvocationKHR);
-      vtn_push_ssa_value(b, w[2],
-         vtn_build_subgroup_instr(b, nir_intrinsic_read_invocation,
-                                  vtn_ssa_value(b, w[3 + has_scope]),
-                                  vtn_get_nir_ssa(b, w[4 + has_scope]), 0, 0));
+   case SpvOpGroupBroadcast: ++w;
+   case SpvOpSubgroupReadInvocationKHR:
+      vtn_build_subgroup_instr(b, nir_intrinsic_read_invocation,
+                               val->ssa, vtn_ssa_value(b, w[3]),
+                               vtn_ssa_value(b, w[4])->def, 0, 0);
       break;
-   }
 
    case SpvOpGroupNonUniformAll:
    case SpvOpGroupNonUniformAny:
@@ -192,7 +199,7 @@ vtn_handle_subgroup(struct vtn_builder *b, SpvOp opcode,
    case SpvOpSubgroupAllKHR:
    case SpvOpSubgroupAnyKHR:
    case SpvOpSubgroupAllEqualKHR: {
-      vtn_fail_if(dest_type->type != glsl_bool_type(),
+      vtn_fail_if(val->type->type != glsl_bool_type(),
                   "OpGroupNonUniform(All|Any|AllEqual) must return a bool");
       nir_intrinsic_op op;
       switch (opcode) {
@@ -235,24 +242,23 @@ vtn_handle_subgroup(struct vtn_builder *b, SpvOp opcode,
          unreachable("Unhandled opcode");
       }
 
-      nir_def *src0;
+      nir_ssa_def *src0;
       if (opcode == SpvOpGroupNonUniformAll || opcode == SpvOpGroupAll ||
           opcode == SpvOpGroupNonUniformAny || opcode == SpvOpGroupAny ||
           opcode == SpvOpGroupNonUniformAllEqual) {
-         src0 = vtn_get_nir_ssa(b, w[4]);
+         src0 = vtn_ssa_value(b, w[4])->def;
       } else {
-         src0 = vtn_get_nir_ssa(b, w[3]);
+         src0 = vtn_ssa_value(b, w[3])->def;
       }
       nir_intrinsic_instr *intrin =
          nir_intrinsic_instr_create(b->nb.shader, op);
-      if (nir_intrinsic_infos[op].src_components[0] == 0)
-         intrin->num_components = src0->num_components;
+      intrin->num_components = src0->num_components;
       intrin->src[0] = nir_src_for_ssa(src0);
-      nir_def_init_for_type(&intrin->instr, &intrin->def,
-                            dest_type->type);
+      nir_ssa_dest_init_for_type(&intrin->instr, &intrin->dest,
+                                 val->type->type, NULL);
       nir_builder_instr_insert(&b->nb, &intrin->instr);
 
-      vtn_push_nir_ssa(b, w[2], &intrin->def);
+      val->ssa->def = &intrin->dest.ssa;
       break;
    }
 
@@ -277,88 +283,18 @@ vtn_handle_subgroup(struct vtn_builder *b, SpvOp opcode,
       default:
          unreachable("Invalid opcode");
       }
-      vtn_push_ssa_value(b, w[2],
-         vtn_build_subgroup_instr(b, op, vtn_ssa_value(b, w[4]),
-                                  vtn_get_nir_ssa(b, w[5]), 0, 0));
-      break;
-   }
-
-   case SpvOpSubgroupShuffleINTEL:
-   case SpvOpSubgroupShuffleXorINTEL: {
-      nir_intrinsic_op op = opcode == SpvOpSubgroupShuffleINTEL ?
-         nir_intrinsic_shuffle : nir_intrinsic_shuffle_xor;
-      vtn_push_ssa_value(b, w[2],
-         vtn_build_subgroup_instr(b, op, vtn_ssa_value(b, w[3]),
-                                  vtn_get_nir_ssa(b, w[4]), 0, 0));
-      break;
-   }
-
-   case SpvOpSubgroupShuffleUpINTEL:
-   case SpvOpSubgroupShuffleDownINTEL: {
-      /* TODO: Move this lower on the compiler stack, where we can move the
-       * current/other data to adjacent registers to avoid doing a shuffle
-       * twice.
-       */
-
-      nir_builder *nb = &b->nb;
-      nir_def *size = nir_load_subgroup_size(nb);
-      nir_def *delta = vtn_get_nir_ssa(b, w[5]);
-
-      /* Rewrite UP in terms of DOWN.
-       *
-       *   UP(a, b, delta) == DOWN(a, b, size - delta)
-       */
-      if (opcode == SpvOpSubgroupShuffleUpINTEL)
-         delta = nir_isub(nb, size, delta);
-
-      nir_def *index = nir_iadd(nb, nir_load_subgroup_invocation(nb), delta);
-      struct vtn_ssa_value *current =
-         vtn_build_subgroup_instr(b, nir_intrinsic_shuffle, vtn_ssa_value(b, w[3]),
-                                  index, 0, 0);
-
-      struct vtn_ssa_value *next =
-         vtn_build_subgroup_instr(b, nir_intrinsic_shuffle, vtn_ssa_value(b, w[4]),
-                                  nir_isub(nb, index, size), 0, 0);
-
-      nir_def *cond = nir_ilt(nb, index, size);
-      vtn_push_nir_ssa(b, w[2], nir_bcsel(nb, cond, current->def, next->def));
-
-      break;
-   }
-
-   case SpvOpGroupNonUniformRotateKHR: {
-      const uint32_t cluster_size = count > 6 ? vtn_constant_uint(b, w[6]) : 0;
-      vtn_fail_if(cluster_size && !IS_POT(cluster_size),
-                  "Behavior is undefined unless ClusterSize is at least 1 and a power of 2.");
-
-      struct vtn_ssa_value *value = vtn_ssa_value(b, w[4]);
-      struct vtn_ssa_value *delta = vtn_ssa_value(b, w[5]);
-      vtn_push_nir_ssa(b, w[2],
-         vtn_build_subgroup_instr(b, nir_intrinsic_rotate,
-                                  value, delta->def, cluster_size, 0)->def);
+      vtn_build_subgroup_instr(b, op, val->ssa, vtn_ssa_value(b, w[4]),
+                               vtn_ssa_value(b, w[5])->def, 0, 0);
       break;
    }
 
    case SpvOpGroupNonUniformQuadBroadcast:
-      /* From the Vulkan spec 1.3.269:
-       *
-       * 9.27. Quad Group Operations:
-       * "Fragment shaders that statically execute quad group operations
-       * must launch sufficient invocations to ensure their correct operation;"
-       */
-      if (b->shader->info.stage == MESA_SHADER_FRAGMENT)
-         b->shader->info.fs.require_full_quads = true;
-
-      vtn_push_ssa_value(b, w[2],
-         vtn_build_subgroup_instr(b, nir_intrinsic_quad_broadcast,
-                                  vtn_ssa_value(b, w[4]),
-                                  vtn_get_nir_ssa(b, w[5]), 0, 0));
+      vtn_build_subgroup_instr(b, nir_intrinsic_quad_broadcast,
+                               val->ssa, vtn_ssa_value(b, w[4]),
+                               vtn_ssa_value(b, w[5])->def, 0, 0);
       break;
 
    case SpvOpGroupNonUniformQuadSwap: {
-      if (b->shader->info.stage == MESA_SHADER_FRAGMENT)
-         b->shader->info.fs.require_full_quads = true;
-
       unsigned direction = vtn_constant_uint(b, w[5]);
       nir_intrinsic_op op;
       switch (direction) {
@@ -374,19 +310,8 @@ vtn_handle_subgroup(struct vtn_builder *b, SpvOp opcode,
       default:
          vtn_fail("Invalid constant value in OpGroupNonUniformQuadSwap");
       }
-      vtn_push_ssa_value(b, w[2],
-         vtn_build_subgroup_instr(b, op, vtn_ssa_value(b, w[4]), NULL, 0, 0));
-      break;
-   }
-
-   case SpvOpGroupNonUniformQuadAllKHR: {
-      nir_def *dest = nir_quad_vote_all(&b->nb, 1, vtn_get_nir_ssa(b, w[3]));
-      vtn_push_nir_ssa(b, w[2], dest);
-      break;
-   }
-   case SpvOpGroupNonUniformQuadAnyKHR: {
-      nir_def *dest = nir_quad_vote_any(&b->nb, 1, vtn_get_nir_ssa(b, w[3]));
-      vtn_push_nir_ssa(b, w[2], dest);
+      vtn_build_subgroup_instr(b, op, val->ssa, vtn_ssa_value(b, w[4]),
+                               NULL, 0, 0);
       break;
    }
 
@@ -507,9 +432,8 @@ vtn_handle_subgroup(struct vtn_builder *b, SpvOp opcode,
          unreachable("Invalid group operation");
       }
 
-      vtn_push_ssa_value(b, w[2],
-         vtn_build_subgroup_instr(b, op, vtn_ssa_value(b, w[5]), NULL,
-                                  reduction_op, cluster_size));
+      vtn_build_subgroup_instr(b, op, val->ssa, vtn_ssa_value(b, w[5]),
+                               NULL, reduction_op, cluster_size);
       break;
    }
 

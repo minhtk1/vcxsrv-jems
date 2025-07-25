@@ -25,7 +25,6 @@
 #define PROGRAM_PARSER_H
 
 #include "main/config.h"
-#include "program/prog_instruction.h"
 #include "program/prog_parameter.h"
 
 struct gl_context;
@@ -187,8 +186,7 @@ struct asm_parser_state {
     * Value to use in state vector accessors for environment and local
     * parameters
     */
-   unsigned state_param_enum_env;
-   unsigned state_param_enum_local;
+   unsigned state_param_enum;
 
 
    /**
@@ -208,7 +206,7 @@ struct asm_parser_state {
 
    struct {
       unsigned PositionInvariant:1;
-      unsigned Fog:2; /* gl_fog_mode */
+      unsigned Fog:2;
       unsigned PrecisionHint:2;
       unsigned DrawBuffers:1;
       unsigned Shadow:1;
@@ -223,6 +221,10 @@ struct asm_parser_state {
    } fragment;
 };
 
+#define OPTION_NONE        0
+#define OPTION_FOG_EXP     1
+#define OPTION_FOG_EXP2    2
+#define OPTION_FOG_LINEAR  3
 #define OPTION_NICEST      1
 #define OPTION_FASTEST     2
 

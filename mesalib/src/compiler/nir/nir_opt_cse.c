@@ -19,19 +19,46 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
  * IN THE SOFTWARE.
+ *
+ * Authors:
+ *    Jason Ekstrand (jason@jlekstrand.net)
+ *    Connor Abbott (cwabbott0@gmail.com)
+ *
  */
 
-#include "nir.h"
 #include "nir_instr_set.h"
 
 /*
  * Implements common subexpression elimination
  */
 
+/*
+ * Visits and CSEs the given block and all its descendants in the dominance
+ * tree recursively. Note that the instr_set is guaranteed to only ever
+ * contain instructions that dominate the current block.
+ */
+
 static bool
-dominates(const nir_instr *old_instr, const nir_instr *new_instr)
+cse_block(nir_block *block, struct set *dominance_set)
 {
-   return nir_block_dominates(old_instr->block, new_instr->block);
+   bool progress = false;
+   struct set *instr_set = _mesa_set_clone(dominance_set, NULL);
+
+   nir_foreach_instr_safe(instr, block) {
+      if (nir_instr_set_add_or_rewrite(instr_set, instr)) {
+         progress = true;
+         nir_instr_remove(instr);
+      }
+   }
+
+   for (unsigned i = 0; i < block->num_dom_children; i++) {
+      nir_block *child = block->dom_children[i];
+      progress |= cse_block(child, instr_set);
+   }
+
+   _mesa_set_destroy(instr_set, NULL);
+
+   return progress;
 }
 
 static bool
@@ -39,21 +66,18 @@ nir_opt_cse_impl(nir_function_impl *impl)
 {
    struct set *instr_set = nir_instr_set_create(NULL);
 
-   _mesa_set_resize(instr_set, impl->ssa_alloc);
-
    nir_metadata_require(impl, nir_metadata_dominance);
 
-   bool progress = false;
-   nir_foreach_block(block, impl) {
-      nir_foreach_instr_safe(instr, block) {
-         if (nir_instr_set_add_or_rewrite(instr_set, instr, dominates)) {
-            progress = true;
-            nir_instr_remove(instr);
-         }
-      }
-   }
+   bool progress = cse_block(nir_start_block(impl), instr_set);
 
-   nir_progress(progress, impl, nir_metadata_control_flow);
+   if (progress) {
+      nir_metadata_preserve(impl, nir_metadata_block_index |
+                                  nir_metadata_dominance);
+   } else {
+#ifndef NDEBUG
+      impl->valid_metadata &= ~nir_metadata_not_properly_reset;
+#endif
+   }
 
    nir_instr_set_destroy(instr_set);
    return progress;
@@ -64,9 +88,11 @@ nir_opt_cse(nir_shader *shader)
 {
    bool progress = false;
 
-   nir_foreach_function_impl(impl, shader) {
-      progress |= nir_opt_cse_impl(impl);
+   nir_foreach_function(function, shader) {
+      if (function->impl)
+         progress |= nir_opt_cse_impl(function->impl);
    }
 
    return progress;
 }
+

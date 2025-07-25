@@ -1,10 +1,28 @@
 /*
-************************************************************************************************************************
-*
-*  Copyright (C) 2007-2024 Advanced Micro Devices, Inc. All rights reserved.
-*  SPDX-License-Identifier: MIT
-*
-***********************************************************************************************************************/
+ * Copyright © 2007-2019 Advanced Micro Devices, Inc.
+ * All Rights Reserved.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sub license, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NON-INFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDERS, AUTHORS
+ * AND/OR ITS SUPPLIERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+ * USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ * The above copyright notice and this permission notice (including the
+ * next paragraph) shall be included in all copies or substantial portions
+ * of the Software.
+ */
 
 /**
 ************************************************************************************************************************
@@ -37,7 +55,7 @@ struct Gfx10ChipSettings
         UINT_32 reserved1           : 32;
 
         // Misc configuration bits
-        UINT_32 isDcn20             : 1; // If using DCN2.0
+        UINT_32 isDcn2              : 1;
         UINT_32 supportRbPlus       : 1;
         UINT_32 dsMipmapHtileFix    : 1;
         UINT_32 dccUnsup3DSwDis     : 1;
@@ -141,10 +159,7 @@ const UINT_32 Gfx10Rsrc3dPrtSwModeMask = Gfx10Rsrc2dPrtSwModeMask & ~Gfx10Displa
 const UINT_32 Gfx10Rsrc3dThin64KBSwModeMask = (1u << ADDR_SW_64KB_Z_X) |
                                               (1u << ADDR_SW_64KB_R_X);
 
-const UINT_32 Gfx10Rsrc3dThinSwModeMask = Gfx10Rsrc3dThin64KBSwModeMask |
-                                          Gfx10BlkVarSwModeMask;
-
-const UINT_32 Gfx10Rsrc3dViewAs2dSwModeMask = Gfx10Rsrc3dThinSwModeMask | Gfx10LinearSwModeMask;
+const UINT_32 Gfx10Rsrc3dThinSwModeMask = Gfx10Rsrc3dThin64KBSwModeMask | Gfx10BlkVarSwModeMask;
 
 const UINT_32 Gfx10Rsrc3dThickSwModeMask = Gfx10Rsrc3dSwModeMask & ~(Gfx10Rsrc3dThinSwModeMask | Gfx10LinearSwModeMask);
 
@@ -152,35 +167,23 @@ const UINT_32 Gfx10Rsrc3dThick4KBSwModeMask = Gfx10Rsrc3dThickSwModeMask & Gfx10
 
 const UINT_32 Gfx10Rsrc3dThick64KBSwModeMask = Gfx10Rsrc3dThickSwModeMask & Gfx10Blk64KBSwModeMask;
 
-const UINT_32 Gfx10MsaaSwModeMask = (Gfx10ZSwModeMask       |
-                                     Gfx10RenderSwModeMask);
+const UINT_32 Gfx10MsaaSwModeMask = Gfx10ZSwModeMask |
+                                    Gfx10RenderSwModeMask;
 
-const UINT_32 Dcn20NonBpp64SwModeMask = (1u << ADDR_SW_LINEAR)   |
-                                        (1u << ADDR_SW_4KB_S)    |
-                                        (1u << ADDR_SW_64KB_S)   |
-                                        (1u << ADDR_SW_64KB_S_T) |
-                                        (1u << ADDR_SW_4KB_S_X)  |
-                                        (1u << ADDR_SW_64KB_S_X) |
-                                        (1u << ADDR_SW_64KB_R_X);
+const UINT_32 Dcn2NonBpp64SwModeMask = (1u << ADDR_SW_LINEAR)   |
+                                       (1u << ADDR_SW_4KB_S)    |
+                                       (1u << ADDR_SW_64KB_S)   |
+                                       (1u << ADDR_SW_64KB_S_T) |
+                                       (1u << ADDR_SW_4KB_S_X)  |
+                                       (1u << ADDR_SW_64KB_S_X) |
+                                       (1u << ADDR_SW_64KB_R_X);
 
-const UINT_32 Dcn20Bpp64SwModeMask = (1u << ADDR_SW_4KB_D)    |
-                                     (1u << ADDR_SW_64KB_D)   |
-                                     (1u << ADDR_SW_64KB_D_T) |
-                                     (1u << ADDR_SW_4KB_D_X)  |
-                                     (1u << ADDR_SW_64KB_D_X) |
-                                     Dcn20NonBpp64SwModeMask;
-
-const UINT_32 Dcn21NonBpp64SwModeMask = (1u << ADDR_SW_LINEAR)   |
-                                        (1u << ADDR_SW_64KB_S)   |
-                                        (1u << ADDR_SW_64KB_S_T) |
-                                        (1u << ADDR_SW_64KB_S_X) |
-                                        (1u << ADDR_SW_64KB_R_X);
-
-const UINT_32 Dcn21Bpp64SwModeMask = (1u << ADDR_SW_64KB_D)   |
-                                     (1u << ADDR_SW_64KB_D_T) |
-                                     (1u << ADDR_SW_64KB_D_X) |
-                                     Dcn21NonBpp64SwModeMask;
-
+const UINT_32 Dcn2Bpp64SwModeMask = (1u << ADDR_SW_4KB_D)    |
+                                    (1u << ADDR_SW_64KB_D)   |
+                                    (1u << ADDR_SW_64KB_D_T) |
+                                    (1u << ADDR_SW_4KB_D_X)  |
+                                    (1u << ADDR_SW_64KB_D_X) |
+                                    Dcn2NonBpp64SwModeMask;
 /**
 ************************************************************************************************************************
 * @brief This class is the GFX10 specific address library
@@ -258,10 +261,7 @@ protected:
         const ADDR2_COMPUTE_HTILE_COORDFROMADDR_INPUT* pIn,
         ADDR2_COMPUTE_HTILE_COORDFROMADDR_OUTPUT*      pOut);
 
-    virtual ADDR_E_RETURNCODE HwlSupportComputeDccAddrFromCoord(
-        const ADDR2_COMPUTE_DCC_ADDRFROMCOORD_INPUT* pIn);
-
-    virtual VOID HwlComputeDccAddrFromCoord(
+    virtual ADDR_E_RETURNCODE HwlComputeDccAddrFromCoord(
         const ADDR2_COMPUTE_DCC_ADDRFROMCOORD_INPUT* pIn,
         ADDR2_COMPUTE_DCC_ADDRFROMCOORD_OUTPUT*      pOut);
 
@@ -288,15 +288,7 @@ protected:
         const ADDR2_COMPUTE_SUBRESOURCE_OFFSET_FORSWIZZLEPATTERN_INPUT* pIn,
         ADDR2_COMPUTE_SUBRESOURCE_OFFSET_FORSWIZZLEPATTERN_OUTPUT*      pOut) const;
 
-    virtual ADDR_E_RETURNCODE HwlComputeNonBlockCompressedView(
-        const ADDR2_COMPUTE_NONBLOCKCOMPRESSEDVIEW_INPUT* pIn,
-        ADDR2_COMPUTE_NONBLOCKCOMPRESSEDVIEW_OUTPUT*      pOut) const;
-
     virtual ADDR_E_RETURNCODE HwlGetPreferredSurfaceSetting(
-        const ADDR2_GET_PREFERRED_SURF_SETTING_INPUT* pIn,
-        ADDR2_GET_PREFERRED_SURF_SETTING_OUTPUT*      pOut) const;
-
-    virtual ADDR_E_RETURNCODE HwlGetPossibleSwizzleModes(
         const ADDR2_GET_PREFERRED_SURF_SETTING_INPUT* pIn,
         ADDR2_GET_PREFERRED_SURF_SETTING_OUTPUT*      pOut) const;
 
@@ -314,16 +306,6 @@ protected:
     virtual ADDR_E_RETURNCODE HwlComputeSurfaceAddrFromCoordTiled(
         const ADDR2_COMPUTE_SURFACE_ADDRFROMCOORD_INPUT* pIn,
         ADDR2_COMPUTE_SURFACE_ADDRFROMCOORD_OUTPUT*      pOut) const;
-    
-    virtual ADDR_E_RETURNCODE HwlCopyMemToSurface(
-        const ADDR2_COPY_MEMSURFACE_INPUT*  pIn,
-        const ADDR2_COPY_MEMSURFACE_REGION* pRegions,
-        UINT_32                             regionCount) const;
-    
-    virtual ADDR_E_RETURNCODE HwlCopySurfaceToMem(
-        const ADDR2_COPY_MEMSURFACE_INPUT*  pIn,
-        const ADDR2_COPY_MEMSURFACE_REGION* pRegions,
-        UINT_32                             regionCount) const;
 
     virtual UINT_32 HwlComputeMaxBaseAlignments() const;
 
@@ -333,7 +315,6 @@ protected:
 
     virtual ChipFamily HwlConvertChipFamily(UINT_32 uChipFamily, UINT_32 uChipRevision);
 
-private:
     // Initialize equation table
     VOID InitEquationTable();
 
@@ -353,6 +334,15 @@ private:
         const ADDR2_COMPUTE_SURFACE_ADDRFROMCOORD_INPUT* pIn,
         ADDR2_COMPUTE_SURFACE_ADDRFROMCOORD_OUTPUT*      pOut) const;
 
+private:
+    UINT_32 ComputeOffsetFromSwizzlePattern(
+        const UINT_64* pPattern,
+        UINT_32        numBits,
+        UINT_32        x,
+        UINT_32        y,
+        UINT_32        z,
+        UINT_32        s) const;
+
     UINT_32 ComputeOffsetFromEquation(
         const ADDR_EQUATION* pEq,
         UINT_32              x,
@@ -361,8 +351,31 @@ private:
 
     ADDR_E_RETURNCODE ComputeStereoInfo(
         const ADDR2_COMPUTE_SURFACE_INFO_INPUT* pIn,
+        UINT_32                                 blkHeight,
         UINT_32*                                pAlignY,
         UINT_32*                                pRightXor) const;
+
+    Dim3d GetDccCompressBlk(
+        AddrResourceType resourceType,
+        AddrSwizzleMode  swizzleMode,
+        UINT_32          bpp) const
+    {
+        UINT_32 index = Log2(bpp >> 3);
+        Dim3d   compressBlkDim;
+
+        if (IsThin(resourceType, swizzleMode))
+        {
+            compressBlkDim.w = Block256_2d[index].w;
+            compressBlkDim.h = Block256_2d[index].h;
+            compressBlkDim.d = 1;
+        }
+        else
+        {
+            compressBlkDim = Block256_3d[index];
+        }
+
+        return compressBlkDim;
+    }
 
     static void GetMipSize(
         UINT_32  mip0Width,
@@ -388,15 +401,9 @@ private:
         UINT_32          log2Elem,
         UINT_32          numFrag) const;
 
-    /**
-     * Will use the indices, "nibbles", to build an index equation inside pSwizzle
-     *
-     * @param pPatInfo Pointer to a patInfo. Contains indices mapping to the 2D nibble arrays which will be used to build an index equation.
-     * @param pSwizzle Array to write the index equation to.
-     */
     VOID GetSwizzlePatternFromPatternInfo(
         const ADDR_SW_PATINFO* pPatInfo,
-        ADDR_BIT_SETTING       (&pSwizzle)[ADDR_MAX_EQUATION_BIT]) const
+        ADDR_BIT_SETTING       (&pSwizzle)[20]) const
     {
         memcpy(pSwizzle,
                GFX10_SW_PATTERN_NIBBLE01[pPatInfo->nibble01Idx],
@@ -485,8 +492,6 @@ private:
 
     }
 
-    UINT_32 GetValidDisplaySwizzleModes(UINT_32 bpp) const;
-
     BOOL_32 IsValidDisplaySwizzleMode(const ADDR2_COMPUTE_SURFACE_INFO_INPUT* pIn) const;
 
     UINT_32 GetMaxNumMipsInTail(UINT_32 blockSizeLog2, BOOL_32 isThin) const;
@@ -568,7 +573,6 @@ private:
 
     UINT_32 m_colorBaseIndex;
     UINT_32 m_xmaskBaseIndex;
-    UINT_32 m_htileBaseIndex;
     UINT_32 m_dccBaseIndex;
 };
 

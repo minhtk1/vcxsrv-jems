@@ -22,25 +22,21 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include "util/glheader.h"
+#include "glheader.h"
+#include "imports.h"
 #include "draw_validate.h"
 #include "bufferobj.h"
 #include "context.h"
+#include "drawpix.h"
 #include "enums.h"
 #include "feedback.h"
 #include "framebuffer.h"
 #include "image.h"
 #include "pbo.h"
-#include "pixel.h"
 #include "state.h"
 #include "glformats.h"
 #include "fbobject.h"
-#include "util/u_math.h"
-#include "util/rounding.h"
-#include "api_exec_decl.h"
 
-#include "state_tracker/st_cb_bitmap.h"
-#include "state_tracker/st_cb_drawpixels.h"
 
 /*
  * Execute glDrawPixels
@@ -52,17 +48,17 @@ _mesa_DrawPixels( GLsizei width, GLsizei height,
    GLenum err;
    GET_CURRENT_CONTEXT(ctx);
 
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
 
    if (MESA_VERBOSE & VERBOSE_API)
-      _mesa_debug(ctx, "glDrawPixels(%d, %d, %s, %s, %p) // to %s at %ld, %ld\n",
+      _mesa_debug(ctx, "glDrawPixels(%d, %d, %s, %s, %p) // to %s at %d, %d\n",
                   width, height,
                   _mesa_enum_to_string(format),
                   _mesa_enum_to_string(type),
                   pixels,
                   _mesa_enum_to_string(ctx->DrawBuffer->ColorDrawBuffer[0]),
-                  lroundf(ctx->Current.RasterPos[0]),
-                  lroundf(ctx->Current.RasterPos[1]));
+                  IROUND(ctx->Current.RasterPos[0]),
+                  IROUND(ctx->Current.RasterPos[1]));
 
 
    if (width < 0 || height < 0) {
@@ -75,14 +71,9 @@ _mesa_DrawPixels( GLsizei width, GLsizei height,
     */
    _mesa_set_vp_override(ctx, GL_TRUE);
 
-   _mesa_update_pixel(ctx);
-
-   if (ctx->NewState)
-      _mesa_update_state(ctx);
-
-   if (!ctx->DrawPixValid) {
-      _mesa_error(ctx, GL_INVALID_OPERATION, "glDrawPixels");
-      goto end;
+   /* Note: this call does state validation */
+   if (!_mesa_valid_to_render(ctx, "glDrawPixels")) {
+      goto end;      /* the error code was recorded */
    }
 
    /* GL 3.0 introduced a new restriction on glDrawPixels() over what was in
@@ -149,10 +140,10 @@ _mesa_DrawPixels( GLsizei width, GLsizei height,
    if (ctx->RenderMode == GL_RENDER) {
       if (width > 0 && height > 0) {
          /* Round, to satisfy conformance tests (matches SGI's OpenGL) */
-         GLint x = lroundf(ctx->Current.RasterPos[0]);
-         GLint y = lroundf(ctx->Current.RasterPos[1]);
+         GLint x = IROUND(ctx->Current.RasterPos[0]);
+         GLint y = IROUND(ctx->Current.RasterPos[1]);
 
-         if (ctx->Unpack.BufferObj) {
+         if (_mesa_is_bufferobj(ctx->Unpack.BufferObj)) {
             /* unpack from PBO */
             if (!_mesa_validate_pbo_access(2, &ctx->Unpack, width, height,
                                            1, format, type, INT_MAX, pixels)) {
@@ -168,8 +159,8 @@ _mesa_DrawPixels( GLsizei width, GLsizei height,
             }
          }
 
-         st_DrawPixels(ctx, x, y, width, height, format, type,
-                       &ctx->Unpack, pixels);
+         ctx->Driver.DrawPixels(ctx, x, y, width, height, format, type,
+                                &ctx->Unpack, pixels);
       }
    }
    else if (ctx->RenderMode == GL_FEEDBACK) {
@@ -201,17 +192,17 @@ _mesa_CopyPixels( GLint srcx, GLint srcy, GLsizei width, GLsizei height,
 {
    GET_CURRENT_CONTEXT(ctx);
 
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
 
    if (MESA_VERBOSE & VERBOSE_API)
       _mesa_debug(ctx,
-                  "glCopyPixels(%d, %d, %d, %d, %s) // from %s to %s at %ld, %ld\n",
+                  "glCopyPixels(%d, %d, %d, %d, %s) // from %s to %s at %d, %d\n",
                   srcx, srcy, width, height,
                   _mesa_enum_to_string(type),
                   _mesa_enum_to_string(ctx->ReadBuffer->ColorReadBuffer),
                   _mesa_enum_to_string(ctx->DrawBuffer->ColorDrawBuffer[0]),
-                  lroundf(ctx->Current.RasterPos[0]),
-                  lroundf(ctx->Current.RasterPos[1]));
+                  IROUND(ctx->Current.RasterPos[0]),
+                  IROUND(ctx->Current.RasterPos[1]));
 
    if (width < 0 || height < 0) {
       _mesa_error(ctx, GL_INVALID_VALUE, "glCopyPixels(width or height < 0)");
@@ -225,17 +216,7 @@ _mesa_CopyPixels( GLint srcx, GLint srcy, GLsizei width, GLsizei height,
    if (type != GL_COLOR &&
        type != GL_DEPTH &&
        type != GL_STENCIL &&
-       type != GL_DEPTH_STENCIL &&
-       type != GL_DEPTH_STENCIL_TO_RGBA_NV &&
-       type != GL_DEPTH_STENCIL_TO_BGRA_NV) {
-      _mesa_error(ctx, GL_INVALID_ENUM, "glCopyPixels(type=%s)",
-                  _mesa_enum_to_string(type));
-      return;
-   }
-
-   /* Return GL_INVALID_ENUM if the relevant extension is not enabled */
-   if ((type == GL_DEPTH_STENCIL_TO_RGBA_NV || type == GL_DEPTH_STENCIL_TO_BGRA_NV) &&
-       !ctx->Extensions.NV_copy_depth_to_color) {
+       type != GL_DEPTH_STENCIL) {
       _mesa_error(ctx, GL_INVALID_ENUM, "glCopyPixels(type=%s)",
                   _mesa_enum_to_string(type));
       return;
@@ -246,14 +227,9 @@ _mesa_CopyPixels( GLint srcx, GLint srcy, GLsizei width, GLsizei height,
     */
    _mesa_set_vp_override(ctx, GL_TRUE);
 
-   _mesa_update_pixel(ctx);
-
-   if (ctx->NewState)
-      _mesa_update_state(ctx);
-
-   if (!ctx->DrawPixValid) {
-      _mesa_error(ctx, GL_INVALID_OPERATION, "glCopyPixels");
-      goto end;
+   /* Note: this call does state validation */
+   if (!_mesa_valid_to_render(ctx, "glCopyPixels")) {
+      goto end;      /* the error code was recorded */
    }
 
    /* Check read buffer's status (draw buffer was already checked) */
@@ -288,16 +264,16 @@ _mesa_CopyPixels( GLint srcx, GLint srcy, GLsizei width, GLsizei height,
    if (ctx->RenderMode == GL_RENDER) {
       /* Round to satisfy conformance tests (matches SGI's OpenGL) */
       if (width > 0 && height > 0) {
-         GLint destx = lroundf(ctx->Current.RasterPos[0]);
-         GLint desty = lroundf(ctx->Current.RasterPos[1]);
-         st_CopyPixels( ctx, srcx, srcy, width, height, destx, desty,
-                        type );
+         GLint destx = IROUND(ctx->Current.RasterPos[0]);
+         GLint desty = IROUND(ctx->Current.RasterPos[1]);
+         ctx->Driver.CopyPixels( ctx, srcx, srcy, width, height, destx, desty,
+                                 type );
       }
    }
    else if (ctx->RenderMode == GL_FEEDBACK) {
       FLUSH_CURRENT( ctx, 0 );
       _mesa_feedback_token( ctx, (GLfloat) (GLint) GL_COPY_PIXEL_TOKEN );
-      _mesa_feedback_vertex( ctx,
+      _mesa_feedback_vertex( ctx, 
                              ctx->Current.RasterPos,
                              ctx->Current.RasterColor,
                              ctx->Current.RasterTexCoords[0] );
@@ -316,12 +292,14 @@ end:
 }
 
 
-void
-_mesa_bitmap(struct gl_context *ctx, GLsizei width, GLsizei height,
-             GLfloat xorig, GLfloat yorig, GLfloat xmove, GLfloat ymove,
-             const GLubyte *bitmap, struct pipe_resource *tex)
+void GLAPIENTRY
+_mesa_Bitmap( GLsizei width, GLsizei height,
+              GLfloat xorig, GLfloat yorig, GLfloat xmove, GLfloat ymove,
+              const GLubyte *bitmap )
 {
-   FLUSH_VERTICES(ctx, 0, 0);
+   GET_CURRENT_CONTEXT(ctx);
+
+   FLUSH_VERTICES(ctx, 0);
 
    if (width < 0 || height < 0) {
       _mesa_error( ctx, GL_INVALID_VALUE, "glBitmap(width or height < 0)" );
@@ -332,13 +310,9 @@ _mesa_bitmap(struct gl_context *ctx, GLsizei width, GLsizei height,
       return;    /* do nothing */
    }
 
-   _mesa_update_pixel(ctx);
-
-   if (ctx->NewState)
-      _mesa_update_state(ctx);
-
-   if (!ctx->DrawPixValid) {
-      _mesa_error(ctx, GL_INVALID_OPERATION, "glBitmap");
+   /* Note: this call does state validation */
+   if (!_mesa_valid_to_render(ctx, "glBitmap")) {
+      /* the error code was recorded */
       return;
    }
 
@@ -349,10 +323,10 @@ _mesa_bitmap(struct gl_context *ctx, GLsizei width, GLsizei height,
       /* Truncate, to satisfy conformance tests (matches SGI's OpenGL). */
       if (width > 0 && height > 0) {
          const GLfloat epsilon = 0.0001F;
-         GLint x = util_ifloor(ctx->Current.RasterPos[0] + epsilon - xorig);
-         GLint y = util_ifloor(ctx->Current.RasterPos[1] + epsilon - yorig);
+         GLint x = IFLOOR(ctx->Current.RasterPos[0] + epsilon - xorig);
+         GLint y = IFLOOR(ctx->Current.RasterPos[1] + epsilon - yorig);
 
-         if (!tex && ctx->Unpack.BufferObj) {
+         if (_mesa_is_bufferobj(ctx->Unpack.BufferObj)) {
             /* unpack from PBO */
             if (!_mesa_validate_pbo_access(2, &ctx->Unpack, width, height,
                                            1, GL_COLOR_INDEX, GL_BITMAP,
@@ -369,7 +343,7 @@ _mesa_bitmap(struct gl_context *ctx, GLsizei width, GLsizei height,
             }
          }
 
-         st_Bitmap(ctx, x, y, width, height, &ctx->Unpack, bitmap, tex);
+         ctx->Driver.Bitmap( ctx, x, y, width, height, &ctx->Unpack, bitmap );
       }
    }
    else if (ctx->RenderMode == GL_FEEDBACK) {
@@ -388,19 +362,8 @@ _mesa_bitmap(struct gl_context *ctx, GLsizei width, GLsizei height,
    /* update raster position */
    ctx->Current.RasterPos[0] += xmove;
    ctx->Current.RasterPos[1] += ymove;
-   ctx->PopAttribState |= GL_CURRENT_BIT;
 
    if (MESA_DEBUG_FLAGS & DEBUG_ALWAYS_FLUSH) {
       _mesa_flush(ctx);
    }
-}
-
-void GLAPIENTRY
-_mesa_Bitmap(GLsizei width, GLsizei height,
-             GLfloat xorig, GLfloat yorig, GLfloat xmove, GLfloat ymove,
-             const GLubyte *bitmap)
-{
-   GET_CURRENT_CONTEXT(ctx);
-
-   _mesa_bitmap(ctx, width, height, xorig, yorig, xmove, ymove, bitmap, NULL);
 }

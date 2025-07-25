@@ -45,10 +45,9 @@
 #define U_FORMAT_YUV_H_
 
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "util/u_math.h"
 
-#include "c99_compat.h"
 
 /*
  * TODO: Ensure we use consistent and right floating formulas, with enough
@@ -59,9 +58,9 @@ static inline void
 util_format_rgb_float_to_yuv(float r, float g, float b,
                              uint8_t *y, uint8_t *u, uint8_t *v)
 {
-   const float _r = SATURATE(r);
-   const float _g = SATURATE(g);
-   const float _b = SATURATE(b);
+   const float _r = CLAMP(r, 0.0f, 1.0f);
+   const float _g = CLAMP(g, 0.0f, 1.0f);
+   const float _b = CLAMP(b, 0.0f, 1.0f);
 
    const float scale = 255.0f;
 
@@ -69,9 +68,9 @@ util_format_rgb_float_to_yuv(float r, float g, float b,
    const int _u = scale * (-(0.148f * _r) - (0.291f * _g) + (0.439f * _b));
    const int _v = scale * ( (0.439f * _r) - (0.368f * _g) - (0.071f * _b));
 
-   *y = _y + 16;
-   *u = _u + 128;
-   *v = _v + 128;
+   *y = _y + 16; 
+   *u = _u + 128; 
+   *v = _v + 128; 
 }
 
 
@@ -123,147 +122,330 @@ util_format_yuv_to_rgb_8unorm(uint8_t y, uint8_t u, uint8_t v,
 
 
 void
-util_format_uyvy_unpack_rgba_float(void *restrict dst_row, unsigned dst_stride,
-                              const uint8_t *restrict src_row, unsigned src_stride,
+util_format_uyvy_unpack_rgba_float(float *dst_row, unsigned dst_stride,
+                              const uint8_t *src_row, unsigned src_stride,
                               unsigned width, unsigned height);
 
 void
-util_format_uyvy_unpack_rgba_8unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                               const uint8_t *restrict src_row, unsigned src_stride,
+util_format_uyvy_unpack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                               const uint8_t *src_row, unsigned src_stride,
                                unsigned width, unsigned height);
 
 void
-util_format_uyvy_pack_rgba_float(uint8_t *restrict dst_row, unsigned dst_stride,
-                            const float *restrict src_row, unsigned src_stride,
+util_format_uyvy_pack_rgba_float(uint8_t *dst_row, unsigned dst_stride,
+                            const float *src_row, unsigned src_stride,
                             unsigned width, unsigned height);
 
 void
-util_format_uyvy_pack_rgba_8unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                             const uint8_t *restrict src_row, unsigned src_stride,
+util_format_uyvy_pack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
                              unsigned width, unsigned height);
 
 void
-util_format_uyvy_fetch_rgba(void *restrict dst, const uint8_t *restrict src,
+util_format_uyvy_fetch_rgba_float(float *dst, const uint8_t *src,
                              unsigned i, unsigned j);
 
 void
-util_format_vyuy_unpack_rgba_float(void *restrict dst_row, unsigned dst_stride,
-                              const uint8_t *restrict src_row, unsigned src_stride,
+util_format_yuyv_unpack_rgba_float(float *dst_row, unsigned dst_stride,
+                              const uint8_t *src_row, unsigned src_stride,
                               unsigned width, unsigned height);
 
 void
-util_format_vyuy_unpack_rgba_8unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                               const uint8_t *restrict src_row, unsigned src_stride,
+util_format_yuyv_unpack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                               const uint8_t *src_row, unsigned src_stride,
                                unsigned width, unsigned height);
 
 void
-util_format_vyuy_pack_rgba_float(uint8_t *restrict dst_row, unsigned dst_stride,
-                            const float *restrict src_row, unsigned src_stride,
+util_format_yuyv_pack_rgba_float(uint8_t *dst_row, unsigned dst_stride,
+                            const float *src_row, unsigned src_stride,
                             unsigned width, unsigned height);
 
 void
-util_format_vyuy_pack_rgba_8unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                             const uint8_t *restrict src_row, unsigned src_stride,
+util_format_yuyv_pack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
                              unsigned width, unsigned height);
 
 void
-util_format_vyuy_fetch_rgba(void *restrict dst, const uint8_t *restrict src,
+util_format_yuyv_fetch_rgba_float(float *dst, const uint8_t *src,
                              unsigned i, unsigned j);
 
+/* XXX: Stubbed for now */
 void
-util_format_yuyv_unpack_rgba_float(void *restrict dst_row, unsigned dst_stride,
-                              const uint8_t *restrict src_row, unsigned src_stride,
-                              unsigned width, unsigned height);
-
-void
-util_format_yuyv_unpack_rgba_8unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                               const uint8_t *restrict src_row, unsigned src_stride,
-                               unsigned width, unsigned height);
-
-void
-util_format_yuyv_pack_rgba_float(uint8_t *restrict dst_row, unsigned dst_stride,
-                            const float *restrict src_row, unsigned src_stride,
-                            unsigned width, unsigned height);
-
-void
-util_format_yuyv_pack_rgba_8unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                             const uint8_t *restrict src_row, unsigned src_stride,
+util_format_yv12_unpack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
                              unsigned width, unsigned height);
-
 void
-util_format_yuyv_fetch_rgba(void *restrict dst, const uint8_t *restrict src,
-                             unsigned i, unsigned j);
-
-void
-util_format_yvyu_unpack_rgba_float(void *restrict dst_row, unsigned dst_stride,
-                              const uint8_t *restrict src_row, unsigned src_stride,
-                              unsigned width, unsigned height);
-
-void
-util_format_yvyu_unpack_rgba_8unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                               const uint8_t *restrict src_row, unsigned src_stride,
-                               unsigned width, unsigned height);
-
-void
-util_format_yvyu_pack_rgba_float(uint8_t *restrict dst_row, unsigned dst_stride,
-                            const float *restrict src_row, unsigned src_stride,
-                            unsigned width, unsigned height);
-
-void
-util_format_yvyu_pack_rgba_8unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                             const uint8_t *restrict src_row, unsigned src_stride,
+util_format_yv12_pack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
                              unsigned width, unsigned height);
-
 void
-util_format_yvyu_fetch_rgba(void *restrict dst, const uint8_t *restrict src,
+util_format_yv12_unpack_rgba_float(float *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_yv12_pack_rgba_float(uint8_t *dst_row, unsigned dst_stride,
+                             const float *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_yv12_fetch_rgba_float(float *dst, const uint8_t *src,
+                             unsigned i, unsigned j);
+void
+util_format_yv16_unpack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_yv16_pack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_yv16_unpack_rgba_float(float *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_yv16_pack_rgba_float(uint8_t *dst_row, unsigned dst_stride,
+                             const float *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_yv16_fetch_rgba_float(float *dst, const uint8_t *src,
+                             unsigned i, unsigned j);
+void
+util_format_iyuv_unpack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_iyuv_pack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_iyuv_unpack_rgba_float(float *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_iyuv_pack_rgba_float(uint8_t *dst_row, unsigned dst_stride,
+                             const float *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_iyuv_fetch_rgba_float(float *dst, const uint8_t *src,
+                             unsigned i, unsigned j);
+void
+util_format_nv12_unpack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_nv12_pack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_nv12_unpack_rgba_float(float *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_nv12_pack_rgba_float(uint8_t *dst_row, unsigned dst_stride,
+                             const float *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_nv12_fetch_rgba_float(float *dst, const uint8_t *src,
+                             unsigned i, unsigned j);
+void
+util_format_nv21_unpack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_nv21_pack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_nv21_unpack_rgba_float(float *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_nv21_pack_rgba_float(uint8_t *dst_row, unsigned dst_stride,
+                             const float *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_nv21_fetch_rgba_float(float *dst, const uint8_t *src,
                              unsigned i, unsigned j);
 
 void
-util_format_r8g8_b8g8_unorm_unpack_rgba_float(void *restrict dst_row, unsigned dst_stride,
-                                         const uint8_t *restrict src_row, unsigned src_stride,
+util_format_p010_unpack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_p010_pack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_p010_unpack_rgba_float(float *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_p010_pack_rgba_float(uint8_t *dst_row, unsigned dst_stride,
+                             const float *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_p010_fetch_rgba_float(float *dst, const uint8_t *src,
+                             unsigned i, unsigned j);
+
+void
+util_format_p016_unpack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_p016_pack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_p016_unpack_rgba_float(float *dst_row, unsigned dst_stride,
+                             const uint8_t *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_p016_pack_rgba_float(uint8_t *dst_row, unsigned dst_stride,
+                             const float *src_row, unsigned src_stride,
+                             unsigned width, unsigned height);
+void
+util_format_p016_fetch_rgba_float(float *dst, const uint8_t *src,
+                             unsigned i, unsigned j);
+
+void
+util_format_xyuv_unpack_rgba_float(float *dst_row, unsigned dst_stride,
+                                         const uint8_t *src_row, unsigned src_stride,
                                          unsigned width, unsigned height);
 
 void
-util_format_r8g8_b8g8_unorm_unpack_rgba_8unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                                          const uint8_t *restrict src_row, unsigned src_stride,
+util_format_xyuv_unpack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                                          const uint8_t *src_row, unsigned src_stride,
                                           unsigned width, unsigned height);
 
 void
-util_format_r8g8_b8g8_unorm_pack_rgba_float(uint8_t *restrict dst_row, unsigned dst_stride,
-                                       const float *restrict src_row, unsigned src_stride,
+util_format_xyuv_pack_rgba_float(uint8_t *dst_row, unsigned dst_stride,
+                                       const float *src_row, unsigned src_stride,
                                        unsigned width, unsigned height);
 
 void
-util_format_r8g8_b8g8_unorm_pack_rgba_8unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                                        const uint8_t *restrict src_row, unsigned src_stride,
+util_format_xyuv_pack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                                        const uint8_t *src_row, unsigned src_stride,
                                         unsigned width, unsigned height);
 
 void
-util_format_r8g8_b8g8_unorm_fetch_rgba(void *restrict dst, const uint8_t *restrict src,
+util_format_xyuv_fetch_rgba_float(float *dst, const uint8_t *src,
+                                        unsigned i, unsigned j);
+void
+util_format_ayuv_unpack_rgba_float(float *dst_row, unsigned dst_stride,
+                                         const uint8_t *src_row, unsigned src_stride,
+                                         unsigned width, unsigned height);
+
+void
+util_format_ayuv_unpack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                                          const uint8_t *src_row, unsigned src_stride,
+                                          unsigned width, unsigned height);
+
+void
+util_format_ayuv_pack_rgba_float(uint8_t *dst_row, unsigned dst_stride,
+                                       const float *src_row, unsigned src_stride,
+                                       unsigned width, unsigned height);
+
+void
+util_format_ayuv_pack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                                        const uint8_t *src_row, unsigned src_stride,
+                                        unsigned width, unsigned height);
+
+void
+util_format_ayuv_fetch_rgba_float(float *dst, const uint8_t *src,
+                                        unsigned i, unsigned j);
+void
+util_format_r8g8_b8g8_unorm_unpack_rgba_float(float *dst_row, unsigned dst_stride,
+                                         const uint8_t *src_row, unsigned src_stride,
+                                         unsigned width, unsigned height);
+
+void
+util_format_r8g8_b8g8_unorm_unpack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                                          const uint8_t *src_row, unsigned src_stride,
+                                          unsigned width, unsigned height);
+
+void
+util_format_r8g8_b8g8_unorm_pack_rgba_float(uint8_t *dst_row, unsigned dst_stride,
+                                       const float *src_row, unsigned src_stride,
+                                       unsigned width, unsigned height);
+
+void
+util_format_r8g8_b8g8_unorm_pack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                                        const uint8_t *src_row, unsigned src_stride,
+                                        unsigned width, unsigned height);
+
+void
+util_format_r8g8_b8g8_unorm_fetch_rgba_float(float *dst, const uint8_t *src,
                                         unsigned i, unsigned j);
 
 void
-util_format_g8r8_g8b8_unorm_unpack_rgba_float(void *restrict dst_row, unsigned dst_stride,
-                                         const uint8_t *restrict src_row, unsigned src_stride,
+util_format_g8r8_g8b8_unorm_unpack_rgba_float(float *dst_row, unsigned dst_stride,
+                                         const uint8_t *src_row, unsigned src_stride,
                                          unsigned width, unsigned height);
 
 void
-util_format_g8r8_g8b8_unorm_unpack_rgba_8unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                                          const uint8_t *restrict src_row, unsigned src_stride,
+util_format_g8r8_g8b8_unorm_unpack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                                          const uint8_t *src_row, unsigned src_stride,
                                           unsigned width, unsigned height);
 
 void
-util_format_g8r8_g8b8_unorm_pack_rgba_float(uint8_t *restrict dst_row, unsigned dst_stride,
-                                       const float *restrict src_row, unsigned src_stride,
+util_format_g8r8_g8b8_unorm_pack_rgba_float(uint8_t *dst_row, unsigned dst_stride,
+                                       const float *src_row, unsigned src_stride,
                                        unsigned width, unsigned height);
 
 void
-util_format_g8r8_g8b8_unorm_pack_rgba_8unorm(uint8_t *restrict dst_row, unsigned dst_stride,
-                                        const uint8_t *restrict src_row, unsigned src_stride,
+util_format_g8r8_g8b8_unorm_pack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                                        const uint8_t *src_row, unsigned src_stride,
                                         unsigned width, unsigned height);
 
 void
-util_format_g8r8_g8b8_unorm_fetch_rgba(void *restrict dst, const uint8_t *restrict src,
+util_format_g8r8_g8b8_unorm_fetch_rgba_float(float *dst, const uint8_t *src,
+                                        unsigned i, unsigned j);
+
+void
+util_format_r8g8_r8b8_unorm_unpack_rgba_float(float *dst_row, unsigned dst_stride,
+                                         const uint8_t *src_row, unsigned src_stride,
+                                         unsigned width, unsigned height);
+
+void
+util_format_r8g8_r8b8_unorm_unpack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                                          const uint8_t *src_row, unsigned src_stride,
+                                          unsigned width, unsigned height);
+
+void
+util_format_r8g8_r8b8_unorm_pack_rgba_float(uint8_t *dst_row, unsigned dst_stride,
+                                       const float *src_row, unsigned src_stride,
+                                       unsigned width, unsigned height);
+
+void
+util_format_r8g8_r8b8_unorm_pack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                                        const uint8_t *src_row, unsigned src_stride,
+                                        unsigned width, unsigned height);
+
+void
+util_format_r8g8_r8b8_unorm_fetch_rgba_float(float *dst, const uint8_t *src,
+                                        unsigned i, unsigned j);
+
+void
+util_format_g8r8_b8r8_unorm_unpack_rgba_float(float *dst_row, unsigned dst_stride,
+                                         const uint8_t *src_row, unsigned src_stride,
+                                         unsigned width, unsigned height);
+
+void
+util_format_g8r8_b8r8_unorm_unpack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                                          const uint8_t *src_row, unsigned src_stride,
+                                          unsigned width, unsigned height);
+
+void
+util_format_g8r8_b8r8_unorm_pack_rgba_float(uint8_t *dst_row, unsigned dst_stride,
+                                       const float *src_row, unsigned src_stride,
+                                       unsigned width, unsigned height);
+
+void
+util_format_g8r8_b8r8_unorm_pack_rgba_8unorm(uint8_t *dst_row, unsigned dst_stride,
+                                        const uint8_t *src_row, unsigned src_stride,
+                                        unsigned width, unsigned height);
+
+void
+util_format_g8r8_b8r8_unorm_fetch_rgba_float(float *dst, const uint8_t *src,
                                         unsigned i, unsigned j);
 
 #endif /* U_FORMAT_YUV_H_ */

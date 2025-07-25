@@ -30,6 +30,7 @@
 #include "st_context.h"
 #include "st_format.h"
 #include "st_texture.h"
+#include "st_cb_fbo.h"
 #include "main/enums.h"
 
 #include "pipe/p_state.h"
@@ -62,12 +63,10 @@ st_texture_create(struct st_context *st,
                   GLuint depth0,
                   GLuint layers,
                   GLuint nr_samples,
-                  GLuint bind,
-                  bool sparse,
-                  uint32_t compression)
+                  GLuint bind)
 {
    struct pipe_resource pt, *newtex;
-   struct pipe_screen *screen = st->screen;
+   struct pipe_screen *screen = st->pipe->screen;
 
    assert(target < PIPE_MAX_TEXTURE_TYPES);
    assert(width0 > 0);
@@ -97,10 +96,6 @@ st_texture_create(struct st_context *st,
    pt.flags = PIPE_RESOURCE_FLAG_TEXTURING_MORE_LIKELY;
    pt.nr_samples = nr_samples;
    pt.nr_storage_samples = nr_samples;
-   pt.compression_rate = compression;
-
-   if (sparse)
-      pt.flags |= PIPE_RESOURCE_FLAG_SPARSE;
 
    newtex = screen->resource_create(screen, &pt);
 
@@ -188,7 +183,8 @@ st_gl_texture_dims_to_pipe_dims(GLenum texture,
       *layersOut = util_align_npot(depthIn, 6);
       break;
    default:
-      unreachable("Unexpected texture in st_gl_texture_dims_to_pipe_dims()");
+      assert(0 && "Unexpected texture in st_gl_texture_dims_to_pipe_dims()");
+      /* fall-through */
    case GL_TEXTURE_3D:
    case GL_PROXY_TEXTURE_3D:
       *widthOut = widthIn;
@@ -240,58 +236,24 @@ st_texture_match_image(struct st_context *st,
    return GL_TRUE;
 }
 
-void
-st_texture_image_insert_transfer(struct gl_texture_image *stImage,
-                                 unsigned index,
-                                 struct pipe_transfer *transfer)
-{
-   /* Enlarge the transfer array if it's not large enough. */
-   if (index >= stImage->num_transfers) {
-      unsigned new_size = index + 1;
-
-      stImage->transfer = realloc(stImage->transfer,
-                  new_size * sizeof(struct st_texture_image_transfer));
-      memset(&stImage->transfer[stImage->num_transfers], 0,
-             (new_size - stImage->num_transfers) *
-             sizeof(struct st_texture_image_transfer));
-      stImage->num_transfers = new_size;
-   }
-
-   assert(!stImage->transfer[index].transfer);
-   stImage->transfer[index].transfer = transfer;
-}
-
-/* See st_texture.h for more information. */
-GLuint
-st_texture_image_resource_level(struct gl_texture_image *stImage)
-{
-   /* An image for a non-finalized texture object only has a single level. */
-   if (stImage->pt != stImage->TexObject->pt)
-      return 0;
-
-   /* An immutable texture object may have views with an LOD offset. */
-   if (stImage->TexObject->Immutable)
-      return stImage->Level + stImage->TexObject->Attrib.MinLevel;
-
-   return stImage->Level;
-}
 
 /**
  * Map a texture image and return the address for a particular 2D face/slice/
  * layer.  The stImage indicates the cube face and mipmap level.  The slice
  * of the 3D texture is passed in 'zoffset'.
- * \param usage  one of the PIPE_MAP_x values
+ * \param usage  one of the PIPE_TRANSFER_x values
  * \param x, y, w, h  the region of interest of the 2D image.
  * \return address of mapping or NULL if any error
  */
 GLubyte *
-st_texture_image_map(struct st_context *st, struct gl_texture_image *stImage,
-                     enum pipe_map_flags usage,
+st_texture_image_map(struct st_context *st, struct st_texture_image *stImage,
+                     enum pipe_transfer_usage usage,
                      GLuint x, GLuint y, GLuint z,
                      GLuint w, GLuint h, GLuint d,
                      struct pipe_transfer **transfer)
 {
-   struct gl_texture_object *stObj = stImage->TexObject;
+   struct st_texture_object *stObj =
+      st_texture_object(stImage->base.TexObject);
    GLuint level;
    void *map;
 
@@ -303,42 +265,55 @@ st_texture_image_map(struct st_context *st, struct gl_texture_image *stImage,
    if (stObj->pt != stImage->pt)
       level = 0;
    else
-      level = stImage->Level;
+      level = stImage->base.Level;
 
-   if (stObj->Immutable) {
-      level += stObj->Attrib.MinLevel;
-      z += stObj->Attrib.MinLayer;
+   if (stObj->base.Immutable) {
+      level += stObj->base.MinLevel;
+      z += stObj->base.MinLayer;
       if (stObj->pt->array_size > 1)
-         d = MIN2(d, stObj->Attrib.NumLayers);
+         d = MIN2(d, stObj->base.NumLayers);
    }
 
-   z += stImage->Face;
+   z += stImage->base.Face;
 
-   map = pipe_texture_map_3d(st->pipe, stImage->pt, level, usage,
+   map = pipe_transfer_map_3d(st->pipe, stImage->pt, level, usage,
                               x, y, z, w, h, d, transfer);
+   if (map) {
+      /* Enlarge the transfer array if it's not large enough. */
+      if (z >= stImage->num_transfers) {
+         unsigned new_size = z + 1;
 
-   if (map)
-      st_texture_image_insert_transfer(stImage, z, *transfer);
+         stImage->transfer = realloc(stImage->transfer,
+                     new_size * sizeof(struct st_texture_image_transfer));
+         memset(&stImage->transfer[stImage->num_transfers], 0,
+                (new_size - stImage->num_transfers) *
+                sizeof(struct st_texture_image_transfer));
+         stImage->num_transfers = new_size;
+      }
 
+      assert(!stImage->transfer[z].transfer);
+      stImage->transfer[z].transfer = *transfer;
+   }
    return map;
 }
 
 
 void
 st_texture_image_unmap(struct st_context *st,
-                       struct gl_texture_image *stImage, unsigned slice)
+                       struct st_texture_image *stImage, unsigned slice)
 {
    struct pipe_context *pipe = st->pipe;
-   struct gl_texture_object *stObj = stImage->TexObject;
+   struct st_texture_object *stObj =
+      st_texture_object(stImage->base.TexObject);
    struct pipe_transfer **transfer;
 
-   if (stObj->Immutable)
-      slice += stObj->Attrib.MinLayer;
-   transfer = &stImage->transfer[slice + stImage->Face].transfer;
+   if (stObj->base.Immutable)
+      slice += stObj->base.MinLayer;
+   transfer = &stImage->transfer[slice + stImage->base.Face].transfer;
 
    DBG("%s\n", __func__);
 
-   pipe_texture_unmap(pipe, *transfer);
+   pipe_transfer_unmap(pipe, *transfer);
    *transfer = NULL;
 }
 
@@ -351,7 +326,7 @@ print_center_pixel(struct pipe_context *pipe, struct pipe_resource *src)
 {
    struct pipe_transfer *xfer;
    struct pipe_box region;
-   uint8_t *map;
+   ubyte *map;
 
    region.x = src->width0 / 2;
    region.y = src->height0 / 2;
@@ -360,11 +335,11 @@ print_center_pixel(struct pipe_context *pipe, struct pipe_resource *src)
    region.height = 1;
    region.depth = 1;
 
-   map = pipe->texture_map(pipe, src, 0, PIPE_MAP_READ, &region, &xfer);
+   map = pipe->transfer_map(pipe, src, 0, PIPE_TRANSFER_READ, &region, &xfer);
 
    printf("center pixel: %d %d %d %d\n", map[0], map[1], map[2], map[3]);
 
-   pipe->texture_unmap(pipe, xfer);
+   pipe->transfer_unmap(pipe, xfer);
 }
 
 
@@ -445,8 +420,7 @@ st_create_color_map_texture(struct gl_context *ctx)
 
    /* create texture for color map/table */
    pt = st_texture_create(st, PIPE_TEXTURE_2D, format, 0,
-                          texSize, texSize, 1, 1, 0, PIPE_BIND_SAMPLER_VIEW, false,
-                          PIPE_COMPRESSION_FIXED_RATE_NONE);
+                          texSize, texSize, 1, 1, 0, PIPE_BIND_SAMPLER_VIEW);
    return pt;
 }
 
@@ -541,16 +515,14 @@ st_create_texture_handle_from_unit(struct st_context *st,
    struct pipe_context *pipe = st->pipe;
    struct pipe_sampler_view *view;
    struct pipe_sampler_state sampler = {0};
-   const bool glsl130 =
-      (prog->shader_program ? prog->shader_program->GLSL_Version : 0) >= 130;
 
    /* TODO: Clarify the interaction of ARB_bindless_texture and EXT_texture_sRGB_decode */
-   view = st_update_single_texture(st, texUnit, glsl130, true, false);
+   st_update_single_texture(st, &view, texUnit, prog->sh.data->Version >= 130, true);
    if (!view)
       return 0;
 
    if (view->target != PIPE_BUFFER)
-      st_convert_sampler_from_unit(st, &sampler, texUnit, glsl130);
+      st_convert_sampler_from_unit(st, &sampler, texUnit);
 
    assert(st->ctx->Texture.Unit[texUnit]._Current);
 
@@ -568,7 +540,7 @@ st_create_image_handle_from_unit(struct st_context *st,
    struct pipe_context *pipe = st->pipe;
    struct pipe_image_view img;
 
-   st_convert_image_from_unit(st, &img, imgUnit, 0);
+   st_convert_image_from_unit(st, &img, imgUnit, GL_READ_WRITE);
 
    return pipe->create_image_handle(pipe, &img);
 }

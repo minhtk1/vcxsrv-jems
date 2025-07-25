@@ -26,7 +26,7 @@
 #define TEXCOMPRESS_H
 
 #include "formats.h"
-#include "util/glheader.h"
+#include "glheader.h"
 
 struct gl_context;
 

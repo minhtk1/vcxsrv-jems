@@ -30,7 +30,7 @@ static void
 lower_tex_src_to_offset(nir_builder *b,
                         nir_tex_instr *instr, unsigned src_idx)
 {
-   nir_def *index = NULL;
+   nir_ssa_def *index = NULL;
    unsigned base_index = 0;
    unsigned array_elements = 1;
    nir_tex_src *src = &instr->src[src_idx];
@@ -39,6 +39,7 @@ lower_tex_src_to_offset(nir_builder *b,
    /* We compute first the offsets */
    nir_deref_instr *deref = nir_instr_as_deref(src->src.ssa->parent_instr);
    while (deref->deref_type != nir_deref_type_var) {
+      assert(deref->parent.is_ssa);
       nir_deref_instr *parent =
          nir_instr_as_deref(deref->parent.ssa->parent_instr);
 
@@ -46,27 +47,7 @@ lower_tex_src_to_offset(nir_builder *b,
 
       if (nir_src_is_const(deref->arr.index) && index == NULL) {
          /* We're still building a direct index */
-         unsigned index_in_array = nir_src_as_uint(deref->arr.index);
-
-         /* Section 5.11 (Out-of-Bounds Accesses) of the GLSL 4.60 spec says:
-          *
-          *    In the subsections described above for array, vector, matrix and
-          *    structure accesses, any out-of-bounds access produced undefined
-          *    behavior.... Out-of-bounds reads return undefined values, which
-          *    include values from other variables of the active program or zero.
-          *
-          * Robustness extensions suggest to return zero on out-of-bounds
-          * accesses, however it's not applicable to the arrays of samplers,
-          * so just clamp the index.
-          *
-          * Otherwise instr->sampler_index or instr->texture_index would be out
-          * of bounds, and they are used as an index to arrays of driver state.
-          */
-         if (index_in_array < glsl_array_size(parent->type)) {
-            base_index += index_in_array * array_elements;
-         } else {
-            base_index = glsl_array_size(parent->type) - 1;
-         }
+         base_index += nir_src_as_uint(deref->arr.index) * array_elements;
       } else {
          if (index == NULL) {
             /* We used to be direct but not anymore */
@@ -75,9 +56,8 @@ lower_tex_src_to_offset(nir_builder *b,
          }
 
          index = nir_iadd(b, index,
-                          nir_imul_imm(b,
-                                       deref->arr.index.ssa,
-                                       array_elements));
+                          nir_imul(b, nir_imm_int(b, array_elements),
+                                   nir_ssa_for_src(b, deref->arr.index, 1)));
       }
 
       array_elements *= glsl_get_length(parent->type);
@@ -97,9 +77,14 @@ lower_tex_src_to_offset(nir_builder *b,
     * instr if needed
     */
    if (index) {
-      nir_src_rewrite(&src->src, index);
+      nir_instr_rewrite_src(&instr->instr, &src->src,
+                            nir_src_for_ssa(index));
 
-      src->src_type = is_sampler ? nir_tex_src_sampler_offset : nir_tex_src_texture_offset;
+      src->src_type = is_sampler ?
+         nir_tex_src_sampler_offset :
+         nir_tex_src_texture_offset;
+
+      instr->texture_array_size = array_elements;
    } else {
       nir_tex_instr_remove_src(instr, src_idx);
    }
@@ -108,17 +93,13 @@ lower_tex_src_to_offset(nir_builder *b,
       instr->sampler_index = base_index;
    } else {
       instr->texture_index = base_index;
+      instr->texture_array_size = array_elements;
    }
 }
 
 static bool
-lower_sampler(nir_builder *b, nir_instr *instr_, UNUSED void *cb_data)
+lower_sampler(nir_builder *b, nir_tex_instr *instr)
 {
-   if (instr_->type != nir_instr_type_tex)
-      return false;
-
-   nir_tex_instr *instr = nir_instr_as_tex(instr_);
-
    int texture_idx =
       nir_tex_instr_src_index(instr, nir_tex_src_texture_deref);
 
@@ -141,10 +122,33 @@ lower_sampler(nir_builder *b, nir_instr *instr_, UNUSED void *cb_data)
    return true;
 }
 
+static bool
+lower_impl(nir_function_impl *impl)
+{
+   nir_builder b;
+   nir_builder_init(&b, impl);
+   bool progress = false;
+
+   nir_foreach_block(block, impl) {
+      nir_foreach_instr(instr, block) {
+         if (instr->type == nir_instr_type_tex)
+            progress |= lower_sampler(&b, nir_instr_as_tex(instr));
+      }
+   }
+
+   return progress;
+}
+
 bool
 nir_lower_samplers(nir_shader *shader)
 {
-   return nir_shader_instructions_pass(shader, lower_sampler,
-                                       nir_metadata_control_flow,
-                                       NULL);
+   bool progress = false;
+
+   /* Next, lower derefs to offsets. */
+   nir_foreach_function(function, shader) {
+      if (function->impl)
+         progress |= lower_impl(function->impl);
+   }
+
+   return progress;
 }

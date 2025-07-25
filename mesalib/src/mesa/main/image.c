@@ -30,11 +30,11 @@
  */
 
 
-#include "util/glheader.h"
+#include "glheader.h"
 #include "colormac.h"
 #include "glformats.h"
 #include "image.h"
-
+#include "imports.h"
 #include "macros.h"
 #include "mtypes.h"
 
@@ -288,7 +288,7 @@ _mesa_image_address3d( const struct gl_pixelstore_attrib *packing,
  * \param width image width.
  * \param format pixel format.
  * \param type pixel data type.
- *
+ * 
  * \return the stride in bytes for the given parameters, or -1 if error
  */
 GLint
@@ -338,13 +338,12 @@ _mesa_image_row_stride( const struct gl_pixelstore_attrib *packing,
  * Compute the stride between images in a 3D texture (in bytes) for the given
  * pixel packing parameters and image width, format and type.
  */
-intptr_t
+GLint
 _mesa_image_image_stride( const struct gl_pixelstore_attrib *packing,
                           GLint width, GLint height,
                           GLenum format, GLenum type )
 {
-   GLint bytesPerRow, remainder;
-   intptr_t bytesPerImage;
+   GLint bytesPerRow, bytesPerImage, remainder;
 
    assert(packing);
 
@@ -374,9 +373,9 @@ _mesa_image_image_stride( const struct gl_pixelstore_attrib *packing,
       bytesPerRow += (packing->Alignment - remainder);
 
    if (packing->ImageHeight == 0)
-      bytesPerImage = (intptr_t)bytesPerRow * height;
+      bytesPerImage = bytesPerRow * height;
    else
-      bytesPerImage = (intptr_t)bytesPerRow * packing->ImageHeight;
+      bytesPerImage = bytesPerRow * packing->ImageHeight;
 
    return bytesPerImage;
 }
@@ -462,6 +461,130 @@ _mesa_expand_bitmap(GLsizei width, GLsizei height,
       srcRow += srcStride;
       dstRow += destStride;
    } /* row */
+}
+
+
+
+
+/**
+ * Convert an array of RGBA colors from one datatype to another.
+ * NOTE: src may equal dst.  In that case, we use a temporary buffer.
+ */
+void
+_mesa_convert_colors(GLenum srcType, const GLvoid *src,
+                     GLenum dstType, GLvoid *dst,
+                     GLuint count, const GLubyte mask[])
+{
+   GLuint *tempBuffer;
+   const GLboolean useTemp = (src == dst);
+
+   tempBuffer = malloc(count * MAX_PIXEL_BYTES);
+   if (!tempBuffer)
+      return;
+
+   assert(srcType != dstType);
+
+   switch (srcType) {
+   case GL_UNSIGNED_BYTE:
+      if (dstType == GL_UNSIGNED_SHORT) {
+         const GLubyte (*src1)[4] = (const GLubyte (*)[4]) src;
+         GLushort (*dst2)[4] = (GLushort (*)[4]) (useTemp ? tempBuffer : dst);
+         GLuint i;
+         for (i = 0; i < count; i++) {
+            if (!mask || mask[i]) {
+               dst2[i][RCOMP] = UBYTE_TO_USHORT(src1[i][RCOMP]);
+               dst2[i][GCOMP] = UBYTE_TO_USHORT(src1[i][GCOMP]);
+               dst2[i][BCOMP] = UBYTE_TO_USHORT(src1[i][BCOMP]);
+               dst2[i][ACOMP] = UBYTE_TO_USHORT(src1[i][ACOMP]);
+            }
+         }
+         if (useTemp)
+            memcpy(dst, tempBuffer, count * 4 * sizeof(GLushort));
+      }
+      else {
+         const GLubyte (*src1)[4] = (const GLubyte (*)[4]) src;
+         GLfloat (*dst4)[4] = (GLfloat (*)[4]) (useTemp ? tempBuffer : dst);
+         GLuint i;
+         assert(dstType == GL_FLOAT);
+         for (i = 0; i < count; i++) {
+            if (!mask || mask[i]) {
+               dst4[i][RCOMP] = UBYTE_TO_FLOAT(src1[i][RCOMP]);
+               dst4[i][GCOMP] = UBYTE_TO_FLOAT(src1[i][GCOMP]);
+               dst4[i][BCOMP] = UBYTE_TO_FLOAT(src1[i][BCOMP]);
+               dst4[i][ACOMP] = UBYTE_TO_FLOAT(src1[i][ACOMP]);
+            }
+         }
+         if (useTemp)
+            memcpy(dst, tempBuffer, count * 4 * sizeof(GLfloat));
+      }
+      break;
+   case GL_UNSIGNED_SHORT:
+      if (dstType == GL_UNSIGNED_BYTE) {
+         const GLushort (*src2)[4] = (const GLushort (*)[4]) src;
+         GLubyte (*dst1)[4] = (GLubyte (*)[4]) (useTemp ? tempBuffer : dst);
+         GLuint i;
+         for (i = 0; i < count; i++) {
+            if (!mask || mask[i]) {
+               dst1[i][RCOMP] = USHORT_TO_UBYTE(src2[i][RCOMP]);
+               dst1[i][GCOMP] = USHORT_TO_UBYTE(src2[i][GCOMP]);
+               dst1[i][BCOMP] = USHORT_TO_UBYTE(src2[i][BCOMP]);
+               dst1[i][ACOMP] = USHORT_TO_UBYTE(src2[i][ACOMP]);
+            }
+         }
+         if (useTemp)
+            memcpy(dst, tempBuffer, count * 4 * sizeof(GLubyte));
+      }
+      else {
+         const GLushort (*src2)[4] = (const GLushort (*)[4]) src;
+         GLfloat (*dst4)[4] = (GLfloat (*)[4]) (useTemp ? tempBuffer : dst);
+         GLuint i;
+         assert(dstType == GL_FLOAT);
+         for (i = 0; i < count; i++) {
+            if (!mask || mask[i]) {
+               dst4[i][RCOMP] = USHORT_TO_FLOAT(src2[i][RCOMP]);
+               dst4[i][GCOMP] = USHORT_TO_FLOAT(src2[i][GCOMP]);
+               dst4[i][BCOMP] = USHORT_TO_FLOAT(src2[i][BCOMP]);
+               dst4[i][ACOMP] = USHORT_TO_FLOAT(src2[i][ACOMP]);
+            }
+         }
+         if (useTemp)
+            memcpy(dst, tempBuffer, count * 4 * sizeof(GLfloat));
+      }
+      break;
+   case GL_FLOAT:
+      if (dstType == GL_UNSIGNED_BYTE) {
+         const GLfloat (*src4)[4] = (const GLfloat (*)[4]) src;
+         GLubyte (*dst1)[4] = (GLubyte (*)[4]) (useTemp ? tempBuffer : dst);
+         GLuint i;
+         for (i = 0; i < count; i++) {
+            if (!mask || mask[i])
+               _mesa_unclamped_float_rgba_to_ubyte(dst1[i], src4[i]);
+         }
+         if (useTemp)
+            memcpy(dst, tempBuffer, count * 4 * sizeof(GLubyte));
+      }
+      else {
+         const GLfloat (*src4)[4] = (const GLfloat (*)[4]) src;
+         GLushort (*dst2)[4] = (GLushort (*)[4]) (useTemp ? tempBuffer : dst);
+         GLuint i;
+         assert(dstType == GL_UNSIGNED_SHORT);
+         for (i = 0; i < count; i++) {
+            if (!mask || mask[i]) {
+               UNCLAMPED_FLOAT_TO_USHORT(dst2[i][RCOMP], src4[i][RCOMP]);
+               UNCLAMPED_FLOAT_TO_USHORT(dst2[i][GCOMP], src4[i][GCOMP]);
+               UNCLAMPED_FLOAT_TO_USHORT(dst2[i][BCOMP], src4[i][BCOMP]);
+               UNCLAMPED_FLOAT_TO_USHORT(dst2[i][ACOMP], src4[i][ACOMP]);
+            }
+         }
+         if (useTemp)
+            memcpy(dst, tempBuffer, count * 4 * sizeof(GLushort));
+      }
+      break;
+   default:
+      unreachable("Invalid datatype in _mesa_convert_colors");
+   }
+
+   free(tempBuffer);
 }
 
 

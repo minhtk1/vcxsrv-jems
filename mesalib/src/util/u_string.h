@@ -35,12 +35,13 @@
 #ifndef U_STRING_H_
 #define U_STRING_H_
 
+#if !defined(XF86_LIBC_H)
+#include <stdio.h>
+#endif
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdarg.h>
-#include <stdio.h>
 #include <string.h>
-#include <limits.h>
 
 #include "util/macros.h" // PRINTFLIKE
 
@@ -65,15 +66,14 @@ util_strchrnul(const char *s, char c)
 #ifdef _WIN32
 
 #define sprintf util_sprintf
-static inline int
+static inline void
    PRINTFLIKE(2, 3)
 util_sprintf(char *str, const char *format, ...)
 {
    va_list ap;
    va_start(ap, format);
-   int r = vsnprintf(str, INT_MAX, format, ap);
+   vsnprintf(str, (size_t)-1, format, ap);
    va_end(ap);
-   return r;
 }
 
 #define vasprintf util_vasprintf
@@ -100,7 +100,6 @@ util_vasprintf(char **ret, const char *format, va_list ap)
 
 #define asprintf util_asprintf
 static inline int
-   PRINTFLIKE(2, 3)
 util_asprintf(char **str, const char *fmt, ...)
 {
    int ret;
@@ -117,11 +116,7 @@ util_asprintf(char **str, const char *fmt, ...)
 
 #define strdup _strdup
 
-#if !defined(HAVE_STRTOK_R)
-#define strtok_r strtok_s
 #endif
-
-#endif /* _WIN32 */
 
 
 #ifdef __cplusplus

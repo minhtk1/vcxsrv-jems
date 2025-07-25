@@ -24,15 +24,14 @@
  */
 
 
-#include "util/glheader.h"
+#include "glheader.h"
 #include "enums.h"
 #include "context.h"
 #include "hint.h"
-
+#include "imports.h"
 #include "mtypes.h"
-#include "api_exec_decl.h"
 
-#include "pipe/p_screen.h"
+
 
 void GLAPIENTRY
 _mesa_Hint( GLenum target, GLenum mode )
@@ -55,7 +54,7 @@ _mesa_Hint( GLenum target, GLenum mode )
             goto invalid_target;
          if (ctx->Hint.Fog == mode)
 	    return;
-	 FLUSH_VERTICES(ctx, _NEW_HINT, GL_HINT_BIT);
+	 FLUSH_VERTICES(ctx, _NEW_HINT);
          ctx->Hint.Fog = mode;
          break;
       case GL_LINE_SMOOTH_HINT:
@@ -63,7 +62,7 @@ _mesa_Hint( GLenum target, GLenum mode )
             goto invalid_target;
          if (ctx->Hint.LineSmooth == mode)
 	    return;
-	 FLUSH_VERTICES(ctx, _NEW_HINT, GL_HINT_BIT);
+	 FLUSH_VERTICES(ctx, _NEW_HINT);
          ctx->Hint.LineSmooth = mode;
          break;
       case GL_PERSPECTIVE_CORRECTION_HINT:
@@ -71,7 +70,7 @@ _mesa_Hint( GLenum target, GLenum mode )
             goto invalid_target;
          if (ctx->Hint.PerspectiveCorrection == mode)
 	    return;
-	 FLUSH_VERTICES(ctx, _NEW_HINT, GL_HINT_BIT);
+	 FLUSH_VERTICES(ctx, _NEW_HINT);
          ctx->Hint.PerspectiveCorrection = mode;
          break;
       case GL_POINT_SMOOTH_HINT:
@@ -79,7 +78,7 @@ _mesa_Hint( GLenum target, GLenum mode )
             goto invalid_target;
          if (ctx->Hint.PointSmooth == mode)
 	    return;
-	 FLUSH_VERTICES(ctx, _NEW_HINT, GL_HINT_BIT);
+	 FLUSH_VERTICES(ctx, _NEW_HINT);
          ctx->Hint.PointSmooth = mode;
          break;
       case GL_POLYGON_SMOOTH_HINT:
@@ -87,7 +86,7 @@ _mesa_Hint( GLenum target, GLenum mode )
             goto invalid_target;
          if (ctx->Hint.PolygonSmooth == mode)
 	    return;
-	 FLUSH_VERTICES(ctx, _NEW_HINT, GL_HINT_BIT);
+	 FLUSH_VERTICES(ctx, _NEW_HINT);
          ctx->Hint.PolygonSmooth = mode;
          break;
 
@@ -97,27 +96,27 @@ _mesa_Hint( GLenum target, GLenum mode )
             goto invalid_target;
 	 if (ctx->Hint.TextureCompression == mode)
 	    return;
-	 FLUSH_VERTICES(ctx, _NEW_HINT, GL_HINT_BIT);
+	 FLUSH_VERTICES(ctx, _NEW_HINT);
 	 ctx->Hint.TextureCompression = mode;
          break;
 
       /* GL_SGIS_generate_mipmap */
       case GL_GENERATE_MIPMAP_HINT_SGIS:
-         if (_mesa_is_desktop_gl_core(ctx))
+         if (ctx->API == API_OPENGL_CORE)
             goto invalid_target;
          if (ctx->Hint.GenerateMipmap == mode)
             return;
-	 FLUSH_VERTICES(ctx, _NEW_HINT, GL_HINT_BIT);
+	 FLUSH_VERTICES(ctx, _NEW_HINT);
 	 ctx->Hint.GenerateMipmap = mode;
          break;
 
       /* GL_ARB_fragment_shader */
       case GL_FRAGMENT_SHADER_DERIVATIVE_HINT_ARB:
-         if (_mesa_is_gles1(ctx) || !ctx->Extensions.ARB_fragment_shader)
+         if (ctx->API == API_OPENGLES || !ctx->Extensions.ARB_fragment_shader)
             goto invalid_target;
          if (ctx->Hint.FragmentShaderDerivative == mode)
             return;
-         FLUSH_VERTICES(ctx, _NEW_HINT, GL_HINT_BIT);
+         FLUSH_VERTICES(ctx, _NEW_HINT);
          ctx->Hint.FragmentShaderDerivative = mode;
          break;
 
@@ -139,9 +138,8 @@ _mesa_MaxShaderCompilerThreadsKHR(GLuint count)
 
    ctx->Hint.MaxShaderCompilerThreads = count;
 
-   struct pipe_screen *screen = ctx->screen;
-   if (screen->set_max_shader_compiler_threads)
-      screen->set_max_shader_compiler_threads(screen, count);
+   if (ctx->Driver.SetMaxShaderCompilerThreads)
+      ctx->Driver.SetMaxShaderCompilerThreads(ctx, count);
 }
 
 /**********************************************************************/

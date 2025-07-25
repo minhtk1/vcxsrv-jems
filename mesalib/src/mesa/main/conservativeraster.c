@@ -31,9 +31,6 @@
 #include "conservativeraster.h"
 #include "context.h"
 #include "enums.h"
-#include "api_exec_decl.h"
-
-#include "state_tracker/st_context.h"
 
 static ALWAYS_INLINE void
 conservative_raster_parameter(GLenum pname, GLfloat param,
@@ -62,10 +59,6 @@ conservative_raster_parameter(GLenum pname, GLfloat param,
          _mesa_error(ctx, GL_INVALID_VALUE, "%s(param=%g)", func, param);
          return;
       }
-
-      FLUSH_VERTICES(ctx, 0, 0);
-      ctx->NewDriverState |= ST_NEW_RASTERIZER;
-
       ctx->ConservativeRasterDilate =
          CLAMP(param,
                ctx->Const.ConservativeRasterDilateRange[0],
@@ -81,15 +74,16 @@ conservative_raster_parameter(GLenum pname, GLfloat param,
                      "%s(pname=%s)", func, _mesa_enum_to_string(param));
          return;
       }
-
-      FLUSH_VERTICES(ctx, 0, 0);
-      ctx->NewDriverState |= ST_NEW_RASTERIZER;
       ctx->ConservativeRasterMode = param;
       break;
    default:
       goto invalid_pname_enum;
       break;
    }
+
+   FLUSH_VERTICES(ctx, 0);
+   ctx->NewDriverState |=
+      ctx->DriverFlags.NewNvConservativeRasterizationParams;
 
    return;
 invalid_pname_enum:

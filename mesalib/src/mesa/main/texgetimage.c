@@ -29,7 +29,7 @@
  */
 
 
-#include "util/glheader.h"
+#include "glheader.h"
 #include "bufferobj.h"
 #include "enums.h"
 #include "context.h"
@@ -48,9 +48,6 @@
 #include "texstore.h"
 #include "format_utils.h"
 #include "pixeltransfer.h"
-#include "api_exec_decl.h"
-
-#include "state_tracker/st_cb_texture.h"
 
 /**
  * Can the given type represent negative values?
@@ -96,9 +93,9 @@ get_tex_depth(struct gl_context *ctx, GLuint dimensions,
       GLint srcRowStride;
 
       /* map src texture buffer */
-      st_MapTextureImage(ctx, texImage, zoffset + img,
-                         xoffset, yoffset, width, height,
-                         GL_MAP_READ_BIT, &srcMap, &srcRowStride);
+      ctx->Driver.MapTextureImage(ctx, texImage, zoffset + img,
+                                  xoffset, yoffset, width, height,
+                                  GL_MAP_READ_BIT, &srcMap, &srcRowStride);
 
       if (srcMap) {
          for (row = 0; row < height; row++) {
@@ -110,7 +107,7 @@ get_tex_depth(struct gl_context *ctx, GLuint dimensions,
             _mesa_pack_depth_span(ctx, width, dest, type, depthRow, &ctx->Pack);
          }
 
-         st_UnmapTextureImage(ctx, texImage, zoffset + img);
+         ctx->Driver.UnmapTextureImage(ctx, texImage, zoffset + img);
       }
       else {
          _mesa_error(ctx, GL_OUT_OF_MEMORY, "glGetTexImage");
@@ -141,9 +138,9 @@ get_tex_depth_stencil(struct gl_context *ctx, GLuint dimensions,
       GLint rowstride;
 
       /* map src texture buffer */
-      st_MapTextureImage(ctx, texImage, zoffset + img,
-                         xoffset, yoffset, width, height,
-                         GL_MAP_READ_BIT, &srcMap, &rowstride);
+      ctx->Driver.MapTextureImage(ctx, texImage, zoffset + img,
+                                  xoffset, yoffset, width, height,
+                                  GL_MAP_READ_BIT, &srcMap, &rowstride);
 
       if (srcMap) {
          for (row = 0; row < height; row++) {
@@ -169,7 +166,7 @@ get_tex_depth_stencil(struct gl_context *ctx, GLuint dimensions,
             }
          }
 
-         st_UnmapTextureImage(ctx, texImage, zoffset + img);
+         ctx->Driver.UnmapTextureImage(ctx, texImage, zoffset + img);
       }
       else {
          _mesa_error(ctx, GL_OUT_OF_MEMORY, "glGetTexImage");
@@ -197,10 +194,10 @@ get_tex_stencil(struct gl_context *ctx, GLuint dimensions,
       GLint rowstride;
 
       /* map src texture buffer */
-      st_MapTextureImage(ctx, texImage, zoffset + img,
-                         xoffset, yoffset, width, height,
-                         GL_MAP_READ_BIT,
-                         &srcMap, &rowstride);
+      ctx->Driver.MapTextureImage(ctx, texImage, zoffset + img,
+                                  xoffset, yoffset, width, height,
+                                  GL_MAP_READ_BIT,
+                                  &srcMap, &rowstride);
 
       if (srcMap) {
          for (row = 0; row < height; row++) {
@@ -214,7 +211,7 @@ get_tex_stencil(struct gl_context *ctx, GLuint dimensions,
                                            dest);
          }
 
-         st_UnmapTextureImage(ctx, texImage, zoffset + img);
+         ctx->Driver.UnmapTextureImage(ctx, texImage, zoffset + img);
       }
       else {
          _mesa_error(ctx, GL_OUT_OF_MEMORY, "glGetTexImage");
@@ -241,9 +238,9 @@ get_tex_ycbcr(struct gl_context *ctx, GLuint dimensions,
       GLint rowstride;
 
       /* map src texture buffer */
-      st_MapTextureImage(ctx, texImage, zoffset + img,
-                         xoffset, yoffset, width, height,
-                         GL_MAP_READ_BIT, &srcMap, &rowstride);
+      ctx->Driver.MapTextureImage(ctx, texImage, zoffset + img,
+                                  xoffset, yoffset, width, height,
+                                  GL_MAP_READ_BIT, &srcMap, &rowstride);
 
       if (srcMap) {
          for (row = 0; row < height; row++) {
@@ -266,7 +263,7 @@ get_tex_ycbcr(struct gl_context *ctx, GLuint dimensions,
             }
          }
 
-         st_UnmapTextureImage(ctx, texImage, zoffset + img);
+         ctx->Driver.UnmapTextureImage(ctx, texImage, zoffset + img);
       }
       else {
          _mesa_error(ctx, GL_OUT_OF_MEMORY, "glGetTexImage");
@@ -346,15 +343,15 @@ get_tex_rgba_compressed(struct gl_context *ctx, GLuint dimensions,
 
       tempSlice = tempImage + slice * 4 * width * height;
 
-      st_MapTextureImage(ctx, texImage, zoffset + slice,
-                         xoffset, yoffset, width, height,
-                         GL_MAP_READ_BIT,
-                         &srcMap, &srcRowStride);
+      ctx->Driver.MapTextureImage(ctx, texImage, zoffset + slice,
+                                  xoffset, yoffset, width, height,
+                                  GL_MAP_READ_BIT,
+                                  &srcMap, &srcRowStride);
       if (srcMap) {
          _mesa_decompress_image(texFormat, width, height,
                                 srcMap, srcRowStride, tempSlice);
 
-         st_UnmapTextureImage(ctx, texImage, zoffset + slice);
+         ctx->Driver.UnmapTextureImage(ctx, texImage, zoffset + slice);
       }
       else {
          _mesa_error(ctx, GL_OUT_OF_MEMORY, "glGetTexImage");
@@ -475,10 +472,10 @@ get_tex_rgba_uncompressed(struct gl_context *ctx, GLuint dimensions,
       uint32_t src_format;
 
       /* map src texture buffer */
-      st_MapTextureImage(ctx, texImage, zoffset + img,
-                         xoffset, yoffset, width, height,
-                         GL_MAP_READ_BIT,
-                         &srcMap, &rowstride);
+      ctx->Driver.MapTextureImage(ctx, texImage, zoffset + img,
+                                  xoffset, yoffset, width, height,
+                                  GL_MAP_READ_BIT,
+                                  &srcMap, &rowstride);
       if (!srcMap) {
          _mesa_error(ctx, GL_OUT_OF_MEMORY, "glGetTexImage");
          goto done;
@@ -511,7 +508,7 @@ get_tex_rgba_uncompressed(struct gl_context *ctx, GLuint dimensions,
                rgba = malloc(height * rgba_stride);
                if (!rgba) {
                   _mesa_error(ctx, GL_OUT_OF_MEMORY, "glGetTexImage()");
-                  st_UnmapTextureImage(ctx, texImage, img);
+                  ctx->Driver.UnmapTextureImage(ctx, texImage, img);
                   return;
                }
             }
@@ -558,7 +555,7 @@ get_tex_rgba_uncompressed(struct gl_context *ctx, GLuint dimensions,
                                    width, height, dest, dest);
 
       /* Unmap the src texture buffer */
-      st_UnmapTextureImage(ctx, texImage, zoffset + img);
+      ctx->Driver.UnmapTextureImage(ctx, texImage, zoffset + img);
    }
 
 done:
@@ -658,9 +655,9 @@ get_tex_memcpy(struct gl_context *ctx,
       GLint srcRowStride;
 
       /* map src texture buffer */
-      st_MapTextureImage(ctx, texImage, zoffset,
-                         xoffset, yoffset, width, height,
-                         GL_MAP_READ_BIT, &src, &srcRowStride);
+      ctx->Driver.MapTextureImage(ctx, texImage, zoffset,
+                                  xoffset, yoffset, width, height,
+                                  GL_MAP_READ_BIT, &src, &srcRowStride);
 
       if (src) {
          if (bytesPerRow == dstRowStride && bytesPerRow == srcRowStride) {
@@ -676,7 +673,7 @@ get_tex_memcpy(struct gl_context *ctx,
          }
 
          /* unmap src texture buffer */
-         st_UnmapTextureImage(ctx, texImage, zoffset);
+         ctx->Driver.UnmapTextureImage(ctx, texImage, zoffset);
       }
       else {
          _mesa_error(ctx, GL_OUT_OF_MEMORY, "glGetTexImage");
@@ -688,8 +685,10 @@ get_tex_memcpy(struct gl_context *ctx,
 
 
 /**
- * This is the software fallback for GetTexSubImage().
+ * This is the software fallback for Driver.GetTexSubImage().
  * All error checking will have been done before this routine is called.
+ * We'll call ctx->Driver.MapTextureImage() to access the data, then
+ * unmap with ctx->Driver.UnmapTextureImage().
  */
 void
 _mesa_GetTexSubImage_sw(struct gl_context *ctx,
@@ -702,7 +701,7 @@ _mesa_GetTexSubImage_sw(struct gl_context *ctx,
       _mesa_get_texture_dimensions(texImage->TexObject->Target);
 
    /* map dest buffer, if PBO */
-   if (ctx->Pack.BufferObj) {
+   if (_mesa_is_bufferobj(ctx->Pack.BufferObj)) {
       /* Packing texture image into a PBO.
        * Map the (potentially) VRAM-based buffer into our process space so
        * we can write into it with the code below.
@@ -710,9 +709,9 @@ _mesa_GetTexSubImage_sw(struct gl_context *ctx,
        * texture data to the PBO if the PBO is in VRAM along with the texture.
        */
       GLubyte *buf = (GLubyte *)
-         _mesa_bufferobj_map_range(ctx, 0, ctx->Pack.BufferObj->Size,
-                                   GL_MAP_WRITE_BIT, ctx->Pack.BufferObj,
-                                   MAP_INTERNAL);
+         ctx->Driver.MapBufferRange(ctx, 0, ctx->Pack.BufferObj->Size,
+				    GL_MAP_WRITE_BIT, ctx->Pack.BufferObj,
+                                    MAP_INTERNAL);
       if (!buf) {
          /* out of memory or other unexpected error */
          _mesa_error(ctx, GL_OUT_OF_MEMORY, "glGetTexImage(map PBO failed)");
@@ -761,8 +760,8 @@ _mesa_GetTexSubImage_sw(struct gl_context *ctx,
                    width, height, depth, format, type, pixels, texImage);
    }
 
-   if (ctx->Pack.BufferObj) {
-      _mesa_bufferobj_unmap(ctx, ctx->Pack.BufferObj, MAP_INTERNAL);
+   if (_mesa_is_bufferobj(ctx->Pack.BufferObj)) {
+      ctx->Driver.UnmapBuffer(ctx, ctx->Pack.BufferObj, MAP_INTERNAL);
    }
 }
 
@@ -789,12 +788,12 @@ get_compressed_texsubimage_sw(struct gl_context *ctx,
                                        width, height, depth,
                                        &ctx->Pack, &store);
 
-   if (ctx->Pack.BufferObj) {
+   if (_mesa_is_bufferobj(ctx->Pack.BufferObj)) {
       /* pack texture image into a PBO */
       dest = (GLubyte *)
-         _mesa_bufferobj_map_range(ctx, 0, ctx->Pack.BufferObj->Size,
-                                   GL_MAP_WRITE_BIT, ctx->Pack.BufferObj,
-                                   MAP_INTERNAL);
+         ctx->Driver.MapBufferRange(ctx, 0, ctx->Pack.BufferObj->Size,
+				    GL_MAP_WRITE_BIT, ctx->Pack.BufferObj,
+                                    MAP_INTERNAL);
       if (!dest) {
          /* out of memory or other unexpected error */
          _mesa_error(ctx, GL_OUT_OF_MEMORY,
@@ -813,9 +812,9 @@ get_compressed_texsubimage_sw(struct gl_context *ctx,
       GLubyte *src;
 
       /* map src texture buffer */
-      st_MapTextureImage(ctx, texImage, zoffset + slice,
-                         xoffset, yoffset, width, height,
-                         GL_MAP_READ_BIT, &src, &srcRowStride);
+      ctx->Driver.MapTextureImage(ctx, texImage, zoffset + slice,
+                                  xoffset, yoffset, width, height,
+                                  GL_MAP_READ_BIT, &src, &srcRowStride);
 
       if (src) {
          GLint i;
@@ -825,7 +824,7 @@ get_compressed_texsubimage_sw(struct gl_context *ctx,
             src += srcRowStride;
          }
 
-         st_UnmapTextureImage(ctx, texImage, zoffset + slice);
+         ctx->Driver.UnmapTextureImage(ctx, texImage, zoffset + slice);
 
          /* Advance to next slice */
          dest += store.TotalBytesPerRow * (store.TotalRowsPerSlice -
@@ -836,8 +835,8 @@ get_compressed_texsubimage_sw(struct gl_context *ctx,
       }
    }
 
-   if (ctx->Pack.BufferObj) {
-      _mesa_bufferobj_unmap(ctx, ctx->Pack.BufferObj, MAP_INTERNAL);
+   if (_mesa_is_bufferobj(ctx->Pack.BufferObj)) {
+      ctx->Driver.UnmapBuffer(ctx, ctx->Pack.BufferObj, MAP_INTERNAL);
    }
 }
 
@@ -876,7 +875,7 @@ legal_getteximage_target(struct gl_context *ctx, GLenum target, bool dsa)
    case GL_TEXTURE_CUBE_MAP_NEGATIVE_Y:
    case GL_TEXTURE_CUBE_MAP_POSITIVE_Z:
    case GL_TEXTURE_CUBE_MAP_NEGATIVE_Z:
-      return dsa ? GL_FALSE : GL_TRUE;
+      return dsa ? GL_FALSE : ctx->Extensions.ARB_texture_cube_map;
    case GL_TEXTURE_CUBE_MAP:
       return dsa ? GL_TRUE : GL_FALSE;
    default:
@@ -965,7 +964,7 @@ dimensions_error_check(struct gl_context *ctx,
                      "%s(1D, height = %d)", caller, height);
          return true;
       }
-      FALLTHROUGH;
+      /* fall-through */
    case GL_TEXTURE_1D_ARRAY:
    case GL_TEXTURE_2D:
    case GL_TEXTURE_RECTANGLE:
@@ -1102,7 +1101,7 @@ pbo_error_check(struct gl_context *ctx, GLenum target,
 
    if (!_mesa_validate_pbo_access(dimensions, &ctx->Pack, width, height, depth,
                                   format, type, clientMemSize, pixels)) {
-      if (ctx->Pack.BufferObj) {
+      if (_mesa_is_bufferobj(ctx->Pack.BufferObj)) {
          _mesa_error(ctx, GL_INVALID_OPERATION,
                      "%s(out of bounds PBO access)", caller);
       } else {
@@ -1113,7 +1112,7 @@ pbo_error_check(struct gl_context *ctx, GLenum target,
       return true;
    }
 
-   if (ctx->Pack.BufferObj) {
+   if (_mesa_is_bufferobj(ctx->Pack.BufferObj)) {
       /* PBO should not be mapped */
       if (_mesa_check_disallowed_mapping(ctx->Pack.BufferObj)) {
          _mesa_error(ctx, GL_INVALID_OPERATION,
@@ -1122,7 +1121,7 @@ pbo_error_check(struct gl_context *ctx, GLenum target,
       }
    }
 
-   if (!ctx->Pack.BufferObj && !pixels) {
+   if (!_mesa_is_bufferobj(ctx->Pack.BufferObj) && !pixels) {
       /* not an error, do nothing */
       return true;
    }
@@ -1393,9 +1392,9 @@ get_texture_image(struct gl_context *ctx,
 {
    struct gl_texture_image *texImage;
    unsigned firstFace, numFaces, i;
-   intptr_t imageStride;
+   GLint imageStride;
 
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
 
    texImage = select_tex_image(texObj, target, level, zoffset);
    assert(texImage);  /* should have been error checked already */
@@ -1429,18 +1428,15 @@ get_texture_image(struct gl_context *ctx,
       numFaces = 1;
    }
 
-   if (ctx->Pack.BufferObj)
-      ctx->Pack.BufferObj->UsageHistory |= USAGE_PIXEL_PACK_BUFFER;
-
    _mesa_lock_texture(ctx, texObj);
 
    for (i = 0; i < numFaces; i++) {
       texImage = texObj->Image[firstFace + i][level];
       assert(texImage);
 
-      st_GetTexSubImage(ctx, xoffset, yoffset, zoffset,
-                        width, height, depth,
-                        format, type, pixels, texImage);
+      ctx->Driver.GetTexSubImage(ctx, xoffset, yoffset, zoffset,
+                                 width, height, depth,
+                                 format, type, pixels, texImage);
 
       /* next cube face */
       pixels = (GLubyte *) pixels + imageStride;
@@ -1723,7 +1719,7 @@ getcompressedteximage_error_check(struct gl_context *ctx,
                                        &ctx->Pack);
 
    /* Do dest buffer bounds checking */
-   if (ctx->Pack.BufferObj) {
+   if (_mesa_is_bufferobj(ctx->Pack.BufferObj)) {
       /* do bounds checking on PBO write */
       if ((GLubyte *) pixels + totalBytes >
           (GLubyte *) ctx->Pack.BufferObj->Size) {
@@ -1748,7 +1744,7 @@ getcompressedteximage_error_check(struct gl_context *ctx,
       }
    }
 
-   if (!ctx->Pack.BufferObj && !pixels) {
+   if (!_mesa_is_bufferobj(ctx->Pack.BufferObj) && !pixels) {
       /* not an error, but do nothing */
       return true;
    }
@@ -1772,7 +1768,7 @@ get_compressed_texture_image(struct gl_context *ctx,
    struct gl_texture_image *texImage;
    unsigned firstFace, numFaces, i, imageStride;
 
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
 
    texImage = select_tex_image(texObj, target, level, zoffset);
    assert(texImage);  /* should have been error checked already */
@@ -1807,9 +1803,6 @@ get_compressed_texture_image(struct gl_context *ctx,
       firstFace = _mesa_tex_target_to_face(target);
       numFaces = 1;
    }
-
-   if (ctx->Pack.BufferObj)
-      ctx->Pack.BufferObj->UsageHistory |= USAGE_PIXEL_PACK_BUFFER;
 
    _mesa_lock_texture(ctx, texObj);
 

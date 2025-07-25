@@ -124,40 +124,6 @@ colormask_per_rt(const struct gl_context *ctx, unsigned num_cb)
 }
 
 /**
- * Decide whether to allow promotion of RGB colormasks (0x7) to RGBA (0xf).
- */
-static bool
-allow_rgb_colormask_promotion(const struct st_context *st,
-                              unsigned num_cb,
-                              bool *need_independent_blend)
-{
-   const struct gl_context *ctx = st->ctx;
-
-   if (num_cb == 1)
-      return true;
-
-   GLbitfield rgb_mask = _mesa_replicate_colormask(0x7, num_cb);
-   GLbitfield full_mask = _mesa_replicate_colormask(0xf, num_cb);
-
-   /* True if all colormasks should be promoted.  If so, we can do so
-    * without needing independent blending.  (If none should be promoted,
-    * we can just skip this optimization as it doesn't do anything.)
-    */
-   bool same = ctx->DrawBuffer->_IsRGB == u_bit_consecutive(0, num_cb) &&
-               (ctx->Color.ColorMask & full_mask) == rgb_mask;
-
-   /* We can support different per-RT promotion decisions if we driver
-    * supports independent blending (but we must actually enable it).
-    */
-   if (st->has_indep_blend_enable && !same) {
-      *need_independent_blend = true;
-      return true;
-   }
-
-   return same;
-}
-
-/**
  * Figure out if blend enables/state are different per rt.
  */
 static GLboolean
@@ -182,13 +148,14 @@ blend_per_rt(const struct st_context *st, unsigned num_cb)
       return GL_TRUE;
    }
 
-   if (ctx->DrawBuffer->_BlendForceAlphaToOne) {
+   if (st->needs_rgb_dst_alpha_override && ctx->DrawBuffer->_RGBBuffers) {
       /* Overriding requires independent blend functions (not just enables),
-       * requiring drivers to expose pipe_caps.indep_blend_func.
+       * require drivers exposing PIPE_CAP_RGB_OVERRIDE_DST_ALPHA_BLEND to
+       * also expose PIPE_CAP_INDEP_BLEND_FUNC.
        */
       assert(st->has_indep_blend_func);
 
-      /* If some of the buffers are RGB or emulated L/I, we may need to override blend
+      /* If some of the buffers are RGB, we may need to override blend
        * factors that reference destination-alpha to constants.  We may
        * need different blend factor overrides per buffer (say one uses
        * a DST_ALPHA factor and another uses INV_DST_ALPHA), so we flip
@@ -234,49 +201,21 @@ st_update_blend( struct st_context *st )
 
    memset(blend, 0, sizeof(*blend));
 
-   blend->max_rt = MAX2(1, num_cb) - 1;
-
-   bool need_independent_blend = num_cb > 1 &&
-      (blend_per_rt(st, num_cb) || colormask_per_rt(ctx, num_cb));
-
-   bool promote_rgb_colormasks =
-      allow_rgb_colormask_promotion(st, num_cb, &need_independent_blend);
-
-   if (need_independent_blend) {
+   if (num_cb > 1 &&
+       (blend_per_rt(st, num_cb) || colormask_per_rt(ctx, num_cb))) {
       num_state = num_cb;
       blend->independent_blend_enable = 1;
    }
 
-   for (i = 0; i < num_state; i++) {
-      unsigned colormask = GET_COLORMASK(ctx->Color.ColorMask, i);
-
-      /* When faking RGB as RGBA and writing every real channel, also enable
-       * writes to the A channel as well.  Some GPUs are able to render more
-       * efficiently if they know whole pixels are being overwritten, whereas
-       * partial writes may require preserving/combining new and old data.
-       */
-      if (promote_rgb_colormasks &&
-          colormask == 0x7 && (ctx->DrawBuffer->_IsRGB & (1 << i)))
-         colormask = 0xf;
-
-      blend->rt[i].colormask = colormask;
-   }
-
-   if (ctx->Color._AdvancedBlendMode != BLEND_NONE) {
-      blend->blend_coherent = ctx->Color.BlendCoherent;
-   }
+   for (i = 0; i < num_state; i++)
+      blend->rt[i].colormask = GET_COLORMASK(ctx->Color.ColorMask, i);
 
    if (ctx->Color.ColorLogicOpEnabled) {
       /* logicop enabled */
       blend->logicop_enable = 1;
       blend->logicop_func = ctx->Color._LogicOp;
    }
-   else if (ctx->Color.BlendEnabled &&
-            ctx->Color._AdvancedBlendMode != BLEND_NONE) {
-      blend->advanced_blend_func = ctx->Color._AdvancedBlendMode;
-   }
-   else if (ctx->Color.BlendEnabled &&
-            ctx->Color._AdvancedBlendMode == BLEND_NONE) {
+   else if (ctx->Color.BlendEnabled && !ctx->Color._AdvancedBlendMode) {
       /* blending enabled */
       for (i = 0, j = 0; i < num_state; i++) {
          if (!(ctx->Color.BlendEnabled & (1 << i)) ||
@@ -284,7 +223,7 @@ st_update_blend( struct st_context *st )
              !blend->rt[i].colormask)
             continue;
 
-         if (ctx->Extensions.ARB_draw_buffers_blend)
+	 if (ctx->Extensions.ARB_draw_buffers_blend)
             j = i;
 
          blend->rt[i].blend_enable = 1;
@@ -323,7 +262,8 @@ st_update_blend( struct st_context *st )
          const struct gl_renderbuffer *rb =
             ctx->DrawBuffer->_ColorDrawBuffers[i];
 
-         if (rb && (ctx->DrawBuffer->_BlendForceAlphaToOne & (1 << i))) {
+         if (st->needs_rgb_dst_alpha_override && rb &&
+             (ctx->DrawBuffer->_RGBBuffers & (1 << i))) {
             struct pipe_rt_blend_state *rt = &blend->rt[i];
             rt->rgb_src_factor = fix_xrgb_alpha(rt->rgb_src_factor);
             rt->rgb_dst_factor = fix_xrgb_alpha(rt->rgb_dst_factor);
@@ -336,8 +276,7 @@ st_update_blend( struct st_context *st )
       /* no blending / logicop */
    }
 
-   if (st->can_dither)
-      blend->dither = ctx->Color.DitherFlag;
+   blend->dither = ctx->Color.DitherFlag;
 
    if (_mesa_is_multisample_enabled(ctx) &&
        !(ctx->DrawBuffer->_IntegerBuffers & 0x1)) {
@@ -346,9 +285,6 @@ st_update_blend( struct st_context *st )
        */
       blend->alpha_to_coverage = ctx->Multisample.SampleAlphaToCoverage;
       blend->alpha_to_one = ctx->Multisample.SampleAlphaToOne;
-      blend->alpha_to_coverage_dither =
-         ctx->Multisample.SampleAlphaToCoverageDitherControl !=
-         GL_ALPHA_TO_COVERAGE_DITHER_DISABLE_NV;
    }
 
    cso_set_blend(st->cso_context, blend);
@@ -357,9 +293,8 @@ st_update_blend( struct st_context *st )
 void
 st_update_blend_color(struct st_context *st)
 {
-   struct pipe_context *pipe = st->pipe;
-   struct pipe_blend_color *bc =
-      (struct pipe_blend_color *)st->ctx->Color.BlendColorUnclamped;
+   struct pipe_blend_color bc;
 
-   pipe->set_blend_color(pipe, bc);
+   COPY_4FV(bc.color, st->ctx->Color.BlendColorUnclamped);
+   cso_set_blend_color(st->cso_context, &bc);
 }

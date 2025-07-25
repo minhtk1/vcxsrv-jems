@@ -28,8 +28,8 @@
 #ifndef P_TILE_H
 #define P_TILE_H
 
-#include "util/compiler.h"
-#include "util/format/u_formats.h"
+#include "pipe/p_compiler.h"
+#include "pipe/p_format.h"
 #include "pipe/p_state.h"
 
 struct pipe_context;
@@ -42,19 +42,18 @@ struct pipe_transfer;
  *
  * \return TRUE if tile is totally clipped, FALSE otherwise
  */
-static inline bool
-u_clip_tile(unsigned x, unsigned y, unsigned *w, unsigned *h,
-            const struct pipe_box *box)
+static inline boolean
+u_clip_tile(uint x, uint y, uint *w, uint *h, const struct pipe_box *box)
 {
    if ((int) x >= box->width)
-      return true;
+      return TRUE;
    if ((int) y >= box->height)
-      return true;
+      return TRUE;
    if ((int) (x + *w) > box->width)
       *w = box->width - x;
    if ((int) (y + *h) > box->height)
       *h = box->height - y;
-   return false;
+   return FALSE;
 }
 
 #ifdef __cplusplus
@@ -64,33 +63,100 @@ extern "C" {
 void
 pipe_get_tile_raw(struct pipe_transfer *pt,
                   const void *src,
-                  unsigned x, unsigned y,
-                  unsigned w, unsigned h,
+                  uint x, uint y, uint w, uint h,
                   void *p, int dst_stride);
 
 void
 pipe_put_tile_raw(struct pipe_transfer *pt,
                   void *dst,
-                  unsigned x, unsigned y,
-                  unsigned w, unsigned h,
+                  uint x, uint y, uint w, uint h,
                   const void *p, int src_stride);
 
 
 void
 pipe_get_tile_rgba(struct pipe_transfer *pt,
                    const void *src,
-                   unsigned x, unsigned y,
-                   unsigned w, unsigned h,
-                   enum pipe_format format,
-                   void *dst);
+                   uint x, uint y, uint w, uint h,
+                   float *p);
+
+void
+pipe_get_tile_rgba_format(struct pipe_transfer *pt,
+                          const void *src,
+                          uint x, uint y, uint w, uint h,
+                          enum pipe_format format,
+                          float *p);
 
 void
 pipe_put_tile_rgba(struct pipe_transfer *pt,
                    void *dst,
-                   unsigned x, unsigned y,
-                   unsigned w, unsigned h,
-                   enum pipe_format format,
-                   const void *src);
+                   uint x, uint y, uint w, uint h,
+                   const float *p);
+
+void
+pipe_put_tile_rgba_format(struct pipe_transfer *pt,
+                          void *dst,
+                          uint x, uint y, uint w, uint h,
+                          enum pipe_format format,
+                          const float *p);
+
+
+void
+pipe_get_tile_z(struct pipe_transfer *pt,
+                const void *src,
+                uint x, uint y, uint w, uint h,
+                uint *z);
+
+void
+pipe_put_tile_z(struct pipe_transfer *pt,
+                void *dst,
+                uint x, uint y, uint w, uint h,
+                const uint *z);
+
+void
+pipe_tile_raw_to_rgba(enum pipe_format format,
+                      const void *src,
+                      uint w, uint h,
+                      float *dst, unsigned dst_stride);
+
+void
+pipe_tile_raw_to_unsigned(enum pipe_format format,
+                          const void *src,
+                          uint w, uint h,
+                          unsigned *dst, unsigned dst_stride);
+
+void
+pipe_tile_raw_to_signed(enum pipe_format format,
+                        void *src,
+                        uint w, uint h,
+                        int *dst, unsigned dst_stride);
+
+void
+pipe_get_tile_ui_format(struct pipe_transfer *pt,
+                        const void *src,
+                        uint x, uint y, uint w, uint h,
+                        enum pipe_format format,
+                        unsigned int *p);
+
+void
+pipe_get_tile_i_format(struct pipe_transfer *pt,
+                       const void *src,
+                       uint x, uint y, uint w, uint h,
+                       enum pipe_format format,
+                       int *p);
+
+void
+pipe_put_tile_ui_format(struct pipe_transfer *pt,
+                        void *dst,
+                        uint x, uint y, uint w, uint h,
+                        enum pipe_format format,
+                        const unsigned *p);
+
+void
+pipe_put_tile_i_format(struct pipe_transfer *pt,
+                       void *dst,
+                       uint x, uint y, uint w, uint h,
+                       enum pipe_format format,
+                       const int *p);
 
 #ifdef __cplusplus
 }

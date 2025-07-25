@@ -68,14 +68,12 @@
 
 
 
-    <function name="GetnPolygonStippleARB"
-              marshal="async" marshal_sync="!_mesa_glthread_has_pack_buffer(ctx)">
+    <function name="GetnPolygonStippleARB">
         <param name="bufSize" type="GLsizei"/>
         <param name="pattern" type="GLubyte *" output="true"/>
     </function>
 
-    <function name="GetnTexImageARB"
-              marshal="async" marshal_sync="!_mesa_glthread_has_pack_buffer(ctx)">
+    <function name="GetnTexImageARB">
         <param name="target" type="GLenum"/>
         <param name="level" type="GLint"/>
         <param name="format" type="GLenum"/>
@@ -84,8 +82,7 @@
         <param name="img" type="GLvoid *" output="true"/>
     </function>
 
-    <function name="ReadnPixelsARB" no_error="true"
-              marshal="async" marshal_sync="!_mesa_glthread_has_pack_buffer(ctx)">
+    <function name="ReadnPixelsARB" no_error="true">
         <param name="x" type="GLint"/>
         <param name="y" type="GLint"/>
         <param name="width" type="GLsizei"/>
@@ -98,7 +95,7 @@
 
 
 <!-- ARB_imaging sized buffer queries -->
-    <function name="GetnColorTableARB" deprecated="3.1" exec="skip">
+    <function name="GetnColorTableARB" deprecated="3.1">
         <param name="target" type="GLenum"/>
         <param name="format" type="GLenum"/>
         <param name="type" type="GLenum"/>
@@ -106,7 +103,7 @@
         <param name="table" type="GLvoid *" output="true"/>
     </function>
 
-    <function name="GetnConvolutionFilterARB" deprecated="3.1" exec="skip">
+    <function name="GetnConvolutionFilterARB" deprecated="3.1">
         <param name="target" type="GLenum"/>
         <param name="format" type="GLenum"/>
         <param name="type" type="GLenum"/>
@@ -114,7 +111,7 @@
         <param name="image" type="GLvoid *" output="true"/>
     </function>
 
-    <function name="GetnSeparableFilterARB" deprecated="3.1" exec="skip">
+    <function name="GetnSeparableFilterARB" deprecated="3.1">
         <param name="target" type="GLenum"/>
         <param name="format" type="GLenum"/>
         <param name="type" type="GLenum"/>
@@ -125,7 +122,7 @@
         <param name="span" type="GLvoid *" output="true"/>
     </function>
 
-    <function name="GetnHistogramARB" deprecated="3.1" exec="skip">
+    <function name="GetnHistogramARB" deprecated="3.1">
         <param name="target" type="GLenum"/>
         <param name="reset" type="GLboolean"/>
         <param name="format" type="GLenum"/>
@@ -134,7 +131,7 @@
         <param name="values" type="GLvoid *" output="true"/>
     </function>
 
-    <function name="GetnMinmaxARB" deprecated="3.1" exec="skip">
+    <function name="GetnMinmaxARB" deprecated="3.1">
         <param name="target" type="GLenum"/>
         <param name="reset" type="GLboolean"/>
         <param name="format" type="GLenum"/>
@@ -145,8 +142,7 @@
 
 
 <!-- OpenGL 1.3 sized buffer queries -->
-    <function name="GetnCompressedTexImageARB"
-              marshal="async" marshal_sync="!_mesa_glthread_has_pack_buffer(ctx)">
+    <function name="GetnCompressedTexImageARB">
         <param name="target" type="GLenum"/>
         <param name="lod" type="GLint"/>
         <param name="bufSize" type="GLsizei"/>

@@ -32,36 +32,31 @@
 #define DRAW_H
 
 #include <stdbool.h>
-#include "util/glheader.h"
+#include "main/glheader.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 struct gl_context;
-struct gl_vertex_array_object;
+
 struct _mesa_prim
 {
-   GLubyte mode;    /**< GL_POINTS, GL_LINES, GL_QUAD_STRIP, etc */
-
-   /**
-    * tnl: If true, line stipple emulation will reset the pattern walker.
-    * vbo: If false and the primitive is a line loop, the first vertex is
-    *      the beginning of the line loop and it won't be drawn.
-    *      Instead, it will be moved to the end.
-    */
-   bool begin;
-
-   /**
-    * tnl: If true and the primitive is a line loop, it will be closed.
-    * vbo: Same as tnl.
-    */
-   bool end;
+   GLuint mode:8;    /**< GL_POINTS, GL_LINES, GL_QUAD_STRIP, etc */
+   GLuint indexed:1;
+   GLuint begin:1;
+   GLuint end:1;
+   GLuint is_indirect:1;
+   GLuint pad:20;
 
    GLuint start;
    GLuint count;
    GLint basevertex;
+   GLuint num_instances;
+   GLuint base_instance;
    GLuint draw_id;
+
+   GLsizeiptr indirect_offset;
 };
 
 /* Would like to call this a "vbo_index_buffer", but this would be
@@ -71,62 +66,91 @@ struct _mesa_prim
 struct _mesa_index_buffer
 {
    GLuint count;
-   uint8_t index_size_shift; /* logbase2(index_size) */
+   unsigned index_size;
    struct gl_buffer_object *obj;
    const void *ptr;
 };
 
 
 void
-_mesa_set_varying_vp_inputs(struct gl_context *ctx, GLbitfield varying_inputs);
+_mesa_initialize_exec_dispatch(const struct gl_context *ctx,
+                               struct _glapi_table *exec);
+
 
 void
-_mesa_set_draw_vao(struct gl_context *ctx, struct gl_vertex_array_object *vao);
+_mesa_draw_indirect(struct gl_context *ctx, GLuint mode,
+                    struct gl_buffer_object *indirect_data,
+                    GLsizeiptr indirect_offset, unsigned draw_count,
+                    unsigned stride,
+                    struct gl_buffer_object *indirect_draw_count_buffer,
+                    GLsizeiptr indirect_draw_count_offset,
+                    const struct _mesa_index_buffer *ib);
 
-void
-_mesa_save_and_set_draw_vao(struct gl_context *ctx,
-                            struct gl_vertex_array_object *vao,
-                            GLbitfield vp_input_filter,
-                            struct gl_vertex_array_object **old_vao,
-                            GLbitfield *old_vp_input_filter);
 
-void
-_mesa_restore_draw_vao(struct gl_context *ctx,
-                       struct gl_vertex_array_object *saved,
-                       GLbitfield saved_vp_input_filter);
+void GLAPIENTRY
+_mesa_DrawArrays(GLenum mode, GLint first, GLsizei count);
 
-void
-_mesa_bitmap(struct gl_context *ctx, GLsizei width, GLsizei height,
-             GLfloat xorig, GLfloat yorig, GLfloat xmove, GLfloat ymove,
-             const GLubyte *bitmap, struct pipe_resource *tex);
 
-static inline unsigned
-_mesa_get_index_size_shift(GLenum type)
-{
-   /* The type is already validated, so use a fast conversion.
-    *
-    * GL_UNSIGNED_BYTE  - GL_UNSIGNED_BYTE = 0
-    * GL_UNSIGNED_SHORT - GL_UNSIGNED_BYTE = 2
-    * GL_UNSIGNED_INT   - GL_UNSIGNED_BYTE = 4
-    *
-    * Divide by 2 to get 0,1,2.
-    */
-   return (type - GL_UNSIGNED_BYTE) >> 1;
-}
+void GLAPIENTRY
+_mesa_DrawArraysInstanced(GLenum mode, GLint first, GLsizei count,
+                          GLsizei primcount);
 
-static inline bool
-_mesa_is_index_type_valid(GLenum type)
-{
-   /* GL_UNSIGNED_BYTE  = 0x1401
-    * GL_UNSIGNED_SHORT = 0x1403
-    * GL_UNSIGNED_INT   = 0x1405
-    *
-    * The trick is that bit 1 and bit 2 mean USHORT and UINT, respectively.
-    * After clearing those two bits (with ~6), we should get UBYTE.
-    * Both bits can't be set, because the enum would be greater than UINT.
-    */
-   return type <= GL_UNSIGNED_INT && (type & ~6) == GL_UNSIGNED_BYTE;
-}
+
+void GLAPIENTRY
+_mesa_DrawElements(GLenum mode, GLsizei count, GLenum type,
+                   const GLvoid *indices);
+
+
+void GLAPIENTRY
+_mesa_DrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count,
+                        GLenum type, const GLvoid *indices);
+
+
+void GLAPIENTRY
+_mesa_DrawElementsBaseVertex(GLenum mode, GLsizei count, GLenum type,
+                             const GLvoid *indices, GLint basevertex);
+
+
+void GLAPIENTRY
+_mesa_DrawRangeElementsBaseVertex(GLenum mode, GLuint start, GLuint end,
+                                  GLsizei count, GLenum type,
+                                  const GLvoid *indices,
+                                  GLint basevertex);
+
+
+void GLAPIENTRY
+_mesa_DrawTransformFeedback(GLenum mode, GLuint name);
+
+
+
+void GLAPIENTRY
+_mesa_MultiDrawArrays(GLenum mode, const GLint *first,
+                      const GLsizei *count, GLsizei primcount);
+
+
+void GLAPIENTRY
+_mesa_MultiDrawElements(GLenum mode, const GLsizei *count, GLenum type,
+                        const GLvoid *const *indices, GLsizei primcount);
+
+
+void GLAPIENTRY
+_mesa_MultiDrawElementsBaseVertex(GLenum mode,
+                                  const GLsizei *count, GLenum type,
+                                  const GLvoid * const * indices, GLsizei primcount,
+                                  const GLint *basevertex);
+
+
+void GLAPIENTRY
+_mesa_MultiModeDrawArraysIBM(const GLenum * mode, const GLint * first,
+                             const GLsizei * count,
+                             GLsizei primcount, GLint modestride);
+
+
+void GLAPIENTRY
+_mesa_MultiModeDrawElementsIBM(const GLenum * mode, const GLsizei * count,
+                               GLenum type, const GLvoid * const * indices,
+                               GLsizei primcount, GLint modestride);
+
 
 #ifdef __cplusplus
 } // extern "C"

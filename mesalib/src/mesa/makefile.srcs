@@ -13,7 +13,7 @@ builddir=.
 top_srcdir=../..
 top_builddir=../..
 
-PYTHON_GEN = $(PYTHON3)
+PYTHON_GEN = python
 
 main/get_hash.h: ../mapi/glapi/gen/gl_and_es_API.xml main/get_hash_params.py \
                  main/get_hash_generator.py
@@ -39,15 +39,18 @@ main/format_unpack.c: main/format_unpack.py main/formats.csv	\
 
 main/formats.c: main/format_info.h
 
-YACC_GEN = c:/winflexbison/win_bison.exe -d -v
-LEX_GEN = c:/winflexbison/win_flex.exe
+YACC_GEN = bison.exe -v
+LEX_GEN = flex.exe
 
 program/lex.yy.c: program/program_lexer.l
 	$(LEX_GEN) -o $@ $(srcdir)/program/program_lexer.l
 
-program/program_parse.tab.c program/program_parse.tab.h: program/program_parse.y
-	$(YACC_GEN) -o program/program_parse.tab.c -p "_mesa_program_" $(srcdir)/program/program_parse.y
+program/program_parse.tab.c: program/program_parse.y
+	$(YACC_GEN) -o $@ -p "_mesa_program_" --defines=$(builddir)/program/program_parse.tab.h $(srcdir)/program/program_parse.y
+program/program_parse.tab.h: program/program_parse.y
+	$(YACC_GEN) -o $@ -p "_mesa_program_" --defines=$(builddir)/program/program_parse.tab.h $(srcdir)/program/program_parse.y
 
 matypes.h: gen_matypes
 	./gen_matypes > $@
+
 

@@ -45,16 +45,25 @@ parse_position(const char *str)
    return LAYER_POSITION_TOP_LEFT;
 }
 
-static const char *
+static FILE *
 parse_output_file(const char *str)
 {
-   return strdup(str);
+   return fopen(str, "w+");
 }
 
-static const char *
+static int
 parse_control(const char *str)
 {
-   return strdup(str);
+   int ret = os_socket_listen_abstract(str, 1);
+   if (ret < 0) {
+      fprintf(stderr, "ERROR: Couldn't create socket pipe at '%s'\n", str);
+      fprintf(stderr, "ERROR: '%s'\n", strerror(errno));
+      return ret;
+   }
+
+   os_socket_block(ret, false);
+
+   return ret;
 }
 
 static uint32_t
@@ -156,11 +165,9 @@ parse_overlay_env(struct overlay_params *params,
    /* Visible by default */
    params->enabled[OVERLAY_PARAM_ENABLED_fps] = true;
    params->enabled[OVERLAY_PARAM_ENABLED_frame_timing] = true;
-   params->enabled[OVERLAY_PARAM_ENABLED_device] = true;
-   params->enabled[OVERLAY_PARAM_ENABLED_format] = true;
    params->fps_sampling_period = 500000; /* 500ms */
    params->width = params->height = 300;
-   params->control = NULL;
+   params->control = -1;
 
    if (!env)
       return;

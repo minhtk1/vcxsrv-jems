@@ -28,19 +28,16 @@
 #include "context.h"
 #include "debug_output.h"
 #include "enums.h"
-
+#include "imports.h"
 #include "hash.h"
 #include "mtypes.h"
 #include "version.h"
 #include "util/hash_table.h"
 #include "util/list.h"
-#include "util/log.h"
-#include "util/u_memory.h"
-#include "api_exec_decl.h"
 
-#include "pipe/p_context.h"
 
-static GLuint PrevDynamicID = 0;
+static simple_mtx_t DynamicIDMutex = _SIMPLE_MTX_INITIALIZER_NP;
+static GLuint NextDynamicID = 1;
 
 
 /**
@@ -196,8 +193,10 @@ void
 _mesa_debug_get_id(GLuint *id)
 {
    if (!(*id)) {
-      /* Don't update *id if we raced with some other thread. */
-      p_atomic_cmpxchg(id, 0, p_atomic_inc_return(&PrevDynamicID));
+      simple_mtx_lock(&DynamicIDMutex);
+      if (!(*id))
+         *id = NextDynamicID++;
+      simple_mtx_unlock(&DynamicIDMutex);
    }
 }
 
@@ -683,83 +682,6 @@ debug_pop_group(struct gl_debug_state *debug)
 
 
 /**
- * Installed as util_debug_callback when GL_DEBUG_OUTPUT is enabled.
- */
-static void
-_debug_message(void *data,
-               unsigned *id,
-               enum util_debug_type ptype,
-               const char *fmt,
-               va_list args)
-{
-   struct gl_context *ctx = data;
-   enum mesa_debug_source source;
-   enum mesa_debug_type type;
-   enum mesa_debug_severity severity;
-
-   switch (ptype) {
-   case UTIL_DEBUG_TYPE_OUT_OF_MEMORY:
-      source = MESA_DEBUG_SOURCE_API;
-      type = MESA_DEBUG_TYPE_ERROR;
-      severity = MESA_DEBUG_SEVERITY_MEDIUM;
-      break;
-   case UTIL_DEBUG_TYPE_ERROR:
-      source = MESA_DEBUG_SOURCE_API;
-      type = MESA_DEBUG_TYPE_ERROR;
-      severity = MESA_DEBUG_SEVERITY_MEDIUM;
-      break;
-   case UTIL_DEBUG_TYPE_SHADER_INFO:
-      source = MESA_DEBUG_SOURCE_SHADER_COMPILER;
-      type = MESA_DEBUG_TYPE_OTHER;
-      severity = MESA_DEBUG_SEVERITY_NOTIFICATION;
-      break;
-   case UTIL_DEBUG_TYPE_PERF_INFO:
-      source = MESA_DEBUG_SOURCE_API;
-      type = MESA_DEBUG_TYPE_PERFORMANCE;
-      severity = MESA_DEBUG_SEVERITY_NOTIFICATION;
-      break;
-   case UTIL_DEBUG_TYPE_INFO:
-      source = MESA_DEBUG_SOURCE_API;
-      type = MESA_DEBUG_TYPE_OTHER;
-      severity = MESA_DEBUG_SEVERITY_NOTIFICATION;
-      break;
-   case UTIL_DEBUG_TYPE_FALLBACK:
-      source = MESA_DEBUG_SOURCE_API;
-      type = MESA_DEBUG_TYPE_PERFORMANCE;
-      severity = MESA_DEBUG_SEVERITY_NOTIFICATION;
-      break;
-   case UTIL_DEBUG_TYPE_CONFORMANCE:
-      source = MESA_DEBUG_SOURCE_API;
-      type = MESA_DEBUG_TYPE_OTHER;
-      severity = MESA_DEBUG_SEVERITY_NOTIFICATION;
-      break;
-   default:
-      unreachable("invalid debug type");
-   }
-   _mesa_gl_vdebugf(ctx, id, source, type, severity, fmt, args);
-}
-
-void
-_mesa_update_debug_callback(struct gl_context *ctx)
-{
-   struct pipe_context *pipe = ctx->pipe;
-
-   if (!pipe->set_debug_callback)
-      return;
-
-   if (_mesa_get_debug_state_int(ctx, GL_DEBUG_OUTPUT)) {
-      struct util_debug_callback cb;
-      memset(&cb, 0, sizeof(cb));
-      cb.async = !_mesa_get_debug_state_int(ctx, GL_DEBUG_OUTPUT_SYNCHRONOUS);
-      cb.debug_message = _debug_message;
-      cb.data = ctx;
-      pipe->set_debug_callback(pipe, &cb);
-   } else {
-      pipe->set_debug_callback(pipe, NULL);
-   }
-}
-
-/**
  * Lock and return debug state for the context.  The debug state will be
  * allocated and initialized upon the first call.  When NULL is returned, the
  * debug state is not locked.
@@ -1090,8 +1012,8 @@ _mesa_DebugMessageInsert(GLenum source, GLenum type, GLuint id,
                  gl_enum_to_debug_severity(severity),
                  length, buf);
 
-   if (type == GL_DEBUG_TYPE_MARKER && ctx->has_string_marker) {
-      ctx->pipe->emit_string_marker(ctx->pipe, buf, length);
+   if (type == GL_DEBUG_TYPE_MARKER && ctx->Driver.EmitStringMarker) {
+      ctx->Driver.EmitStringMarker(ctx, buf, length);
    }
 }
 
@@ -1358,7 +1280,7 @@ _mesa_init_debug_output(struct gl_context *ctx)
 
 
 void
-_mesa_destroy_debug_output(struct gl_context *ctx)
+_mesa_free_errors_data(struct gl_context *ctx)
 {
    if (ctx->Debug) {
       debug_destroy(ctx->Debug);
@@ -1377,7 +1299,7 @@ _mesa_StringMarkerGREMEDY(GLsizei len, const GLvoid *string)
       /* if length not specified, string will be null terminated: */
       if (len <= 0)
          len = strlen(string);
-      ctx->pipe->emit_string_marker(ctx->pipe, string, len);
+      ctx->Driver.EmitStringMarker(ctx, string, len);
    } else {
       _mesa_error(ctx, GL_INVALID_OPERATION, "StringMarkerGREMEDY");
    }

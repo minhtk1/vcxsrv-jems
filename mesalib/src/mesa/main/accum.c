@@ -22,18 +22,18 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include "util/glheader.h"
+#include "glheader.h"
 #include "accum.h"
 #include "condrender.h"
 #include "context.h"
 #include "format_unpack.h"
 #include "format_pack.h"
 #include "framebuffer.h"
-#include "renderbuffer.h"
+#include "imports.h"
 #include "macros.h"
 #include "state.h"
 #include "mtypes.h"
-#include "api_exec_decl.h"
+
 
 void GLAPIENTRY
 _mesa_ClearAccum( GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha )
@@ -49,7 +49,6 @@ _mesa_ClearAccum( GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha )
    if (TEST_EQ_4V(tmp, ctx->Accum.ClearColor))
       return;
 
-   ctx->PopAttribState |= GL_ACCUM_BUFFER_BIT;
    COPY_4FV( ctx->Accum.ClearColor, tmp );
 }
 
@@ -82,9 +81,9 @@ _mesa_clear_accum_buffer(struct gl_context *ctx)
    width = ctx->DrawBuffer->_Xmax - ctx->DrawBuffer->_Xmin;
    height = ctx->DrawBuffer->_Ymax - ctx->DrawBuffer->_Ymin;
 
-   _mesa_map_renderbuffer(ctx, accRb, x, y, width, height,
-                      GL_MAP_WRITE_BIT, &accMap, &accRowStride,
-                      ctx->DrawBuffer->FlipY);
+   ctx->Driver.MapRenderbuffer(ctx, accRb, x, y, width, height,
+                               GL_MAP_WRITE_BIT, &accMap, &accRowStride,
+                               ctx->DrawBuffer->FlipY);
 
    if (!accMap) {
       _mesa_error(ctx, GL_OUT_OF_MEMORY, "glAccum");
@@ -100,7 +99,7 @@ _mesa_clear_accum_buffer(struct gl_context *ctx)
 
       for (j = 0; j < height; j++) {
          GLshort *row = (GLshort *) accMap;
-
+         
          for (i = 0; i < width; i++) {
             row[i * 4 + 0] = clearR;
             row[i * 4 + 1] = clearG;
@@ -115,7 +114,7 @@ _mesa_clear_accum_buffer(struct gl_context *ctx)
       _mesa_warning(ctx, "unexpected accum buffer type");
    }
 
-   _mesa_unmap_renderbuffer(ctx, accRb);
+   ctx->Driver.UnmapRenderbuffer(ctx, accRb);
 }
 
 
@@ -137,10 +136,10 @@ accum_scale_or_bias(struct gl_context *ctx, GLfloat value,
 
    assert(accRb);
 
-   _mesa_map_renderbuffer(ctx, accRb, xpos, ypos, width, height,
-                      GL_MAP_READ_BIT | GL_MAP_WRITE_BIT,
-                      &accMap, &accRowStride,
-                      ctx->DrawBuffer->FlipY);
+   ctx->Driver.MapRenderbuffer(ctx, accRb, xpos, ypos, width, height,
+                               GL_MAP_READ_BIT | GL_MAP_WRITE_BIT,
+                               &accMap, &accRowStride,
+                               ctx->DrawBuffer->FlipY);
 
    if (!accMap) {
       _mesa_error(ctx, GL_OUT_OF_MEMORY, "glAccum");
@@ -174,7 +173,7 @@ accum_scale_or_bias(struct gl_context *ctx, GLfloat value,
       /* other types someday? */
    }
 
-   _mesa_unmap_renderbuffer(ctx, accRb);
+   ctx->Driver.UnmapRenderbuffer(ctx, accRb);
 }
 
 
@@ -208,21 +207,21 @@ accum_or_load(struct gl_context *ctx, GLfloat value,
       mappingFlags |= GL_MAP_READ_BIT;
 
    /* Map accum buffer */
-   _mesa_map_renderbuffer(ctx, accRb, xpos, ypos, width, height,
-                      mappingFlags, &accMap, &accRowStride,
-                      ctx->DrawBuffer->FlipY);
+   ctx->Driver.MapRenderbuffer(ctx, accRb, xpos, ypos, width, height,
+                               mappingFlags, &accMap, &accRowStride,
+                               ctx->DrawBuffer->FlipY);
    if (!accMap) {
       _mesa_error(ctx, GL_OUT_OF_MEMORY, "glAccum");
       return;
    }
 
    /* Map color buffer */
-   _mesa_map_renderbuffer(ctx, colorRb, xpos, ypos, width, height,
-                      GL_MAP_READ_BIT,
-                      &colorMap, &colorRowStride,
-                      ctx->DrawBuffer->FlipY);
+   ctx->Driver.MapRenderbuffer(ctx, colorRb, xpos, ypos, width, height,
+                               GL_MAP_READ_BIT,
+                               &colorMap, &colorRowStride,
+                               ctx->DrawBuffer->FlipY);
    if (!colorMap) {
-      _mesa_unmap_renderbuffer(ctx, accRb);
+      ctx->Driver.UnmapRenderbuffer(ctx, accRb);
       _mesa_error(ctx, GL_OUT_OF_MEMORY, "glAccum");
       return;
    }
@@ -272,8 +271,8 @@ accum_or_load(struct gl_context *ctx, GLfloat value,
       /* other types someday? */
    }
 
-   _mesa_unmap_renderbuffer(ctx, accRb);
-   _mesa_unmap_renderbuffer(ctx, colorRb);
+   ctx->Driver.UnmapRenderbuffer(ctx, accRb);
+   ctx->Driver.UnmapRenderbuffer(ctx, colorRb);
 }
 
 
@@ -291,7 +290,7 @@ accum_return(struct gl_context *ctx, GLfloat value,
    GLuint buffer;
 
    /* Map accum buffer */
-   _mesa_map_renderbuffer(ctx, accRb, xpos, ypos, width, height,
+   ctx->Driver.MapRenderbuffer(ctx, accRb, xpos, ypos, width, height,
                                GL_MAP_READ_BIT,
                                &accMap, &accRowStride, fb->FlipY);
    if (!accMap) {
@@ -312,7 +311,7 @@ accum_return(struct gl_context *ctx, GLfloat value,
          mappingFlags |= GL_MAP_READ_BIT;
 
       /* Map color buffer */
-      _mesa_map_renderbuffer(ctx, colorRb, xpos, ypos, width, height,
+      ctx->Driver.MapRenderbuffer(ctx, colorRb, xpos, ypos, width, height,
                                   mappingFlags, &colorMap, &colorRowStride,
                                   fb->FlipY);
       if (!colorMap) {
@@ -380,10 +379,10 @@ accum_return(struct gl_context *ctx, GLfloat value,
          /* other types someday? */
       }
 
-      _mesa_unmap_renderbuffer(ctx, colorRb);
+      ctx->Driver.UnmapRenderbuffer(ctx, colorRb);
    }
 
-   _mesa_unmap_renderbuffer(ctx, accRb);
+   ctx->Driver.UnmapRenderbuffer(ctx, accRb);
 }
 
 
@@ -442,7 +441,7 @@ accum(struct gl_context *ctx, GLenum op, GLfloat value)
 }
 
 
-void
+void 
 _mesa_init_accum( struct gl_context *ctx )
 {
    /* Accumulate buffer group */
@@ -454,7 +453,7 @@ void GLAPIENTRY
 _mesa_Accum( GLenum op, GLfloat value )
 {
    GET_CURRENT_CONTEXT(ctx);
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
 
    switch (op) {
    case GL_ADD:

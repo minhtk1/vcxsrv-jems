@@ -40,40 +40,67 @@
  * calculations and load/store using the TMU general memory access path.
  */
 
-static const unsigned bits_8[4] = {8, 8, 8, 8};
-static const unsigned bits_16[4] = {16, 16, 16, 16};
-static const unsigned bits_1010102[4] = {10, 10, 10, 2};
-
 bool
-v3d_gl_format_is_return_32(enum pipe_format format)
+v3d_gl_format_is_return_32(GLenum format)
 {
-        /* We can get a NONE format in Vulkan because we support the
-         * shaderStorageImageReadWithoutFormat feature. We consider these to
-         * always use 32-bit precision.
-         */
-        if (format == PIPE_FORMAT_NONE)
+        switch (format) {
+        case GL_R8:
+        case GL_R8_SNORM:
+        case GL_R8UI:
+        case GL_R8I:
+        case GL_RG8:
+        case GL_RG8_SNORM:
+        case GL_RG8UI:
+        case GL_RG8I:
+        case GL_RGBA8:
+        case GL_RGBA8_SNORM:
+        case GL_RGBA8UI:
+        case GL_RGBA8I:
+        case GL_R11F_G11F_B10F:
+        case GL_RGB10_A2:
+        case GL_RGB10_A2UI:
+        case GL_R16F:
+        case GL_R16UI:
+        case GL_R16I:
+        case GL_RG16F:
+        case GL_RG16UI:
+        case GL_RG16I:
+        case GL_RGBA16F:
+        case GL_RGBA16UI:
+        case GL_RGBA16I:
+                return false;
+        case GL_R16:
+        case GL_R16_SNORM:
+        case GL_RG16:
+        case GL_RG16_SNORM:
+        case GL_RGBA16:
+        case GL_RGBA16_SNORM:
+        case GL_R32F:
+        case GL_R32UI:
+        case GL_R32I:
+        case GL_RG32F:
+        case GL_RG32UI:
+        case GL_RG32I:
+        case GL_RGBA32F:
+        case GL_RGBA32UI:
+        case GL_RGBA32I:
                 return true;
-
-        const struct util_format_description *desc =
-                util_format_description(format);
-        const struct util_format_channel_description *chan = &desc->channel[0];
-
-        return chan->size > 16 || (chan->size == 16 && chan->normalized);
+        default:
+                unreachable("Invalid image format");
+        }
 }
 
 /* Packs a 32-bit vector of colors in the range [0, (1 << bits[i]) - 1] to a
  * 32-bit SSA value, with as many channels as necessary to store all the bits
- *
- * This is the generic helper, using all common nir operations.
  */
-static nir_def *
-pack_bits(nir_builder *b, nir_def *color, const unsigned *bits,
+static nir_ssa_def *
+pack_bits(nir_builder *b, nir_ssa_def *color, const unsigned *bits,
           int num_components, bool mask)
 {
-        nir_def *results[4];
+        nir_ssa_def *results[4];
         int offset = 0;
         for (int i = 0; i < num_components; i++) {
-                nir_def *chan = nir_channel(b, color, i);
+                nir_ssa_def *chan = nir_channel(b, color, i);
 
                 /* Channels being stored shouldn't cross a 32-bit boundary. */
                 assert((offset & ~31) == ((offset + bits[i] - 1) & ~31));
@@ -97,361 +124,267 @@ pack_bits(nir_builder *b, nir_def *color, const unsigned *bits,
         return nir_vec(b, results, DIV_ROUND_UP(offset, 32));
 }
 
-/* Utility wrapper as half_2x16_split is mapped to vfpack, and sometimes it is
- * just easier to read vfpack on the code, specially while using the PRM as
- * reference
- */
-static inline nir_def *
-nir_vfpack(nir_builder *b, nir_def *p1, nir_def *p2)
+static nir_ssa_def *
+pack_unorm(nir_builder *b, nir_ssa_def *color, const unsigned *bits,
+           int num_components)
 {
-        return nir_pack_half_2x16_split(b, p1, p2);
+        color = nir_channels(b, color, (1 << num_components) - 1);
+        color = nir_format_float_to_unorm(b, color, bits);
+        return pack_bits(b, color, bits, color->num_components, false);
 }
 
-static inline nir_def *
-pack_11f11f10f(nir_builder *b, nir_def *color)
+static nir_ssa_def *
+pack_snorm(nir_builder *b, nir_ssa_def *color, const unsigned *bits,
+           int num_components)
 {
-        nir_def *p1 = nir_vfpack(b, nir_channel(b, color, 0),
-                                     nir_channel(b, color, 1));
-        nir_def *undef = nir_undef(b, 1, color->bit_size);
-        nir_def *p2 = nir_vfpack(b, nir_channel(b, color, 2), undef);
-
-        return nir_pack_32_to_r11g11b10_v3d(b, p1, p2);
+        color = nir_channels(b, color, (1 << num_components) - 1);
+        color = nir_format_float_to_snorm(b, color, bits);
+        return pack_bits(b, color, bits, color->num_components, true);
 }
 
-static inline nir_def *
-pack_r10g10b10a2_uint(nir_builder *b, nir_def *color)
+static nir_ssa_def *
+pack_uint(nir_builder *b, nir_ssa_def *color, const unsigned *bits,
+          int num_components)
 {
-        nir_def *p1 = nir_pack_2x32_to_2x16_v3d(b, nir_channel(b, color, 0),
-                                                nir_channel(b, color, 1));
-        nir_def *p2 = nir_pack_2x32_to_2x16_v3d(b, nir_channel(b, color, 2),
-                                                nir_channel(b, color, 3));
-
-        return nir_pack_uint_32_to_r10g10b10a2_v3d(b, p1, p2);
+        color = nir_channels(b, color, (1 << num_components) - 1);
+        color = nir_format_clamp_uint(b, color, bits);
+        return pack_bits(b, color, bits, num_components, false);
 }
 
-static inline nir_def *
-pack_r10g10b10a2_unorm(nir_builder *b, nir_def *color)
+static nir_ssa_def *
+pack_sint(nir_builder *b, nir_ssa_def *color, const unsigned *bits,
+          int num_components)
 {
-        nir_def *p1 = nir_vfpack(b, nir_channel(b, color, 0),
-                                     nir_channel(b, color, 1));
-        p1 = nir_pack_2x16_to_unorm_2x10_v3d(b, p1);
-
-        nir_def *p2 = nir_vfpack(b, nir_channel(b, color, 2),
-                                     nir_channel(b, color, 3));
-        p2 = nir_pack_2x16_to_unorm_10_2_v3d(b, p2);
-
-        return nir_pack_uint_32_to_r10g10b10a2_v3d(b, p1, p2);
+        color = nir_channels(b, color, (1 << num_components) - 1);
+        color = nir_format_clamp_sint(b, color, bits);
+        return pack_bits(b, color, bits, num_components, true);
 }
 
-enum hw_conversion {
-        NONE,
-        TO_SNORM,
-        TO_UNORM
-};
-
-static inline nir_def *
-pack_8bit(nir_builder *b, nir_def *color,
-                        unsigned num_components,
-                        enum hw_conversion conversion)
+static nir_ssa_def *
+pack_half(nir_builder *b, nir_ssa_def *color, const unsigned *bits,
+          int num_components)
 {
-        /* Note that usually you should not use this method (that relies on
-         * custom packing) for 1 component if we are not doing any
-         * conversion. But we support also that case, and let the caller
-         * decide which method to use.
-         */
-        nir_def *p1;
-        nir_def *p2;
-
-        if (conversion == NONE) {
-                p1 = nir_pack_2x32_to_2x16_v3d(b, nir_channel(b, color, 0),
-                                               nir_channel(b, color, num_components == 1 ? 0 : 1));
-        } else {
-                p1 = nir_vfpack(b, nir_channel(b, color, 0),
-                                nir_channel(b, color, num_components == 1 ? 0 : 1));
-                p1 = (conversion == TO_UNORM) ?
-                   nir_pack_2x16_to_unorm_2x8_v3d(b, p1) :
-                   nir_pack_2x16_to_snorm_2x8_v3d(b, p1);
-        }
-        if (num_components == 4) {
-                if (conversion == NONE) {
-                        p2 = nir_pack_2x32_to_2x16_v3d(b, nir_channel(b, color, 2),
-                                                       nir_channel(b, color, 3));
-                } else {
-                        p2 = nir_vfpack(b, nir_channel(b, color, 2),
-                                        nir_channel(b, color, 3));
-                        p2 = (conversion == TO_UNORM) ?
-                           nir_pack_2x16_to_unorm_2x8_v3d(b, p2) :
-                           nir_pack_2x16_to_snorm_2x8_v3d(b, p2);
-                }
-        } else {
-                /* Using an undef here would be more correct. But for this
-                 * case we are getting worse shader-db values with some CTS
-                 * tests, so we just reuse the first packing.
-                 */
-                p2 = p1;
-        }
-
-        return nir_pack_4x16_to_4x8_v3d(b, p1, p2);
+        color = nir_channels(b, color, (1 << num_components) - 1);
+        color = nir_format_float_to_half(b, color);
+        return pack_bits(b, color, bits, color->num_components, false);
 }
 
-static inline nir_def *
-pack_16bit(nir_builder *b, nir_def *color,
-                         unsigned num_components,
-                         enum hw_conversion conversion)
+static void
+v3d_nir_lower_image_store(nir_builder *b, nir_intrinsic_instr *instr)
 {
-        nir_def *results[2] = {0};
-        nir_def *channels[4] = {0};
-
-        for (unsigned i = 0; i < num_components; i++) {
-                channels[i] = nir_channel(b, color, i);
-                switch (conversion) {
-                case TO_SNORM:
-                        channels[i] = nir_f2snorm_16_v3d(b, channels[i]);
-                        break;
-                case TO_UNORM:
-                        channels[i] = nir_f2unorm_16_v3d(b, channels[i]);
-                        break;
-                default:
-                        /* Note that usually you should not use this method
-                         * (that relies on custom packing) if we are not doing
-                         * any conversion. But we support also that case, and
-                         * let the caller decide which method to use.
-                         */
-                        break;
-                }
-        }
-
-        switch (num_components) {
-        case 1:
-                results[0] = channels[0];
-                break;
-        case 4:
-                results[1] = nir_pack_2x32_to_2x16_v3d(b, channels[2], channels[3]);
-                FALLTHROUGH;
-        case 2:
-                results[0] = nir_pack_2x32_to_2x16_v3d(b, channels[0], channels[1]);
-                break;
-        default:
-                unreachable("Invalid number of components");
-        }
-
-        return nir_vec(b, results, DIV_ROUND_UP(num_components, 2));
-}
-
-static inline nir_def *
-pack_xbit(nir_builder *b, nir_def *color,
-          unsigned num_components,
-          const struct util_format_channel_description *r_chan)
-{
-        bool pack_mask = (r_chan->type == UTIL_FORMAT_TYPE_SIGNED);
-        enum hw_conversion conversion = NONE;
-        if (r_chan->normalized) {
-                conversion =
-                        (r_chan->type == UTIL_FORMAT_TYPE_UNSIGNED) ? TO_UNORM : TO_SNORM;
-        }
-
-        switch (r_chan->size) {
-        case 8:
-                if (conversion == NONE && num_components < 2)
-                        return pack_bits(b, color, bits_8, num_components, pack_mask);
-                else
-                        return pack_8bit(b, color, num_components, conversion);
-                break;
-        case 16:
-                /* pack_mask implies that the generic packing method would
-                 * need to include extra operations to handle negative values,
-                 * so in that case, even without a conversion, it is better to
-                 * use the packing using custom hw operations.
-                 */
-                if (conversion == NONE && !pack_mask)
-                        return pack_bits(b, color, bits_16, num_components, pack_mask);
-                else
-                        return pack_16bit(b, color, num_components, conversion);
-                break;
-        default:
-                unreachable("unrecognized bits");
-        }
-}
-
-static bool
-v3d42_nir_lower_image_store(nir_builder *b, nir_intrinsic_instr *instr)
-{
-        enum pipe_format format = nir_intrinsic_format(instr);
-        assert(format != PIPE_FORMAT_NONE);
-        const struct util_format_description *desc =
-                util_format_description(format);
-        const struct util_format_channel_description *r_chan = &desc->channel[0];
-        unsigned num_components = util_format_get_nr_components(format);
+        nir_variable *var = nir_intrinsic_get_var(instr, 0);
+        GLenum format = var->data.image.format;
+        static const unsigned bits_8[4] = {8, 8, 8, 8};
+        static const unsigned bits_16[4] = {16, 16, 16, 16};
+        static const unsigned bits_1010102[4] = {10, 10, 10, 2};
 
         b->cursor = nir_before_instr(&instr->instr);
 
-        nir_def *color = nir_trim_vector(b,
-                                             instr->src[3].ssa,
-                                             num_components);
-        nir_def *formatted = NULL;
-
-        if (format == PIPE_FORMAT_R11G11B10_FLOAT) {
-                formatted = nir_format_pack_11f11f10f(b, color);
-        } else if (format == PIPE_FORMAT_R9G9B9E5_FLOAT) {
-                formatted = nir_format_pack_r9g9b9e5(b, color);
-        } else if (r_chan->size == 32) {
-                /* For 32-bit formats, we just have to move the vector
-                 * across (possibly reducing the number of channels).
+        nir_ssa_def *unformatted = nir_ssa_for_src(b, instr->src[3], 4);
+        nir_ssa_def *formatted = NULL;
+        switch (format) {
+        case GL_RGBA32F:
+        case GL_RGBA32UI:
+        case GL_RGBA32I:
+                /* For 4-component 32-bit components, there's no packing to be
+                 * done.
                  */
-                formatted = color;
-        } else {
-                const unsigned *bits;
+                return;
 
-                switch (r_chan->size) {
-                case 8:
-                        bits = bits_8;
-                        break;
-                case 10:
-                        bits = bits_1010102;
-                        break;
-                case 16:
-                        bits = bits_16;
-                        break;
-                default:
-                        unreachable("unrecognized bits");
-                }
+        case GL_R32F:
+        case GL_R32UI:
+        case GL_R32I:
+                /* For other 32-bit components, just reduce the size of
+                 * the input vector.
+                 */
+                formatted = nir_channels(b, unformatted, 1);
+                break;
+        case GL_RG32F:
+        case GL_RG32UI:
+        case GL_RG32I:
+                formatted = nir_channels(b, unformatted, 2);
+                break;
 
-                bool pack_mask = false;
-                if (r_chan->pure_integer &&
-                    r_chan->type == UTIL_FORMAT_TYPE_SIGNED) {
-                        /* We don't need to do any conversion or clamping in this case */
-                        formatted = color;
-                        pack_mask = true;
-                } else if (r_chan->pure_integer &&
-                           r_chan->type == UTIL_FORMAT_TYPE_UNSIGNED) {
-                        /* We don't need to do any conversion or clamping in this case */
-                        formatted = color;
-                } else if (r_chan->normalized &&
-                           r_chan->type == UTIL_FORMAT_TYPE_SIGNED) {
-                        formatted = nir_format_float_to_snorm(b, color, bits);
-                        pack_mask = true;
-                } else if (r_chan->normalized &&
-                           r_chan->type == UTIL_FORMAT_TYPE_UNSIGNED) {
-                        formatted = nir_format_float_to_unorm(b, color, bits);
-                } else {
-                        assert(r_chan->size == 16);
-                        assert(r_chan->type == UTIL_FORMAT_TYPE_FLOAT);
-                        formatted = nir_format_float_to_half(b, color);
-                }
+        case GL_R8:
+                formatted = pack_unorm(b, unformatted, bits_8, 1);
+                break;
+        case GL_RG8:
+                formatted = pack_unorm(b, unformatted, bits_8, 2);
+                break;
+        case GL_RGBA8:
+                formatted = pack_unorm(b, unformatted, bits_8, 4);
+                break;
 
-                formatted = pack_bits(b, formatted, bits, num_components,
-                                      pack_mask);
+        case GL_R8_SNORM:
+                formatted = pack_snorm(b, unformatted, bits_8, 1);
+                break;
+        case GL_RG8_SNORM:
+                formatted = pack_snorm(b, unformatted, bits_8, 2);
+                break;
+        case GL_RGBA8_SNORM:
+                formatted = pack_snorm(b, unformatted, bits_8, 4);
+                break;
+
+        case GL_R16:
+                formatted = pack_unorm(b, unformatted, bits_16, 1);
+                break;
+        case GL_RG16:
+                formatted = pack_unorm(b, unformatted, bits_16, 2);
+                break;
+        case GL_RGBA16:
+                formatted = pack_unorm(b, unformatted, bits_16, 4);
+                break;
+
+        case GL_R16_SNORM:
+                formatted = pack_snorm(b, unformatted, bits_16, 1);
+                break;
+        case GL_RG16_SNORM:
+                formatted = pack_snorm(b, unformatted, bits_16, 2);
+                break;
+        case GL_RGBA16_SNORM:
+                formatted = pack_snorm(b, unformatted, bits_16, 4);
+                break;
+
+        case GL_R16F:
+                formatted = pack_half(b, unformatted, bits_16, 1);
+                break;
+        case GL_RG16F:
+                formatted = pack_half(b, unformatted, bits_16, 2);
+                break;
+        case GL_RGBA16F:
+                formatted = pack_half(b, unformatted, bits_16, 4);
+                break;
+
+        case GL_R8UI:
+                formatted = pack_uint(b, unformatted, bits_8, 1);
+                break;
+        case GL_R8I:
+                formatted = pack_sint(b, unformatted, bits_8, 1);
+                break;
+        case GL_RG8UI:
+                formatted = pack_uint(b, unformatted, bits_8, 2);
+                break;
+        case GL_RG8I:
+                formatted = pack_sint(b, unformatted, bits_8, 2);
+                break;
+        case GL_RGBA8UI:
+                formatted = pack_uint(b, unformatted, bits_8, 4);
+                break;
+        case GL_RGBA8I:
+                formatted = pack_sint(b, unformatted, bits_8, 4);
+                break;
+
+        case GL_R16UI:
+                formatted = pack_uint(b, unformatted, bits_16, 1);
+                break;
+        case GL_R16I:
+                formatted = pack_sint(b, unformatted, bits_16, 1);
+                break;
+        case GL_RG16UI:
+                formatted = pack_uint(b, unformatted, bits_16, 2);
+                break;
+        case GL_RG16I:
+                formatted = pack_sint(b, unformatted, bits_16, 2);
+                break;
+        case GL_RGBA16UI:
+                formatted = pack_uint(b, unformatted, bits_16, 4);
+                break;
+        case GL_RGBA16I:
+                formatted = pack_sint(b, unformatted, bits_16, 4);
+                break;
+
+        case GL_R11F_G11F_B10F:
+                formatted = nir_format_pack_11f11f10f(b, unformatted);
+                break;
+        case GL_RGB9_E5:
+                formatted = nir_format_pack_r9g9b9e5(b, unformatted);
+                break;
+
+        case GL_RGB10_A2:
+                formatted = pack_unorm(b, unformatted, bits_1010102, 4);
+                break;
+
+        case GL_RGB10_A2UI:
+                formatted = pack_uint(b, unformatted, bits_1010102, 4);
+                break;
+
+        default:
+                unreachable("bad format");
         }
 
-        nir_src_rewrite(&instr->src[3], formatted);
+        nir_instr_rewrite_src(&instr->instr, &instr->src[3],
+                              nir_src_for_ssa(formatted));
         instr->num_components = formatted->num_components;
-
-        return true;
 }
 
-
-static bool
-v3d71_nir_lower_image_store(nir_builder *b, nir_intrinsic_instr *instr)
-{
-        enum pipe_format format = nir_intrinsic_format(instr);
-        assert(format != PIPE_FORMAT_NONE);
-        const struct util_format_description *desc =
-                util_format_description(format);
-        const struct util_format_channel_description *r_chan = &desc->channel[0];
-        unsigned num_components = util_format_get_nr_components(format);
-        b->cursor = nir_before_instr(&instr->instr);
-
-        nir_def *color =
-           nir_trim_vector(b, instr->src[3].ssa, num_components);
-        nir_def *formatted = NULL;
-        if (format == PIPE_FORMAT_R9G9B9E5_FLOAT) {
-                formatted = nir_format_pack_r9g9b9e5(b, color);
-        } else if (format == PIPE_FORMAT_R11G11B10_FLOAT) {
-                formatted = pack_11f11f10f(b, color);
-        } else if (format == PIPE_FORMAT_R10G10B10A2_UINT) {
-                formatted = pack_r10g10b10a2_uint(b, color);
-        } else if (format == PIPE_FORMAT_R10G10B10A2_UNORM) {
-                formatted = pack_r10g10b10a2_unorm(b, color);
-        } else if (r_chan->size == 32) {
-                /* For 32-bit formats, we just have to move the vector
-                 * across (possibly reducing the number of channels).
-                 */
-                formatted = color;
-        } else if (r_chan->type == UTIL_FORMAT_TYPE_FLOAT) {
-                assert(r_chan->size == 16);
-                formatted = nir_format_float_to_half(b, color);
-                formatted = pack_bits(b, formatted, bits_16, num_components,
-                                      false);
-        } else {
-                assert(r_chan->size == 8 || r_chan->size == 16);
-                formatted = pack_xbit(b, color, num_components, r_chan);
-        }
-
-        nir_src_rewrite(&instr->src[3], formatted);
-        instr->num_components = formatted->num_components;
-
-        return true;
-}
-
-static bool
+static void
 v3d_nir_lower_image_load(nir_builder *b, nir_intrinsic_instr *instr)
 {
         static const unsigned bits16[] = {16, 16, 16, 16};
-        enum pipe_format format = nir_intrinsic_format(instr);
+        nir_variable *var = nir_intrinsic_get_var(instr, 0);
+        const struct glsl_type *sampler_type = glsl_without_array(var->type);
+        enum glsl_base_type base_type =
+                glsl_get_sampler_result_type(sampler_type);
 
-        if (v3d_gl_format_is_return_32(format))
-                return false;
+        if (v3d_gl_format_is_return_32(var->data.image.format))
+                return;
 
         b->cursor = nir_after_instr(&instr->instr);
 
-        nir_def *result = &instr->def;
-        if (util_format_is_pure_uint(format)) {
-                result = nir_format_unpack_uint(b, result, bits16, 4);
-        } else if (util_format_is_pure_sint(format)) {
+        assert(instr->dest.is_ssa);
+        nir_ssa_def *result = &instr->dest.ssa;
+        if (base_type == GLSL_TYPE_FLOAT) {
+            nir_ssa_def *rg = nir_channel(b, result, 0);
+            nir_ssa_def *ba = nir_channel(b, result, 1);
+            result = nir_vec4(b,
+                              nir_unpack_half_2x16_split_x(b, rg),
+                              nir_unpack_half_2x16_split_y(b, rg),
+                              nir_unpack_half_2x16_split_x(b, ba),
+                              nir_unpack_half_2x16_split_y(b, ba));
+        } else if (base_type == GLSL_TYPE_INT) {
                 result = nir_format_unpack_sint(b, result, bits16, 4);
         } else {
-                nir_def *rg = nir_channel(b, result, 0);
-                nir_def *ba = nir_channel(b, result, 1);
-                result = nir_vec4(b,
-                                  nir_unpack_half_2x16_split_x(b, rg),
-                                  nir_unpack_half_2x16_split_y(b, rg),
-                                  nir_unpack_half_2x16_split_x(b, ba),
-                                  nir_unpack_half_2x16_split_y(b, ba));
+                assert(base_type == GLSL_TYPE_UINT);
+                result = nir_format_unpack_uint(b, result, bits16, 4);
         }
 
-        nir_def_rewrite_uses_after(&instr->def, result,
+        nir_ssa_def_rewrite_uses_after(&instr->dest.ssa, nir_src_for_ssa(result),
                                        result->parent_instr);
-
-        return true;
 }
 
-static bool
-v3d_nir_lower_image_load_store_cb(nir_builder *b,
-                                  nir_intrinsic_instr *intr,
-                                  void *_state)
+void
+v3d_nir_lower_image_load_store(nir_shader *s)
 {
-        struct v3d_compile *c = (struct v3d_compile *) _state;
+        nir_foreach_function(function, s) {
+                if (!function->impl)
+                        continue;
 
-        switch (intr->intrinsic) {
-        case nir_intrinsic_image_load:
-                return v3d_nir_lower_image_load(b, intr);
-        case nir_intrinsic_image_store:
-                if (c->devinfo->ver >= 71)
-                        return v3d71_nir_lower_image_store(b, intr);
-                else
-                        return v3d42_nir_lower_image_store(b, intr);
-                break;
-        default:
-                return false;
+                nir_builder b;
+                nir_builder_init(&b, function->impl);
+
+                nir_foreach_block(block, function->impl) {
+                        nir_foreach_instr_safe(instr, block) {
+                                if (instr->type != nir_instr_type_intrinsic)
+                                        continue;
+
+                                nir_intrinsic_instr *intr =
+                                        nir_instr_as_intrinsic(instr);
+
+                                switch (intr->intrinsic) {
+                                case nir_intrinsic_image_deref_load:
+                                        v3d_nir_lower_image_load(&b, intr);
+                                        break;
+                                case nir_intrinsic_image_deref_store:
+                                        v3d_nir_lower_image_store(&b, intr);
+                                        break;
+                                default:
+                                        break;
+                                }
+                        }
+                }
+
+                nir_metadata_preserve(function->impl,
+                                      nir_metadata_block_index |
+                                      nir_metadata_dominance);
         }
-
-        return false;
-}
-
-bool
-v3d_nir_lower_image_load_store(nir_shader *s, struct v3d_compile *c)
-{
-        return nir_shader_intrinsics_pass(s,
-                                            v3d_nir_lower_image_load_store_cb,
-                                            nir_metadata_control_flow, c);
 }

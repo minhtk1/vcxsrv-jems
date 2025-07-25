@@ -110,7 +110,6 @@ load_text_file(void *ctx, const char *filename)
 static void
 init_fake_gl_context (struct gl_context *gl_ctx)
 {
-	memset(gl_ctx, 0, sizeof(*gl_ctx));
 	gl_ctx->API = API_OPENGL_COMPAT;
 	gl_ctx->Const.DisableGLSLLineContinuations = false;
 }
@@ -178,12 +177,12 @@ main (int argc, char *argv[])
 	if (shader == NULL)
 	   return 1;
 
+	_mesa_locale_init();
+
 	ret = glcpp_preprocess(ctx, &shader, &info_log, NULL, NULL, &gl_ctx);
 
-	fprintf(stderr, "%s", info_log);
-	fflush(stderr);
 	printf("%s", shader);
-	fflush(stdout);
+	fprintf(stderr, "%s", info_log);
 
 	ralloc_free(ctx);
 

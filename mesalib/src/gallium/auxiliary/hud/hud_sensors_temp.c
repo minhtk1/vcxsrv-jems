@@ -32,8 +32,7 @@
 #include "hud/hud_private.h"
 #include "util/list.h"
 #include "util/os_time.h"
-#include "util/simple_mtx.h"
-#include "util/u_thread.h"
+#include "os/os_thread.h"
 #include "util/u_memory.h"
 #include "util/u_string.h"
 #include <stdio.h>
@@ -52,7 +51,7 @@
  */
 static int gsensors_temp_count = 0;
 static struct list_head gsensors_temp_list;
-static simple_mtx_t gsensor_temp_mutex = SIMPLE_MTX_INITIALIZER;
+static mtx_t gsensor_temp_mutex = _MTX_INITIALIZER_NP;
 
 struct sensors_temp_info
 {
@@ -329,15 +328,15 @@ int
 hud_get_num_sensors(bool displayhelp)
 {
    /* Return the number of sensors detected. */
-   simple_mtx_lock(&gsensor_temp_mutex);
+   mtx_lock(&gsensor_temp_mutex);
    if (gsensors_temp_count) {
-      simple_mtx_unlock(&gsensor_temp_mutex);
+      mtx_unlock(&gsensor_temp_mutex);
       return gsensors_temp_count;
    }
 
    int ret = sensors_init(NULL);
    if (ret) {
-      simple_mtx_unlock(&gsensor_temp_mutex);
+      mtx_unlock(&gsensor_temp_mutex);
       return 0;
    }
 
@@ -373,7 +372,7 @@ hud_get_num_sensors(bool displayhelp)
       }
    }
 
-   simple_mtx_unlock(&gsensor_temp_mutex);
+   mtx_unlock(&gsensor_temp_mutex);
    return gsensors_temp_count;
 }
 

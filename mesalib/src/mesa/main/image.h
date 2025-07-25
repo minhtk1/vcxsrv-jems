@@ -26,9 +26,8 @@
 #ifndef IMAGE_H
 #define IMAGE_H
 
-#include <stdint.h>
 
-#include "util/glheader.h"
+#include "glheader.h"
 
 struct gl_context;
 struct gl_pixelstore_attrib;
@@ -83,7 +82,7 @@ _mesa_image_row_stride( const struct gl_pixelstore_attrib *packing,
                         GLint width, GLenum format, GLenum type );
 
 
-extern intptr_t
+extern GLint
 _mesa_image_image_stride( const struct gl_pixelstore_attrib *packing,
                           GLint width, GLint height,
                           GLenum format, GLenum type );
@@ -95,6 +94,12 @@ _mesa_expand_bitmap(GLsizei width, GLsizei height,
                     const GLubyte *bitmap,
                     GLubyte *destBuffer, GLint destStride,
                     GLubyte onValue);
+
+
+extern void
+_mesa_convert_colors(GLenum srcType, const GLvoid *src,
+                     GLenum dstType, GLvoid *dst,
+                     GLuint count, const GLubyte mask[]);
 
 
 extern GLboolean

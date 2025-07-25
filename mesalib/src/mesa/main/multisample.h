@@ -26,16 +26,32 @@
 #ifndef MULTISAMPLE_H
 #define MULTISAMPLE_H
 
-#include "util/glheader.h"
+#include "glheader.h"
 
 struct gl_context;
 
-void
-_mesa_GetProgrammableSampleCaps(struct gl_context *ctx, const struct gl_framebuffer *fb,
-                                GLuint *outBits, GLuint *outWidth, GLuint *outHeight);
+extern void GLAPIENTRY
+_mesa_SampleCoverage(GLclampf value, GLboolean invert);
+
 
 extern void
 _mesa_init_multisample(struct gl_context *ctx);
+
+
+extern void GLAPIENTRY
+_mesa_GetMultisamplefv(GLenum pname, GLuint index, GLfloat* val);
+
+void GLAPIENTRY
+_mesa_SampleMaski_no_error(GLuint index, GLbitfield mask);
+
+extern void GLAPIENTRY
+_mesa_SampleMaski(GLuint index, GLbitfield mask);
+
+void GLAPIENTRY
+_mesa_MinSampleShading_no_error(GLclampf value);
+
+extern void GLAPIENTRY
+_mesa_MinSampleShading(GLclampf value);
 
 extern GLenum
 _mesa_check_sample_count(struct gl_context *ctx, GLenum target,

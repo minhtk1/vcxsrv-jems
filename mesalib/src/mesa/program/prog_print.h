@@ -28,7 +28,7 @@
 
 #include <stdio.h>
 
-#include "util/glheader.h"
+#include "main/glheader.h"
 #include "prog_parameter.h"
 
 

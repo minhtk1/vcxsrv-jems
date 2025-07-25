@@ -36,7 +36,7 @@
 #define TEXSTORE_H
 
 
-#include "util/glheader.h"
+#include "glheader.h"
 #include "formats.h"
 #include "util/macros.h"
 
@@ -108,6 +108,14 @@ _mesa_texstore_can_use_memcpy(struct gl_context *ctx,
                               GLenum baseInternalFormat, mesa_format dstFormat,
                               GLenum srcFormat, GLenum srcType,
                               const struct gl_pixelstore_attrib *srcPacking);
+
+
+extern void
+_mesa_store_teximage(struct gl_context *ctx,
+                     GLuint dims,
+                     struct gl_texture_image *texImage,
+                     GLenum format, GLenum type, const GLvoid *pixels,
+                     const struct gl_pixelstore_attrib *packing);
 
 
 extern void

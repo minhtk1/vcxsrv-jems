@@ -26,7 +26,11 @@
 static void
 add_src(nir_src *src, struct set *invariants)
 {
-   _mesa_set_add(invariants, src->ssa);
+   if (src->is_ssa) {
+      _mesa_set_add(invariants, src->ssa);
+   } else {
+      _mesa_set_add(invariants, src->reg.reg);
+   }
 }
 
 static bool
@@ -37,9 +41,13 @@ add_src_cb(nir_src *src, void *state)
 }
 
 static bool
-def_is_invariant(nir_def *def, struct set *invariants)
+dest_is_invariant(nir_dest *dest, struct set *invariants)
 {
-   return _mesa_set_search(invariants, def);
+   if (dest->is_ssa) {
+      return _mesa_set_search(invariants, &dest->ssa);
+   } else {
+      return _mesa_set_search(invariants, dest->reg.reg);
+   }
 }
 
 static void
@@ -66,7 +74,7 @@ add_var(nir_variable *var, struct set *invariants)
 }
 
 static bool
-var_is_invariant(nir_variable *var, struct set *invariants)
+var_is_invariant(nir_variable *var, struct set * invariants)
 {
    /* Because we pass the result of nir_intrinsic_get_var directly to this
     * function, it's possible for var to be NULL if, for instance, there's a
@@ -81,7 +89,7 @@ propagate_invariant_instr(nir_instr *instr, struct set *invariants)
    switch (instr->type) {
    case nir_instr_type_alu: {
       nir_alu_instr *alu = nir_instr_as_alu(instr);
-      if (!def_is_invariant(&alu->def, invariants))
+      if (!dest_is_invariant(&alu->dest.dest, invariants))
          break;
 
       alu->exact = true;
@@ -91,7 +99,7 @@ propagate_invariant_instr(nir_instr *instr, struct set *invariants)
 
    case nir_instr_type_tex: {
       nir_tex_instr *tex = nir_instr_as_tex(instr);
-      if (def_is_invariant(&tex->def, invariants))
+      if (dest_is_invariant(&tex->dest, invariants))
          nir_foreach_src(instr, add_src_cb, invariants);
       break;
    }
@@ -106,7 +114,7 @@ propagate_invariant_instr(nir_instr *instr, struct set *invariants)
          break;
 
       case nir_intrinsic_load_deref:
-         if (def_is_invariant(&intrin->def, invariants))
+         if (dest_is_invariant(&intrin->dest, invariants))
             add_var(nir_intrinsic_get_var(intrin, 0), invariants);
          break;
 
@@ -119,18 +127,17 @@ propagate_invariant_instr(nir_instr *instr, struct set *invariants)
          /* Nothing to do */
          break;
       }
-      FALLTHROUGH;
    }
 
    case nir_instr_type_deref:
    case nir_instr_type_jump:
-   case nir_instr_type_undef:
+   case nir_instr_type_ssa_undef:
    case nir_instr_type_load_const:
       break; /* Nothing to do */
 
    case nir_instr_type_phi: {
       nir_phi_instr *phi = nir_instr_as_phi(instr);
-      if (!def_is_invariant(&phi->def, invariants))
+      if (!dest_is_invariant(&phi->dest, invariants))
          break;
 
       nir_foreach_phi_src(src, phi) {
@@ -171,43 +178,24 @@ propagate_invariant_impl(nir_function_impl *impl, struct set *invariants)
       }
    }
 
-   return nir_progress(progress, impl,
-                       nir_metadata_control_flow | nir_metadata_live_defs);
+   if (progress) {
+      nir_metadata_preserve(impl, nir_metadata_block_index |
+                                  nir_metadata_dominance |
+                                  nir_metadata_live_ssa_defs);
+   }
+
+   return progress;
 }
 
-/* If invariant_prim=true, this pass considers all geometry-affecting
- * outputs as invariant. Doing this works around a common class of application
- * bugs appearing as flickering.
- */
 bool
-nir_propagate_invariant(nir_shader *shader, bool invariant_prim)
+nir_propagate_invariant(nir_shader *shader)
 {
    /* Hash set of invariant things */
    struct set *invariants = _mesa_pointer_set_create(NULL);
 
-   if (shader->info.stage != MESA_SHADER_FRAGMENT && invariant_prim) {
-      nir_foreach_shader_out_variable(var, shader) {
-         switch (var->data.location) {
-         case VARYING_SLOT_POS:
-         case VARYING_SLOT_PSIZ:
-         case VARYING_SLOT_CLIP_DIST0:
-         case VARYING_SLOT_CLIP_DIST1:
-         case VARYING_SLOT_CULL_DIST0:
-         case VARYING_SLOT_CULL_DIST1:
-         case VARYING_SLOT_TESS_LEVEL_OUTER:
-         case VARYING_SLOT_TESS_LEVEL_INNER:
-            if (!var->data.invariant)
-               _mesa_set_add(invariants, var);
-            break;
-         default:
-            break;
-         }
-      }
-   }
-
    bool progress = false;
-   nir_foreach_function_impl(impl, shader) {
-      if (propagate_invariant_impl(impl, invariants))
+   nir_foreach_function(function, shader) {
+      if (function->impl && propagate_invariant_impl(function->impl, invariants))
          progress = true;
    }
 

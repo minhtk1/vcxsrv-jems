@@ -21,7 +21,7 @@
  * IN THE SOFTWARE.
  */
 
-/*
+/* 
  * u_vector is a vector based queue for storing arbitrary
  * sized arrays of objects without using a linked list.
  */
@@ -32,11 +32,14 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include "util/macros.h"
-#include "util/u_math.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+/* TODO - move to u_math.h - name it better etc */
+static inline uint32_t
+u_align_u32(uint32_t v, uint32_t a)
+{
+   assert(a != 0 && a == (a & -((int32_t) a)));
+   return (v + a - 1) & ~(a - 1);
+}
 
 struct u_vector {
    uint32_t head;
@@ -46,22 +49,9 @@ struct u_vector {
    void *data;
 };
 
-int u_vector_init_pow2(struct u_vector *queue,
-                       uint32_t initial_element_count,
-                       uint32_t element_size);
-
+int u_vector_init(struct u_vector *queue, uint32_t element_size, uint32_t size);
 void *u_vector_add(struct u_vector *queue);
 void *u_vector_remove(struct u_vector *queue);
-
-static inline int
-u_vector_init(struct u_vector *queue,
-              uint32_t initial_element_count,
-              uint32_t element_size)
-{
-   initial_element_count = util_next_power_of_two(initial_element_count);
-   element_size = util_next_power_of_two(element_size);
-   return u_vector_init_pow2(queue, initial_element_count, element_size);
-}
 
 static inline int
 u_vector_length(struct u_vector *queue)
@@ -90,23 +80,16 @@ u_vector_finish(struct u_vector *queue)
    free(queue->data);
 }
 
-#ifdef __cplusplus
-#define u_vector_element_cast(elem) (decltype(elem))
-#else
-#define u_vector_element_cast(elem) (void *)
+#ifndef __GNUC__
+#define __builtin_types_compatible_p(t1, t2) 1
 #endif
 
 #define u_vector_foreach(elem, queue)                                  \
    STATIC_ASSERT(__builtin_types_compatible_p(__typeof__(queue), struct u_vector *)); \
    for (uint32_t __u_vector_offset = (queue)->tail;                                \
-        elem = u_vector_element_cast(elem)((char *)(queue)->data + \
-                                           (__u_vector_offset & ((queue)->size - 1))), \
-           __u_vector_offset != (queue)->head;                          \
+        elem = (void *)((char *)(queue)->data + (__u_vector_offset & ((queue)->size - 1))), __u_vector_offset < (queue)->head; \
         __u_vector_offset += (queue)->element_size)
 
-#ifdef __cplusplus
-}
-#endif
 
 #endif
 

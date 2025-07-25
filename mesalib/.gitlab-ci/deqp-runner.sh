@@ -1,193 +1,236 @@
-#!/usr/bin/env bash
-# shellcheck disable=SC2086 # we want word splitting
-# shellcheck disable=SC1091 # paths only become valid at runtime
-
-. "${SCRIPTS_DIR}/setup-test-env.sh"
-
-section_start test_setup "deqp: preparing test setup"
+#!/bin/sh
 
 set -ex
 
-# Needed so configuration files can contain paths to files in /install
-ln -sf "$CI_PROJECT_DIR"/install /install
+DEQP_OPTIONS="--deqp-surface-width=256 --deqp-surface-height=256"
+DEQP_OPTIONS="$DEQP_OPTIONS --deqp-surface-type=pbuffer"
+DEQP_OPTIONS="$DEQP_OPTIONS --deqp-gl-config-name=rgba8888d24s8ms0"
+DEQP_OPTIONS="$DEQP_OPTIONS --deqp-visibility=hidden"
 
-if [ -z "$GPU_VERSION" ]; then
-   echo 'GPU_VERSION must be set to something like "llvmpipe" or "freedreno-a630" (the name used in .gitlab-ci/gpu-version-*.txt)'
+# It would be nice to be able to enable the watchdog, so that hangs in a test
+# don't need to wait the full hour for the run to time out.  However, some
+# shaders end up taking long enough to compile
+# (dEQP-GLES31.functional.ubo.random.all_per_block_buffers.20 for example)
+# that they'll sporadically trigger the watchdog.
+#DEQP_OPTIONS="$DEQP_OPTIONS --deqp-watchdog=enable"
+
+if [ -z "$DEQP_VER" ]; then
+   echo 'DEQP_VER must be set to something like "gles2", "gles31" or "vk" for the test run'
    exit 1
 fi
 
-INSTALL=$(realpath -s "$PWD"/install)
+if [ "$DEQP_VER" = "vk" ]; then
+   if [ -z "$VK_DRIVER" ]; then
+      echo 'VK_DRIVER must be to something like "radeon" or "intel" for the test run'
+      exit 1
+   fi
+fi
+
+if [ -z "$DEQP_SKIPS" ]; then
+   echo 'DEQP_SKIPS must be set to something like "deqp-default-skips.txt"'
+   exit 1
+fi
+
+ARTIFACTS=`pwd`/artifacts
 
 # Set up the driver environment.
-export LD_LIBRARY_PATH="$INSTALL"/lib/:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=`pwd`/install/lib/
 export EGL_PLATFORM=surfaceless
-ARCH=$(uname -m)
-export VK_DRIVER_FILES="$PWD"/install/share/vulkan/icd.d/"$VK_DRIVER"_icd."$ARCH".json
-export OCL_ICD_VENDORS="$PWD"/install/etc/OpenCL/vendors/
+export VK_ICD_FILENAMES=`pwd`/install/share/vulkan/icd.d/"$VK_DRIVER"_icd.x86_64.json
 
-if [ -n "$ANGLE_TAG" ]; then
-  # Are we using the right angle version?
-  ci_tag_test_time_check "ANGLE_TAG"
-  export LD_LIBRARY_PATH=/angle:$LD_LIBRARY_PATH
+# the runner was failing to look for libkms in /usr/local/lib for some reason
+# I never figured out.
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
+
+RESULTS=`pwd`/results
+mkdir -p $RESULTS
+
+# Generate test case list file.
+if [ "$DEQP_VER" = "vk" ]; then
+   cp /deqp/mustpass/vk-master.txt /tmp/case-list.txt
+   DEQP=/deqp/external/vulkancts/modules/vulkan/deqp-vk
+else
+   cp /deqp/mustpass/$DEQP_VER-master.txt /tmp/case-list.txt
+   DEQP=/deqp/modules/$DEQP_VER/deqp-$DEQP_VER
 fi
 
-# Ensure Mesa Shader Cache resides on tmpfs.
-SHADER_CACHE_HOME=${XDG_CACHE_HOME:-${HOME}/.cache}
-SHADER_CACHE_DIR=${MESA_SHADER_CACHE_DIR:-${SHADER_CACHE_HOME}/mesa_shader_cache}
+# If the job is parallel, take the corresponding fraction of the caselist.
+# Note: N~M is a gnu sed extension to match every nth line (first line is #1).
+if [ -n "$CI_NODE_INDEX" ]; then
+   sed -ni $CI_NODE_INDEX~$CI_NODE_TOTAL"p" /tmp/case-list.txt
+fi
 
-findmnt -n tmpfs ${SHADER_CACHE_HOME} || findmnt -n tmpfs ${SHADER_CACHE_DIR} || {
-    mkdir -p ${SHADER_CACHE_DIR}
-    mount -t tmpfs -o nosuid,nodev,size=2G,mode=1755 tmpfs ${SHADER_CACHE_DIR}
+if [ ! -s /tmp/case-list.txt ]; then
+    echo "Caselist generation failed"
+    exit 1
+fi
+
+if [ -n "$DEQP_EXPECTED_FAILS" ]; then
+    XFAIL="--xfail-list $ARTIFACTS/$DEQP_EXPECTED_FAILS"
+fi
+
+set +e
+
+run_cts() {
+    deqp=$1
+    caselist=$2
+    output=$3
+    deqp-runner \
+        --deqp $deqp \
+        --output $output \
+        --caselist $caselist \
+        --exclude-list $ARTIFACTS/$DEQP_SKIPS \
+        $XFAIL \
+        --job ${DEQP_PARALLEL:-1} \
+	--allow-flakes true \
+	$DEQP_RUNNER_OPTIONS \
+        -- \
+        $DEQP_OPTIONS
 }
 
-BASELINE=""
-if [ -e "$INSTALL/$GPU_VERSION-fails.txt" ]; then
-    BASELINE="--baseline $INSTALL/$GPU_VERSION-fails.txt"
-fi
+report_flakes() {
+    if [ -z "$FLAKES_CHANNEL" ]; then
+        return 0
+    fi
+    flakes=$1
+    bot="$CI_RUNNER_DESCRIPTION-$CI_PIPELINE_ID"
+    channel="$FLAKES_CHANNEL"
+    (
+    echo NICK $bot
+    echo USER $bot unused unused :Gitlab CI Notifier
+    sleep 10
+    echo "JOIN $channel"
+    sleep 1
+    desc="Flakes detected in job: $CI_JOB_URL on $CI_RUNNER_DESCRIPTION"
+    if [ -n "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" ]; then
+        desc="$desc on branch $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME ($CI_MERGE_REQUEST_TITLE)"
+    fi
+    echo "PRIVMSG $channel :$desc"
+    for flake in `cat $flakes`; do
+        echo "PRIVMSG $channel :$flake"
+    done
+    echo "PRIVMSG $channel :See $CI_JOB_URL/artifacts/browse/results/"
+    echo "QUIT"
+    ) | nc irc.freenode.net 6667 > /dev/null
 
-# Default to an empty known flakes file if it doesn't exist.
-touch $INSTALL/$GPU_VERSION-flakes.txt
-
-
-if [ -n "$VK_DRIVER" ] && [ -e "$INSTALL/$VK_DRIVER-skips.txt" ]; then
-    DEQP_SKIPS="$DEQP_SKIPS $INSTALL/$VK_DRIVER-skips.txt"
-fi
-
-if [ -n "$GALLIUM_DRIVER" ] && [ -e "$INSTALL/$GALLIUM_DRIVER-skips.txt" ]; then
-    DEQP_SKIPS="$DEQP_SKIPS $INSTALL/$GALLIUM_DRIVER-skips.txt"
-fi
-
-if [ -n "$DRIVER_NAME" ] && [ -e "$INSTALL/$DRIVER_NAME-skips.txt" ]; then
-    DEQP_SKIPS="$DEQP_SKIPS $INSTALL/$DRIVER_NAME-skips.txt"
-fi
-
-if [ -e "$INSTALL/$GPU_VERSION-skips.txt" ]; then
-    DEQP_SKIPS="$DEQP_SKIPS $INSTALL/$GPU_VERSION-skips.txt"
-fi
-
-if [ -e "$INSTALL/$GPU_VERSION-slow-skips.txt" ] && [[ $CI_JOB_NAME != *full* ]]; then
-    DEQP_SKIPS="$DEQP_SKIPS $INSTALL/$GPU_VERSION-slow-skips.txt"
-fi
-
-if [ "$PIGLIT_PLATFORM" != "gbm" ] ; then
-    DEQP_SKIPS="$DEQP_SKIPS $INSTALL/x11-skips.txt"
-fi
-
-if [ "$PIGLIT_PLATFORM" = "gbm" ]; then
-    DEQP_SKIPS="$DEQP_SKIPS $INSTALL/gbm-skips.txt"
-fi
-
-if [ -n "$ANGLE_TAG" ]; then
-    DEQP_SKIPS="$DEQP_SKIPS $INSTALL/angle-skips.txt"
-fi
-
-# Set the path to VK validation layer settings (in case it ends up getting loaded)
-# Note: If you change the format of this filename, look through the rest of the
-# tree for other places that need to be kept in sync (e.g.
-# src/gallium/drivers/zink/ci/gitlab-ci-inc.yml)
-export VK_LAYER_SETTINGS_PATH=$INSTALL/$GPU_VERSION-validation-settings.txt
-
-report_load() {
-    echo "System load: $(cut -d' ' -f1-3 < /proc/loadavg)"
-    echo "# of CPU cores: $(grep -c processor /proc/cpuinfo)"
 }
 
-if [ "$GALLIUM_DRIVER" = "virpipe" ]; then
-    # deqp is to use virpipe, and virgl_test_server llvmpipe
-    export GALLIUM_DRIVER="$GALLIUM_DRIVER"
+extract_xml_result() {
+    testcase=$1
+    shift 1
+    qpas=$*
+    start="#beginTestCaseResult $testcase"
+    for qpa in $qpas; do
+        while IFS= read -r line; do
+            if [ "$line" = "$start" ]; then
+                dst="$testcase.qpa"
+                echo "#beginSession" > $dst
+                echo $line >> $dst
+                while IFS= read -r line; do
+                    if [ "$line" = "#endTestCaseResult" ]; then
+                        echo $line >> $dst
+                        echo "#endSession" >> $dst
+                        /deqp/executor/testlog-to-xml $dst "$RESULTS/$testcase.xml"
+                        # copy the stylesheets here so they only end up in artifacts
+                        # if we have one or more result xml in artifacts
+                        cp /deqp/testlog.{css,xsl} "$RESULTS/"
+                        return 0
+                    fi
+                    echo $line >> $dst
+                done
+                return 1
+            fi
+        done < $qpa
+    done
+}
 
-    VTEST_ARGS="--use-egl-surfaceless"
-    if [ "$VIRGL_HOST_API" = "GLES" ]; then
-        VTEST_ARGS="$VTEST_ARGS --use-gles"
+extract_xml_results() {
+    qpas=$*
+    while IFS= read -r testcase; do
+        testcase=${testcase%,*}
+        extract_xml_result $testcase $qpas
+    done
+}
+
+# Generate junit results
+generate_junit() {
+    results=$1
+    echo "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+    echo "<testsuites>"
+    echo "<testsuite name=\"$DEQP_VER-$CI_NODE_INDEX\">"
+    while read line; do
+        testcase=${line%,*}
+        result=${line#*,}
+        # avoid counting Skip's in the # of tests:
+        if [ "$result" = "Skip" ]; then
+            continue;
+        fi
+        echo "<testcase name=\"$testcase\">"
+        if [ "$result" != "Pass" ]; then
+            echo "<failure type=\"$result\">"
+            echo "$result: See $CI_JOB_URL/artifacts/results/$testcase.xml"
+            echo "</failure>"
+        fi
+        echo "</testcase>"
+    done < $results
+    echo "</testsuite>"
+    echo "</testsuites>"
+}
+
+# wrapper to supress +x to avoid spamming the log
+quiet() {
+    set +x
+    "$@"
+    set -x
+}
+
+run_cts $DEQP /tmp/case-list.txt $RESULTS/cts-runner-results.txt
+DEQP_EXITCODE=$?
+
+quiet generate_junit $RESULTS/cts-runner-results.txt > $RESULTS/results.xml
+
+if [ $DEQP_EXITCODE -ne 0 ]; then
+    # preserve caselist files in case of failures:
+    cp /tmp/deqp_runner.*.txt $RESULTS/
+    echo "Some unexpected results found (see cts-runner-results.txt in artifacts for full results):"
+    cat $RESULTS/cts-runner-results.txt | \
+        grep -v ",Pass" | \
+        grep -v ",Skip" | \
+        grep -v ",ExpectedFail" > \
+        $RESULTS/cts-runner-unexpected-results.txt
+    head -n 50 $RESULTS/cts-runner-unexpected-results.txt
+
+    if [ -z "$DEQP_NO_SAVE_RESULTS" ]; then
+        # Save the logs for up to the first 50 unexpected results:
+        head -n 50 $RESULTS/cts-runner-unexpected-results.txt | quiet extract_xml_results /tmp/*.qpa
     fi
 
-    GALLIUM_DRIVER=llvmpipe \
-    virgl_test_server $VTEST_ARGS >$RESULTS_DIR/vtest-log.txt 2>&1 &
+    count=`cat $RESULTS/cts-runner-unexpected-results.txt | wc -l`
 
-    sleep 1
+    # Re-run fails to detect flakes.  But use a small threshold, if
+    # something was fundamentally broken, we don't want to re-run
+    # the entire caselist
+else
+    cat $RESULTS/cts-runner-results.txt | \
+        grep ",Flake" > \
+        $RESULTS/cts-runner-flakes.txt
+
+    count=`cat $RESULTS/cts-runner-flakes.txt | wc -l`
+    if [ $count -gt 0 ]; then
+        echo "Some flakes found (see cts-runner-flakes.txt in artifacts for full results):"
+        head -n 50 $RESULTS/cts-runner-flakes.txt
+
+        if [ -z "$DEQP_NO_SAVE_RESULTS" ]; then
+            # Save the logs for up to the first 50 flakes:
+            head -n 50 $RESULTS/cts-runner-flakes.txt | quiet extract_xml_results /tmp/*.qpa
+        fi
+
+        # Report the flakes to IRC channel for monitoring (if configured):
+        quiet report_flakes $RESULTS/cts-runner-flakes.txt
+    else
+        # no flakes, so clean-up:
+        rm $RESULTS/cts-runner-flakes.txt
+    fi
 fi
-
-uncollapsed_section_switch deqp "deqp: deqp-runner"
-
-# Print the detailed version with the list of backports and local patches
-{ set +x; } 2>/dev/null
-for api in vk-main vk gl gles; do
-  deqp_version_log=/deqp-$api/deqp-$api-version
-  if [ -r "$deqp_version_log" ]; then
-    cat "$deqp_version_log"
-  fi
-done
-set -x
-
-# If you change the format of the suite toml filenames or the
-# $GPU_VERSION-{fails,flakes,skips}.txt filenames, look through the rest
-# of the tree for other places that need to be kept in sync (e.g.
-# src/**/ci/gitlab-ci*.yml)
-set +e
-deqp-runner -V
-deqp-runner \
-    suite \
-    --suite $INSTALL/deqp-$DEQP_SUITE.toml \
-    --output $RESULTS_DIR \
-    --skips $INSTALL/all-skips.txt $DEQP_SKIPS \
-    --flakes $INSTALL/$GPU_VERSION-flakes.txt \
-    --testlog-to-xml /deqp-tools/testlog-to-xml \
-    --fraction-start ${CI_NODE_INDEX:-1} \
-    --fraction $((CI_NODE_TOTAL * ${DEQP_FRACTION:-1})) \
-    --jobs ${FDO_CI_CONCURRENT:-4} \
-    $BASELINE \
-    ${DEQP_RUNNER_MAX_FAILS:+--max-fails "$DEQP_RUNNER_MAX_FAILS"} \
-    ${DEQP_FORCE_ASAN:+--env LD_PRELOAD=libasan.so.8:/install/lib/libdlclose-skip.so}; DEQP_EXITCODE=$?
-
-{ set +x; } 2>/dev/null
-
-set -e
-
-section_switch test_post_process "deqp: post-processing test results"
-set -x
-
-report_load
-
-# Remove all but the first 50 individual XML files uploaded as artifacts, to
-# save fd.o space when you break everything.
-find $RESULTS_DIR -name \*.xml | \
-    sort -n |
-    sed -n '1,+49!p' | \
-    xargs rm -f
-
-# If any QPA XMLs are there, then include the XSL/CSS in our artifacts.
-find $RESULTS_DIR -name \*.xml \
-    -exec cp /deqp-tools/testlog.css /deqp-tools/testlog.xsl "$RESULTS_DIR/" ";" \
-    -quit
-
-deqp-runner junit \
-   --testsuite dEQP \
-   --results $RESULTS_DIR/failures.csv \
-   --output $RESULTS_DIR/junit.xml \
-   --limit 50 \
-   --template "See $ARTIFACTS_BASE_URL/results/{{testcase}}.xml"
-
-# Report the flakes to the IRC channel for monitoring (if configured):
-if [ -n "$FLAKES_CHANNEL" ]; then
-  python3 $INSTALL/report-flakes.py \
-         --host irc.oftc.net \
-         --port 6667 \
-         --results $RESULTS_DIR/results.csv \
-         --known-flakes $INSTALL/$GPU_VERSION-flakes.txt \
-         --channel "$FLAKES_CHANNEL" \
-         --runner "$CI_RUNNER_DESCRIPTION" \
-         --job "$CI_JOB_ID" \
-         --url "$CI_JOB_URL" \
-         --branch "${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME:-$CI_COMMIT_BRANCH}" \
-         --branch-title "${CI_MERGE_REQUEST_TITLE:-$CI_COMMIT_TITLE}" || true
-fi
-
-# Compress results.csv to save on bandwidth during the upload of artifacts to
-# GitLab. This reduces the size in a VKCTS run from 135 to 7.6MB, and takes
-# 0.17s on a Ryzen 5950X (16 threads, 0.95s when limited to 1 thread).
-zstd --quiet --rm --threads ${FDO_CI_CONCURRENT:-0} -8 "$RESULTS_DIR/results.csv" -o "$RESULTS_DIR/results.csv.zst"
-
-set +x
-section_end test_post_process
 
 exit $DEQP_EXITCODE

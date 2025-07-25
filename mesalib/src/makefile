@@ -2,16 +2,11 @@ SHAREDLIB = swrast_dri
 
 top_srcdir:=..
 
-#Currently disable link global optimisations since it crashes the linker 
-LINKFLAGS := $(LINKFLAGS:/LTCG:STATUS=/LTCG:OFF)
-
 #SUBDIRS = . gtest util mapi/glapi/gen mapi
 
 $(OBJDIR)/git_sha1.h:
 	@echo "updating $@"
-	@$(PYTHON3) $(top_srcdir)/bin/git_sha1_gen.py --output $@
-
-HAVE_OPENGL=1
+	@python $(top_srcdir)/bin/git_sha1_gen.py --output $@
 
 ifdef HAVE_OPENGL
 gldir = $(includedir)/GL
@@ -37,12 +32,11 @@ endif
 
 # include only conditionally ?
 INCLUDELIBFILES = compiler\$(OBJDIR)\libcompiler.lib
-INCLUDELIBFILES += compiler\glsl\glcpp\$(OBJDIR)\libcompilerglcpp.lib
 INCLUDELIBFILES += mesa\$(OBJDIR)\libmesa.lib
 INCLUDELIBFILES += util\$(OBJDIR)\libutil.lib
-INCLUDELIBFILES += c11\impl\$(OBJDIR)\libc11.lib
 INCLUDELIBFILES += mapi\$(OBJDIR)\libmapi.lib
-INCLUDELIBFILES += gallium\targets\dri\$(OBJDIR)\libgallium.lib
+INCLUDELIBFILES += mesa\drivers\dri\swrast\$(OBJDIR)\libswrast_dri.lib
+INCLUDELIBFILES += mesa\drivers\dri\common\$(OBJDIR)\libdricommon.lib
 INCLUDELIBFILES += $(MHMAKECONF)\expat\lib\$(OBJDIR)\libexpat.lib
 INCLUDELIBFILES += $(MHMAKECONF)\libregex\$(OBJDIR)\libregex.lib
 
@@ -60,15 +54,13 @@ INCLUDES += \
 	$(top_srcdir)/src/mapi/ \
 	$(top_srcdir)/src/mesa/ \
 	$(top_srcdir)/src/gallium/include \
-	$(top_srcdir)/src/gallium/auxiliary \
-	$(OBJDIR)
+	$(top_srcdir)/src/gallium/auxiliary
 
 libglsl_util_la_SOURCES = \
 	mesa/main/extensions_table.c \
+	mesa/main/imports.c \
 	mesa/program/prog_parameter.c \
 	mesa/program/symbol_table.c \
-	c11/impl/time.c \
-	loader/loader.c
 
 #DEFINES=\
 #_LIB\
@@ -80,15 +72,12 @@ libglsl_util_la_SOURCES = \
 #_CRT_SECURE_NO_DEPRECATE\
 #_MBCS
 
-DEFINES = WIN32 SWRAST_DRI_EXPORT INSERVER _USE_MATH_DEFINES __STDC_CONSTANT_MACROS __STDC_CONSTANT_MACROS __STDC_FORMAT_MACROS XML_STATIC __STDC_LIMIT_MACROS HAVE_PIPE_LOADER_DRI GALLIUM_SOFTPIPE GALLIUM_STATIC_TARGETS PIPE_SEARCH_DIR=\".\" HAVE_STRUCT_TIMESPEC __STDC_NO_THREADS__
-
-PACKAGE_VERSION:=\"$(strip $(shell cat $(top_srcdir)/VERSION))\"
-DEFINES += PACKAGE_VERSION=$(PACKAGE_VERSION)
+DEFINES = SWRAST_DRI_EXPORT INSERVER _USE_MATH_DEFINES __STDC_CONSTANT_MACROS __STDC_CONSTANT_MACROS __STDC_FORMAT_MACROS XML_STATIC
 
 CSRCS := $(notdir $(subst /,$/,$(libglsl_util_la_SOURCES)))
 CSRCS := $(CSRCS:%.h=)
 
-vpath %.c mesa\main:mesa\program:c11/impl:loader
+vpath %.c mesa\main:mesa\program
 
 LIBDIRS=$(dir $(INCLUDELIBFILES))
 SERVLIBDIRS=$(dir $(INCLUDESERVLIBFILES))

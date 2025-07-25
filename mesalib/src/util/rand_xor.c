@@ -22,17 +22,13 @@
  *
  */
 
-#include "detect_os.h"
-
-#if !DETECT_OS_WINDOWS
-#if defined(HAVE_GETRANDOM)
-#include <sys/random.h>
-#endif
+#if defined(__linux__)
+#include <sys/file.h>
 #include <unistd.h>
 #include <fcntl.h>
-#endif
-
+#else
 #include <time.h>
+#endif
 
 #include "rand_xor.h"
 
@@ -42,7 +38,7 @@
  * to the public domain.
  */
 uint64_t
-rand_xorshift128plus(uint64_t seed[2])
+rand_xorshift128plus(uint64_t *seed)
 {
    uint64_t *s = seed;
 
@@ -56,34 +52,35 @@ rand_xorshift128plus(uint64_t seed[2])
 }
 
 void
-s_rand_xorshift128plus(uint64_t seed[2], bool randomised_seed)
+s_rand_xorshift128plus(uint64_t *seed, bool randomised_seed)
 {
-   if (!randomised_seed) {
-      /* Use a fixed seed */
-      seed[0] = 0x3bffb83978e24f88;
-      seed[1] = 0x9238d5d56c71cd35;
-      return;
-   }
+   if (!randomised_seed)
+      goto fixed_seed;
 
-#if !DETECT_OS_WINDOWS
-   size_t seed_size = sizeof(uint64_t) * 2;
-
-#if defined(HAVE_GETRANDOM)
-   ssize_t ret = getrandom(seed, seed_size, GRND_NONBLOCK);
-   if (ret == seed_size)
-      return;
-#endif
-
+#if defined(__linux__)
    int fd = open("/dev/urandom", O_RDONLY);
-   if (fd >= 0) {
-      if (read(fd, seed, seed_size) == seed_size) {
-         close(fd);
-         return;
-      }
-      close(fd);
-   }
-#endif
+   if (fd < 0)
+      goto fixed_seed;
 
+   size_t seed_size = sizeof(uint64_t) * 2;
+   if (read(fd, seed, seed_size) != seed_size) {
+      close(fd);
+      goto fixed_seed;
+   }
+
+   close(fd);
+   return;
+
+#else
    seed[0] = 0x3bffb83978e24f88;
    seed[1] = time(NULL);
+
+   return;
+#endif
+
+fixed_seed:
+
+   /* Fallback to a fixed seed */
+   seed[0] = 0x3bffb83978e24f88;
+   seed[1] = 0x9238d5d56c71cd35;
 }

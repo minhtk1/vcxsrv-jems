@@ -37,7 +37,7 @@
  */
 
 
-#include "util/glheader.h"
+#include "main/glheader.h"
 #include "main/config.h"
 #include "m_eval.h"
 

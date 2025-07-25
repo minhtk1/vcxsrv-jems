@@ -31,30 +31,32 @@
  *
  * Fixed size array with linear probing on collision and LRU eviction
  * on full.
- *
+ * 
  * @author Jose Fonseca <jfonseca@vmware.com>
  */
 
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "util/u_debug.h"
 
 #include "util/u_math.h"
 #include "util/u_memory.h"
 #include "util/u_cache.h"
-#include "util/list.h"
+#include "util/simple_list.h"
+
 
 struct util_cache_entry
 {
    enum { EMPTY = 0, FILLED, DELETED } state;
    uint32_t hash;
 
-   struct list_head list;
+   struct util_cache_entry *next;
+   struct util_cache_entry *prev;
 
    void *key;
    void *value;
-
-#if MESA_DEBUG
+   
+#ifdef DEBUG
    unsigned count;
 #endif
 };
@@ -64,7 +66,7 @@ struct util_cache
 {
    /** Hash function */
    uint32_t (*hash)(const void *key);
-
+   
    /** Compare two keys */
    int (*compare)(const void *key1, const void *key2);
 
@@ -73,10 +75,10 @@ struct util_cache
 
    /** Max entries in the cache */
    uint32_t size;
-
+   
    /** Array [size] of entries */
    struct util_cache_entry *entries;
-
+   
    /** Number of entries in the cache */
    unsigned count;
 
@@ -101,26 +103,26 @@ util_cache_create(uint32_t (*hash)(const void *key),
                   uint32_t size)
 {
    struct util_cache *cache;
-
+   
    cache = CALLOC_STRUCT(util_cache);
    if (!cache)
       return NULL;
-
+   
    cache->hash = hash;
    cache->compare = compare;
    cache->destroy = destroy;
 
-   list_inithead(&cache->lru.list);
+   make_empty_list(&cache->lru);
 
    size *= CACHE_DEFAULT_ALPHA;
    cache->size = size;
-
+   
    cache->entries = CALLOC(size, sizeof(struct util_cache_entry));
    if (!cache->entries) {
       FREE(cache);
       return NULL;
    }
-
+   
    ensure_sanity(cache);
    return cache;
 }
@@ -172,12 +174,12 @@ util_cache_entry_destroy(struct util_cache *cache,
 {
    void *key = entry->key;
    void *value = entry->value;
-
+   
    entry->key = NULL;
    entry->value = NULL;
-
+   
    if (entry->state == FILLED) {
-      list_del(&entry->list);
+      remove_from_list(entry);
       cache->count--;
 
       if (cache->destroy)
@@ -205,22 +207,22 @@ util_cache_set(struct util_cache *cache,
    hash = cache->hash(key);
    entry = util_cache_entry_get(cache, hash, key);
    if (!entry)
-      entry = list_last_entry(&cache->lru.list, struct util_cache_entry, list);
+      entry = cache->lru.prev;
 
    if (cache->count >= cache->size / CACHE_DEFAULT_ALPHA)
-      util_cache_entry_destroy(cache, list_last_entry(&cache->lru.list, struct util_cache_entry, list));
+      util_cache_entry_destroy(cache, cache->lru.prev);
 
    util_cache_entry_destroy(cache, entry);
-
-#if MESA_DEBUG
+   
+#ifdef DEBUG
    ++entry->count;
 #endif
-
+   
    entry->key = key;
    entry->hash = hash;
    entry->value = value;
    entry->state = FILLED;
-   list_add(&cache->lru.list, &entry->list);
+   insert_at_head(&cache->lru, entry);
    cache->count++;
 
    ensure_sanity(cache);
@@ -232,7 +234,7 @@ util_cache_set(struct util_cache *cache,
  * value or NULL if not found.
  */
 void *
-util_cache_get(struct util_cache *cache,
+util_cache_get(struct util_cache *cache, 
                const void *key)
 {
    struct util_cache_entry *entry;
@@ -246,10 +248,9 @@ util_cache_get(struct util_cache *cache,
    if (!entry)
       return NULL;
 
-   if (entry->state == FILLED) {
-      list_move_to(&cache->lru.list, &entry->list);
-   }
-
+   if (entry->state == FILLED)
+      move_to_head(&cache->lru, entry);
+   
    return entry->value;
 }
 
@@ -258,7 +259,7 @@ util_cache_get(struct util_cache *cache,
  * Remove all entries from the cache.  The 'destroy' function will be called
  * for each entry's (key, value).
  */
-void
+void 
 util_cache_clear(struct util_cache *cache)
 {
    uint32_t i;
@@ -273,7 +274,7 @@ util_cache_clear(struct util_cache *cache)
    }
 
    assert(cache->count == 0);
-   assert(list_is_empty(&cache->lru.list));
+   assert(is_empty_list(&cache->lru));
    ensure_sanity(cache);
 }
 
@@ -288,7 +289,7 @@ util_cache_destroy(struct util_cache *cache)
    if (!cache)
       return;
 
-#if MESA_DEBUG
+#ifdef DEBUG
    if (cache->count >= 20*cache->size) {
       /* Normal approximation of the Poisson distribution */
       double mean = (double)cache->count/(double)cache->size;
@@ -296,15 +297,15 @@ util_cache_destroy(struct util_cache *cache)
       unsigned i;
       for (i = 0; i < cache->size; ++i) {
          double z = fabs(cache->entries[i].count - mean)/stddev;
-         /* This assert should not fail 99.9999998027% of the times, unless
+         /* This assert should not fail 99.9999998027% of the times, unless 
           * the hash function is a poor one */
          assert(z <= 6.0);
       }
    }
 #endif
-
+      
    util_cache_clear(cache);
-
+   
    FREE(cache->entries);
    FREE(cache);
 }
@@ -340,7 +341,7 @@ util_cache_remove(struct util_cache *cache,
 static void
 ensure_sanity(const struct util_cache *cache)
 {
-#if MESA_DEBUG
+#ifdef DEBUG
    unsigned i, cnt = 0;
 
    assert(cache);
@@ -361,17 +362,16 @@ ensure_sanity(const struct util_cache *cache)
    assert(cache->size >= cnt);
 
    if (cache->count == 0) {
-      assert (list_is_empty(&cache->lru.list));
+      assert (is_empty_list(&cache->lru));
    }
    else {
-      struct util_cache_entry *header =
-         list_entry(&cache->lru, struct util_cache_entry, list);
+      struct util_cache_entry *header = cache->lru.next;
 
       assert (header);
-      assert (!list_is_empty(&cache->lru.list));
+      assert (!is_empty_list(&cache->lru));
 
       for (i = 0; i < cache->count; i++)
-         header = list_entry(&header, struct util_cache_entry, list);
+         header = header->next;
 
       assert(header == &cache->lru);
    }

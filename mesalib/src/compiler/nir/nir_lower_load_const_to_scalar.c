@@ -41,10 +41,12 @@ lower_load_const_instr_scalar(nir_load_const_instr *lower)
    if (lower->def.num_components == 1)
       return false;
 
-   nir_builder b = nir_builder_at(nir_before_instr(&lower->instr));
+   nir_builder b;
+   nir_builder_init(&b, nir_cf_node_get_function(&lower->instr.block->cf_node));
+   b.cursor = nir_before_instr(&lower->instr);
 
    /* Emit the individual loads. */
-   nir_def *loads[NIR_MAX_VEC_COMPONENTS];
+   nir_ssa_def *loads[NIR_MAX_VEC_COMPONENTS];
    for (unsigned i = 0; i < lower->def.num_components; i++) {
       nir_load_const_instr *load_comp =
          nir_load_const_instr_create(b.shader, 1, lower->def.bit_size);
@@ -54,10 +56,11 @@ lower_load_const_instr_scalar(nir_load_const_instr *lower)
    }
 
    /* Batch things back together into a vector. */
-   nir_def *vec = nir_vec(&b, loads, lower->def.num_components);
+   nir_ssa_def *vec = nir_vec(&b, loads, lower->def.num_components);
 
    /* Replace the old load with a reference to our reconstructed vector. */
-   nir_def_replace(&lower->def, vec);
+   nir_ssa_def_rewrite_uses(&lower->def, nir_src_for_ssa(vec));
+   nir_instr_remove(&lower->instr);
    return true;
 }
 
@@ -74,7 +77,16 @@ nir_lower_load_const_to_scalar_impl(nir_function_impl *impl)
       }
    }
 
-   return nir_progress(progress, impl, nir_metadata_control_flow);
+   if (progress) {
+      nir_metadata_preserve(impl, nir_metadata_block_index |
+                                  nir_metadata_dominance);
+   } else {
+#ifndef NDEBUG
+      impl->valid_metadata &= ~nir_metadata_not_properly_reset;
+#endif
+   }
+
+   return progress;
 }
 
 bool
@@ -82,8 +94,9 @@ nir_lower_load_const_to_scalar(nir_shader *shader)
 {
    bool progress = false;
 
-   nir_foreach_function_impl(impl, shader) {
-      progress |= nir_lower_load_const_to_scalar_impl(impl);
+   nir_foreach_function(function, shader) {
+      if (function->impl)
+         progress |= nir_lower_load_const_to_scalar_impl(function->impl);
    }
 
    return progress;

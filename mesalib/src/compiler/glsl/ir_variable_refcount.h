@@ -62,17 +62,12 @@ public:
    unsigned assigned_count;
 
    bool declaration; /* If the variable had a decl in the instruction stream */
-
-   /** Is the variable a global */
-   bool is_global;
 };
 
 class ir_variable_refcount_visitor : public ir_hierarchical_visitor {
 public:
    ir_variable_refcount_visitor(void);
-   ir_variable_refcount_visitor(const ir_variable_refcount_visitor &) = delete;
    ~ir_variable_refcount_visitor(void);
-   ir_variable_refcount_visitor & operator=(const ir_variable_refcount_visitor &) = delete;
 
    virtual ir_visitor_status visit(ir_variable *);
    virtual ir_visitor_status visit(ir_dereference_variable *);
@@ -91,8 +86,6 @@ public:
    struct hash_table *ht;
 
    void *mem_ctx;
-
-   bool global;
 };
 
 #endif /* GLSL_IR_VARIABLE_REFCOUNT_H */

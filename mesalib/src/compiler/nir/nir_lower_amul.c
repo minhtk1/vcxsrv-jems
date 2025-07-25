@@ -48,8 +48,6 @@
  */
 
 typedef struct {
-   nir_shader *shader;
-
    int (*type_size)(const struct glsl_type *, bool);
 
    /* Tables of UBOs and SSBOs mapping driver_location/base whether
@@ -63,10 +61,6 @@ typedef struct {
     */
    bool has_large_ubo;
    bool has_large_ssbo;
-
-   unsigned max_slot;
-
-   bool progress;
 } lower_state;
 
 /* Lower 'amul's in offset src of large variables to 'imul': */
@@ -74,6 +68,8 @@ static bool
 lower_large_src(nir_src *src, void *s)
 {
    lower_state *state = s;
+
+   assert(src->is_ssa);
 
    nir_instr *parent = src->ssa->parent_instr;
 
@@ -83,19 +79,19 @@ lower_large_src(nir_src *src, void *s)
    if (parent->pass_flags)
       return false;
 
-   nir_foreach_src(parent, lower_large_src, state);
+   bool progress = nir_foreach_src(parent, lower_large_src, state);
 
    if (parent->type == nir_instr_type_alu) {
       nir_alu_instr *alu = nir_instr_as_alu(parent);
       if (alu->op == nir_op_amul) {
          alu->op = nir_op_imul;
-         state->progress = true;
+         progress = true;
       }
    }
 
    parent->pass_flags = 1;
 
-   return true;
+   return progress;
 }
 
 static bool
@@ -103,9 +99,7 @@ large_ubo(lower_state *state, nir_src src)
 {
    if (!nir_src_is_const(src))
       return state->has_large_ubo;
-   unsigned idx = nir_src_as_uint(src);
-   assert(idx < state->shader->info.num_ubos);
-   return state->large_ubos[idx];
+   return state->large_ubos[nir_src_as_uint(src)];
 }
 
 static bool
@@ -113,80 +107,109 @@ large_ssbo(lower_state *state, nir_src src)
 {
    if (!nir_src_is_const(src))
       return state->has_large_ssbo;
-   unsigned idx = nir_src_as_uint(src);
-   assert(idx < state->shader->info.num_ssbos);
-   return state->large_ssbos[idx];
+   return state->large_ssbos[nir_src_as_uint(src)];
 }
 
-static void
+static bool
 lower_intrinsic(lower_state *state, nir_intrinsic_instr *intr)
 {
    switch (intr->intrinsic) {
    case nir_intrinsic_load_ubo:
-      // # src[] = { buffer_index, offset }.
+      //# src[] = { buffer_index, offset }.
       if (large_ubo(state, intr->src[0]))
-         lower_large_src(&intr->src[1], state);
-      return;
+         return lower_large_src(&intr->src[1], state);
+      return false;
 
    case nir_intrinsic_load_ssbo:
-      // # src[] = { buffer_index, offset }.
+      //# src[] = { buffer_index, offset }.
       if (large_ssbo(state, intr->src[0]))
-         lower_large_src(&intr->src[1], state);
-      return;
+         return lower_large_src(&intr->src[1], state);
+      return false;
 
    case nir_intrinsic_store_ssbo:
-      // # src[] = { value, block_index, offset }
+      //# src[] = { value, block_index, offset }
       if (large_ssbo(state, intr->src[1]))
-         lower_large_src(&intr->src[2], state);
-      return;
+         return lower_large_src(&intr->src[2], state);
+      return false;
 
-   case nir_intrinsic_ssbo_atomic:
-   case nir_intrinsic_ssbo_atomic_swap:
+   case nir_intrinsic_ssbo_atomic_add:
+   case nir_intrinsic_ssbo_atomic_imin:
+   case nir_intrinsic_ssbo_atomic_umin:
+   case nir_intrinsic_ssbo_atomic_imax:
+   case nir_intrinsic_ssbo_atomic_umax:
+   case nir_intrinsic_ssbo_atomic_and:
+   case nir_intrinsic_ssbo_atomic_or:
+   case nir_intrinsic_ssbo_atomic_xor:
+   case nir_intrinsic_ssbo_atomic_exchange:
+   case nir_intrinsic_ssbo_atomic_comp_swap:
+   case nir_intrinsic_ssbo_atomic_fadd:
+   case nir_intrinsic_ssbo_atomic_fmin:
+   case nir_intrinsic_ssbo_atomic_fmax:
+   case nir_intrinsic_ssbo_atomic_fcomp_swap:
       /* 0: SSBO index
        * 1: offset
        */
       if (large_ssbo(state, intr->src[0]))
-         lower_large_src(&intr->src[1], state);
-      return;
+         return lower_large_src(&intr->src[1], state);
+      return false;
 
-   case nir_intrinsic_global_atomic:
-   case nir_intrinsic_global_atomic_swap:
-   case nir_intrinsic_load_global_constant:
-   case nir_intrinsic_load_global:
+   case nir_intrinsic_global_atomic_add:
+   case nir_intrinsic_global_atomic_imin:
+   case nir_intrinsic_global_atomic_umin:
+   case nir_intrinsic_global_atomic_imax:
+   case nir_intrinsic_global_atomic_umax:
+   case nir_intrinsic_global_atomic_and:
+   case nir_intrinsic_global_atomic_or:
+   case nir_intrinsic_global_atomic_xor:
+   case nir_intrinsic_global_atomic_exchange:
+   case nir_intrinsic_global_atomic_comp_swap:
+   case nir_intrinsic_global_atomic_fadd:
+   case nir_intrinsic_global_atomic_fmin:
+   case nir_intrinsic_global_atomic_fmax:
+   case nir_intrinsic_global_atomic_fcomp_swap:
       /* just assume we that 24b is not sufficient: */
-      lower_large_src(&intr->src[0], state);
-      return;
-
-   case nir_intrinsic_store_global:
-      /* just assume we that 24b is not sufficient: */
-      lower_large_src(&intr->src[1], state);
-      return;
+      return lower_large_src(&intr->src[0], state);
 
    /* These should all be small enough to unconditionally use imul24: */
-   case nir_intrinsic_shared_atomic:
-   case nir_intrinsic_shared_atomic_swap:
+   case nir_intrinsic_shared_atomic_add:
+   case nir_intrinsic_shared_atomic_imin:
+   case nir_intrinsic_shared_atomic_umin:
+   case nir_intrinsic_shared_atomic_imax:
+   case nir_intrinsic_shared_atomic_umax:
+   case nir_intrinsic_shared_atomic_and:
+   case nir_intrinsic_shared_atomic_or:
+   case nir_intrinsic_shared_atomic_xor:
+   case nir_intrinsic_shared_atomic_exchange:
+   case nir_intrinsic_shared_atomic_comp_swap:
+   case nir_intrinsic_shared_atomic_fadd:
+   case nir_intrinsic_shared_atomic_fmin:
+   case nir_intrinsic_shared_atomic_fmax:
+   case nir_intrinsic_shared_atomic_fcomp_swap:
    case nir_intrinsic_load_uniform:
    case nir_intrinsic_load_input:
    case nir_intrinsic_load_output:
    case nir_intrinsic_store_output:
    default:
-      return;
+      return false;
    }
 }
 
-static void
+static bool
 lower_instr(lower_state *state, nir_instr *instr)
 {
+   bool progress = false;
+
    if (instr->type == nir_instr_type_intrinsic) {
-      lower_intrinsic(state, nir_instr_as_intrinsic(instr));
+      progress |= lower_intrinsic(state, nir_instr_as_intrinsic(instr));
    }
+
+   return progress;
 }
 
 static bool
 is_large(lower_state *state, nir_variable *var)
 {
-   const struct glsl_type *type = glsl_without_array(var->type);
-   unsigned size = state->type_size(type, false);
+   unsigned size = state->type_size(var->type, false);
 
    /* if size is not known (ie. VLA) then assume the worst: */
    if (!size)
@@ -202,49 +225,60 @@ nir_lower_amul(nir_shader *shader,
    assert(shader->options->has_imul24);
    assert(type_size);
 
-   NIR_VLA_FILL(bool, large_ubos, shader->info.num_ubos, 0);
-   NIR_VLA_FILL(bool, large_ssbos, shader->info.num_ssbos, 0);
+   /* uniforms list actually includes ubo's and ssbo's: */
+   int num_uniforms = exec_list_length(&shader->uniforms);
+
+   NIR_VLA_FILL(bool, large_ubos, num_uniforms, 0);
+   NIR_VLA_FILL(bool, large_ssbos, num_uniforms, 0);
 
    lower_state state = {
-      .shader = shader,
-      .type_size = type_size,
-      .large_ubos = large_ubos,
-      .large_ssbos = large_ssbos,
+         .type_size = type_size,
+         .large_ubos = large_ubos,
+         .large_ssbos = large_ssbos,
    };
 
    /* Figure out which UBOs or SSBOs are large enough to be
     * disqualified from imul24:
     */
-   nir_foreach_variable_in_shader(var, shader) {
+   nir_foreach_variable(var, &shader->uniforms) {
       if (var->data.mode == nir_var_mem_ubo) {
+         assert(var->data.driver_location < num_uniforms);
          if (is_large(&state, var)) {
             state.has_large_ubo = true;
-            unsigned size = MAX2(1, glsl_array_size(var->type));
-            for (unsigned i = 0; i < size; i++) {
-               unsigned idx = var->data.driver_location + i;
-               assert(idx < shader->info.num_ubos);
-               state.large_ubos[idx] = true;
-            }
+            state.large_ubos[var->data.driver_location] = true;
          }
       } else if (var->data.mode == nir_var_mem_ssbo) {
+         assert(var->data.driver_location < num_uniforms);
          if (is_large(&state, var)) {
             state.has_large_ssbo = true;
-            unsigned size = MAX2(1, glsl_array_size(var->type));
-            for (unsigned i = 0; i < size; i++) {
-               unsigned idx = var->data.location + i;
-               assert(idx < shader->info.num_ssbos);
-               state.large_ssbos[idx] = true;
-            }
+            state.large_ssbos[var->data.driver_location] = true;
          }
       }
    }
 
-   nir_shader_clear_pass_flags(shader);
+   /* clear pass flags: */
+   nir_foreach_function(function, shader) {
+      nir_function_impl *impl = function->impl;
+      if (!impl)
+         continue;
 
-   nir_foreach_function_impl(impl, shader) {
       nir_foreach_block(block, impl) {
          nir_foreach_instr(instr, block) {
-            lower_instr(&state, instr);
+            instr->pass_flags = 0;
+         }
+      }
+   }
+
+   bool progress = false;
+   nir_foreach_function(function, shader) {
+      nir_function_impl *impl = function->impl;
+
+      if (!impl)
+         continue;
+
+      nir_foreach_block(block, impl) {
+         nir_foreach_instr(instr, block) {
+            progress |= lower_instr(&state, instr);
          }
       }
    }
@@ -252,11 +286,13 @@ nir_lower_amul(nir_shader *shader,
    /* At this point, all 'amul's used in calculating an offset into
     * a large variable have been replaced with 'imul'.  So remaining
     * 'amul's can be replaced with 'imul24':
-    *
-    * Note the exception for 64b (such as load/store_global where
-    * address size is 64b) as imul24 cannot have 64b bitsize
     */
-   nir_foreach_function_impl(impl, shader) {
+   nir_foreach_function(function, shader) {
+      nir_function_impl *impl = function->impl;
+
+      if (!impl)
+         continue;
+
       nir_foreach_block(block, impl) {
          nir_foreach_instr(instr, block) {
             if (instr->type != nir_instr_type_alu)
@@ -266,17 +302,15 @@ nir_lower_amul(nir_shader *shader,
             if (alu->op != nir_op_amul)
                continue;
 
-            if (alu->def.bit_size <= 32)
-               alu->op = nir_op_imul24;
-            else
-               alu->op = nir_op_imul;
-
-            state.progress |= true;
+            alu->op = nir_op_imul24;
+            progress |= true;
          }
       }
 
-      nir_progress(true, impl, nir_metadata_control_flow);
+      nir_metadata_preserve(impl, nir_metadata_block_index |
+                                  nir_metadata_dominance);
+
    }
 
-   return state.progress;
+   return progress;
 }

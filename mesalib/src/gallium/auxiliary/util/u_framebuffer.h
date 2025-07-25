@@ -29,7 +29,7 @@
 #define U_FRAMEBUFFER_H
 
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "pipe/p_state.h"
 
 
@@ -37,7 +37,7 @@
 extern "C" {
 #endif
 
-extern bool
+extern boolean
 util_framebuffer_state_equal(const struct pipe_framebuffer_state *dst,
                              const struct pipe_framebuffer_state *src);
 
@@ -50,7 +50,7 @@ extern void
 util_unreference_framebuffer_state(struct pipe_framebuffer_state *fb);
 
 
-extern bool
+extern boolean
 util_framebuffer_min_size(const struct pipe_framebuffer_state *fb,
                           unsigned *width,
                           unsigned *height);

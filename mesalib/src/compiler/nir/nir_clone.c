@@ -21,10 +21,8 @@
  * IN THE SOFTWARE.
  */
 
-#include "util/u_printf.h"
 #include "nir.h"
 #include "nir_control_flow.h"
-#include "nir_xfb_info.h"
 
 /* Secret Decoder Ring:
  *   clone_foo():
@@ -87,11 +85,6 @@ _lookup_ptr(clone_state *state, const void *ptr, bool global)
    if (!state->global_clone && global)
       return (void *)ptr;
 
-   if (unlikely(!state->remap_table)) {
-      assert(state->allow_remap_fallback);
-      return (void *)ptr;
-   }
-
    entry = _mesa_hash_table_search(state->remap_table, ptr);
    if (!entry) {
       assert(state->allow_remap_fallback);
@@ -119,6 +112,12 @@ remap_global(clone_state *state, const void *ptr)
    return _lookup_ptr(state, ptr, true);
 }
 
+static nir_register *
+remap_reg(clone_state *state, const nir_register *reg)
+{
+   return _lookup_ptr(state, reg, false);
+}
+
 static nir_variable *
 remap_var(clone_state *state, const nir_variable *var)
 {
@@ -131,7 +130,6 @@ nir_constant_clone(const nir_constant *c, nir_variable *nvar)
    nir_constant *nc = ralloc(nvar, nir_constant);
 
    memcpy(nc->values, c->values, sizeof(nc->values));
-   nc->is_null_constant = c->is_null_constant;
    nc->num_elements = c->num_elements;
    nc->elements = ralloc_array(nvar, nir_constant *, c->num_elements);
    for (unsigned i = 0; i < c->num_elements; i++) {
@@ -163,13 +161,6 @@ nir_variable_clone(const nir_variable *var, nir_shader *shader)
          nir_constant_clone(var->constant_initializer, nvar);
    }
    nvar->interface_type = var->interface_type;
-
-   if (var->max_ifc_array_access) {
-      nvar->max_ifc_array_access =
-         rzalloc_array(nvar, int, var->interface_type->length);
-      memcpy(nvar->max_ifc_array_access, var->max_ifc_array_access,
-             var->interface_type->length * sizeof(unsigned));
-   }
 
    nvar->num_members = var->num_members;
    if (var->num_members) {
@@ -203,75 +194,113 @@ clone_var_list(clone_state *state, struct exec_list *dst,
    }
 }
 
+/* NOTE: for cloning nir_registers, bypass nir_global/local_reg_create()
+ * to avoid having to deal with locals and globals separately:
+ */
+static nir_register *
+clone_register(clone_state *state, const nir_register *reg)
+{
+   nir_register *nreg = rzalloc(state->ns, nir_register);
+   add_remap(state, nreg, reg);
+
+   nreg->num_components = reg->num_components;
+   nreg->bit_size = reg->bit_size;
+   nreg->num_array_elems = reg->num_array_elems;
+   nreg->index = reg->index;
+   nreg->name = ralloc_strdup(nreg, reg->name);
+
+   /* reconstructing uses/defs/if_uses handled by nir_instr_insert() */
+   list_inithead(&nreg->uses);
+   list_inithead(&nreg->defs);
+   list_inithead(&nreg->if_uses);
+
+   return nreg;
+}
+
+/* clone list of nir_register: */
+static void
+clone_reg_list(clone_state *state, struct exec_list *dst,
+               const struct exec_list *list)
+{
+   exec_list_make_empty(dst);
+   foreach_list_typed(nir_register, reg, node, list) {
+      nir_register *nreg = clone_register(state, reg);
+      exec_list_push_tail(dst, &nreg->node);
+   }
+}
+
 static void
 __clone_src(clone_state *state, void *ninstr_or_if,
             nir_src *nsrc, const nir_src *src)
 {
-   nsrc->ssa = remap_local(state, src->ssa);
+   nsrc->is_ssa = src->is_ssa;
+   if (src->is_ssa) {
+      nsrc->ssa = remap_local(state, src->ssa);
+   } else {
+      nsrc->reg.reg = remap_reg(state, src->reg.reg);
+      if (src->reg.indirect) {
+         nsrc->reg.indirect = ralloc(ninstr_or_if, nir_src);
+         __clone_src(state, ninstr_or_if, nsrc->reg.indirect, src->reg.indirect);
+      }
+      nsrc->reg.base_offset = src->reg.base_offset;
+   }
 }
 
 static void
-__clone_def(clone_state *state, nir_instr *ninstr,
-            nir_def *ndef, const nir_def *def)
+__clone_dst(clone_state *state, nir_instr *ninstr,
+            nir_dest *ndst, const nir_dest *dst)
 {
-   nir_def_init(ninstr, ndef, def->num_components, def->bit_size);
-   if (likely(state->remap_table))
-      add_remap(state, ndef, def);
+   ndst->is_ssa = dst->is_ssa;
+   if (dst->is_ssa) {
+      nir_ssa_dest_init(ninstr, ndst, dst->ssa.num_components,
+                        dst->ssa.bit_size, dst->ssa.name);
+      add_remap(state, &ndst->ssa, &dst->ssa);
+   } else {
+      ndst->reg.reg = remap_reg(state, dst->reg.reg);
+      if (dst->reg.indirect) {
+         ndst->reg.indirect = ralloc(ninstr, nir_src);
+         __clone_src(state, ninstr, ndst->reg.indirect, dst->reg.indirect);
+      }
+      ndst->reg.base_offset = dst->reg.base_offset;
+   }
 }
 
-/* Returns a copy of the argument string that is owned by the new shader.
- * Uses remap_table avoid allocating multiple copies of the same string.
- */
-static char *
-clone_string(clone_state *state, const char *string)
+nir_alu_instr *
+nir_alu_instr_clone(nir_shader *shader, const nir_alu_instr *orig)
 {
-   if (!string)
-      return NULL;
+   nir_alu_instr *clone = nir_alu_instr_create(shader, orig->op);
 
-   if (!state->remap_table)
-      return ralloc_strdup(state->ns, string);
+   clone->exact = orig->exact;
 
-   struct hash_entry *entry = _mesa_hash_table_search(state->remap_table, string);
-   if (entry)
-      return entry->data;
+   for (unsigned i = 0; i < nir_op_infos[orig->op].num_inputs; i++)
+      nir_alu_src_copy(&clone->src[i], &orig->src[i], clone);
 
-   char *cloned = ralloc_strdup(state->ns, string);
-   _mesa_hash_table_insert(state->remap_table, string, cloned);
-   return cloned;
-}
+   nir_ssa_dest_init(&clone->instr,
+                     &clone->dest.dest,
+                     orig->dest.dest.ssa.num_components,
+                     orig->dest.dest.ssa.bit_size,
+                     orig->dest.dest.ssa.name);
+   clone->dest.write_mask = orig->dest.write_mask;
 
-static void
-clone_debug_info(clone_state *state, nir_instr *ninstr, const nir_instr *instr)
-{
-   if (likely(!state->ns->has_debug_info || !instr->has_debug_info))
-      return;
-
-   nir_instr_debug_info *ndebug_info = nir_instr_get_debug_info(ninstr);
-   const nir_instr_debug_info *debug_info = nir_instr_get_debug_info((void *)instr);
-
-   ndebug_info->filename = clone_string(state, debug_info->filename);
-   ndebug_info->variable_name = clone_string(state, debug_info->variable_name);
-
-   ndebug_info->line = debug_info->line;
-   ndebug_info->column = debug_info->column;
-   ndebug_info->spirv_offset = debug_info->spirv_offset;
-   ndebug_info->nir_line = debug_info->nir_line;
+   return clone;
 }
 
 static nir_alu_instr *
 clone_alu(clone_state *state, const nir_alu_instr *alu)
 {
    nir_alu_instr *nalu = nir_alu_instr_create(state->ns, alu->op);
-   clone_debug_info(state, &nalu->instr, &alu->instr);
    nalu->exact = alu->exact;
-   nalu->fp_fast_math = alu->fp_fast_math;
    nalu->no_signed_wrap = alu->no_signed_wrap;
    nalu->no_unsigned_wrap = alu->no_unsigned_wrap;
 
-   __clone_def(state, &nalu->instr, &nalu->def, &alu->def);
+   __clone_dst(state, &nalu->instr, &nalu->dest.dest, &alu->dest.dest);
+   nalu->dest.saturate = alu->dest.saturate;
+   nalu->dest.write_mask = alu->dest.write_mask;
 
    for (unsigned i = 0; i < nir_op_infos[alu->op].num_inputs; i++) {
       __clone_src(state, &nalu->instr, &nalu->src[i].src, &alu->src[i].src);
+      nalu->src[i].negate = alu->src[i].negate;
+      nalu->src[i].abs = alu->src[i].abs;
       memcpy(nalu->src[i].swizzle, alu->src[i].swizzle,
              sizeof(nalu->src[i].swizzle));
    }
@@ -279,26 +308,15 @@ clone_alu(clone_state *state, const nir_alu_instr *alu)
    return nalu;
 }
 
-nir_alu_instr *
-nir_alu_instr_clone(nir_shader *shader, const nir_alu_instr *orig)
-{
-   clone_state state = {
-      .allow_remap_fallback = true,
-      .ns = shader,
-   };
-   return clone_alu(&state, orig);
-}
-
 static nir_deref_instr *
 clone_deref_instr(clone_state *state, const nir_deref_instr *deref)
 {
    nir_deref_instr *nderef =
       nir_deref_instr_create(state->ns, deref->deref_type);
-   clone_debug_info(state, &nderef->instr, &deref->instr);
 
-   __clone_def(state, &nderef->instr, &nderef->def, &deref->def);
+   __clone_dst(state, &nderef->instr, &nderef->dest, &deref->dest);
 
-   nderef->modes = deref->modes;
+   nderef->mode = deref->mode;
    nderef->type = deref->type;
 
    if (deref->deref_type == nir_deref_type_var) {
@@ -317,7 +335,6 @@ clone_deref_instr(clone_state *state, const nir_deref_instr *deref)
    case nir_deref_type_ptr_as_array:
       __clone_src(state, &nderef->instr,
                   &nderef->arr.index, &deref->arr.index);
-      nderef->arr.in_bounds = deref->arr.in_bounds;
       break;
 
    case nir_deref_type_array_wildcard:
@@ -326,8 +343,6 @@ clone_deref_instr(clone_state *state, const nir_deref_instr *deref)
 
    case nir_deref_type_cast:
       nderef->cast.ptr_stride = deref->cast.ptr_stride;
-      nderef->cast.align_mul = deref->cast.align_mul;
-      nderef->cast.align_offset = deref->cast.align_offset;
       break;
 
    default:
@@ -342,16 +357,14 @@ clone_intrinsic(clone_state *state, const nir_intrinsic_instr *itr)
 {
    nir_intrinsic_instr *nitr =
       nir_intrinsic_instr_create(state->ns, itr->intrinsic);
-   clone_debug_info(state, &nitr->instr, &itr->instr);
 
    unsigned num_srcs = nir_intrinsic_infos[itr->intrinsic].num_srcs;
 
    if (nir_intrinsic_infos[itr->intrinsic].has_dest)
-      __clone_def(state, &nitr->instr, &nitr->def, &itr->def);
+      __clone_dst(state, &nitr->instr, &nitr->dest, &itr->dest);
 
    nitr->num_components = itr->num_components;
    memcpy(nitr->const_index, itr->const_index, sizeof(nitr->const_index));
-   nitr->name = ralloc_strdup(state->ns, itr->name);
 
    for (unsigned i = 0; i < num_srcs; i++)
       __clone_src(state, &nitr->instr, &nitr->src[i], &itr->src[i]);
@@ -365,26 +378,22 @@ clone_load_const(clone_state *state, const nir_load_const_instr *lc)
    nir_load_const_instr *nlc =
       nir_load_const_instr_create(state->ns, lc->def.num_components,
                                   lc->def.bit_size);
-   clone_debug_info(state, &nlc->instr, &lc->instr);
 
    memcpy(&nlc->value, &lc->value, sizeof(*nlc->value) * lc->def.num_components);
 
-   if (likely(state->remap_table))
-      add_remap(state, &nlc->def, &lc->def);
+   add_remap(state, &nlc->def, &lc->def);
 
    return nlc;
 }
 
-static nir_undef_instr *
-clone_ssa_undef(clone_state *state, const nir_undef_instr *sa)
+static nir_ssa_undef_instr *
+clone_ssa_undef(clone_state *state, const nir_ssa_undef_instr *sa)
 {
-   nir_undef_instr *nsa =
-      nir_undef_instr_create(state->ns, sa->def.num_components,
-                             sa->def.bit_size);
-   clone_debug_info(state, &nsa->instr, &sa->instr);
+   nir_ssa_undef_instr *nsa =
+      nir_ssa_undef_instr_create(state->ns, sa->def.num_components,
+                                 sa->def.bit_size);
 
-   if (likely(state->remap_table))
-      add_remap(state, &nsa->def, &sa->def);
+   add_remap(state, &nsa->def, &sa->def);
 
    return nsa;
 }
@@ -393,32 +402,28 @@ static nir_tex_instr *
 clone_tex(clone_state *state, const nir_tex_instr *tex)
 {
    nir_tex_instr *ntex = nir_tex_instr_create(state->ns, tex->num_srcs);
-   clone_debug_info(state, &ntex->instr, &tex->instr);
 
    ntex->sampler_dim = tex->sampler_dim;
    ntex->dest_type = tex->dest_type;
    ntex->op = tex->op;
-   __clone_def(state, &ntex->instr, &ntex->def, &tex->def);
+   __clone_dst(state, &ntex->instr, &ntex->dest, &tex->dest);
    for (unsigned i = 0; i < ntex->num_srcs; i++) {
       ntex->src[i].src_type = tex->src[i].src_type;
       __clone_src(state, &ntex->instr, &ntex->src[i].src, &tex->src[i].src);
    }
    ntex->coord_components = tex->coord_components;
    ntex->is_array = tex->is_array;
-   ntex->array_is_lowered_cube = tex->array_is_lowered_cube;
    ntex->is_shadow = tex->is_shadow;
    ntex->is_new_style_shadow = tex->is_new_style_shadow;
-   ntex->is_sparse = tex->is_sparse;
    ntex->component = tex->component;
    memcpy(ntex->tg4_offsets, tex->tg4_offsets, sizeof(tex->tg4_offsets));
 
    ntex->texture_index = tex->texture_index;
+   ntex->texture_array_size = tex->texture_array_size;
    ntex->sampler_index = tex->sampler_index;
 
    ntex->texture_non_uniform = tex->texture_non_uniform;
    ntex->sampler_non_uniform = tex->sampler_non_uniform;
-
-   ntex->backend_flags = tex->backend_flags;
 
    return ntex;
 }
@@ -427,9 +432,8 @@ static nir_phi_instr *
 clone_phi(clone_state *state, const nir_phi_instr *phi, nir_block *nblk)
 {
    nir_phi_instr *nphi = nir_phi_instr_create(state->ns);
-   clone_debug_info(state, &nphi->instr, &phi->instr);
 
-   __clone_def(state, &nphi->instr, &nphi->def, &phi->def);
+   __clone_dst(state, &nphi->instr, &nphi->dest, &phi->dest);
 
    /* Cloning a phi node is a bit different from other instructions.  The
     * sources of phi instructions are the only time where we can use an SSA
@@ -445,13 +449,24 @@ clone_phi(clone_state *state, const nir_phi_instr *phi, nir_block *nblk)
     */
    nir_instr_insert_after_block(nblk, &nphi->instr);
 
-   nir_foreach_phi_src(src, phi) {
-      nir_phi_src *nsrc = nir_phi_instr_add_src(nphi, src->pred, src->src.ssa);
+   foreach_list_typed(nir_phi_src, src, node, &phi->srcs) {
+      nir_phi_src *nsrc = ralloc(nphi, nir_phi_src);
+
+      /* Just copy the old source for now. */
+      memcpy(nsrc, src, sizeof(*src));
+
+      /* Since we're not letting nir_insert_instr handle use/def stuff for us,
+       * we have to set the parent_instr manually.  It doesn't really matter
+       * when we do it, so we might as well do it here.
+       */
+      nsrc->src.parent_instr = &nphi->instr;
 
       /* Stash it in the list of phi sources.  We'll walk this list and fix up
        * sources at the very end of clone_function_impl.
        */
       list_add(&nsrc->src.use_link, &state->phi_srcs);
+
+      exec_list_push_tail(&nphi->srcs, &nsrc->node);
    }
 
    return nphi;
@@ -460,11 +475,7 @@ clone_phi(clone_state *state, const nir_phi_instr *phi, nir_block *nblk)
 static nir_jump_instr *
 clone_jump(clone_state *state, const nir_jump_instr *jmp)
 {
-   /* These aren't handled because they require special block linking */
-   assert(jmp->type != nir_jump_goto && jmp->type != nir_jump_goto_if);
-
    nir_jump_instr *njmp = nir_jump_instr_create(state->ns, jmp->type);
-   clone_debug_info(state, &njmp->instr, &jmp->instr);
 
    return njmp;
 }
@@ -474,7 +485,6 @@ clone_call(clone_state *state, const nir_call_instr *call)
 {
    nir_function *ncallee = remap_global(state, call->callee);
    nir_call_instr *ncall = nir_call_instr_create(state->ns, ncallee);
-   clone_debug_info(state, &ncall->instr, &call->instr);
 
    for (unsigned i = 0; i < ncall->num_params; i++)
       __clone_src(state, ncall, &ncall->params[i], &call->params[i]);
@@ -494,8 +504,8 @@ clone_instr(clone_state *state, const nir_instr *instr)
       return &clone_intrinsic(state, nir_instr_as_intrinsic(instr))->instr;
    case nir_instr_type_load_const:
       return &clone_load_const(state, nir_instr_as_load_const(instr))->instr;
-   case nir_instr_type_undef:
-      return &clone_ssa_undef(state, nir_instr_as_undef(instr))->instr;
+   case nir_instr_type_ssa_undef:
+      return &clone_ssa_undef(state, nir_instr_as_ssa_undef(instr))->instr;
    case nir_instr_type_tex:
       return &clone_tex(state, nir_instr_as_tex(instr))->instr;
    case nir_instr_type_phi:
@@ -510,28 +520,6 @@ clone_instr(clone_state *state, const nir_instr *instr)
       unreachable("bad instr type");
       return NULL;
    }
-}
-
-nir_instr *
-nir_instr_clone(nir_shader *shader, const nir_instr *orig)
-{
-   clone_state state = {
-      .allow_remap_fallback = true,
-      .ns = shader,
-   };
-   return clone_instr(&state, orig);
-}
-
-nir_instr *
-nir_instr_clone_deep(nir_shader *shader, const nir_instr *orig,
-                     struct hash_table *remap_table)
-{
-   clone_state state = {
-      .allow_remap_fallback = true,
-      .ns = shader,
-      .remap_table = remap_table,
-   };
-   return clone_instr(&state, orig);
 }
 
 static nir_block *
@@ -596,10 +584,6 @@ clone_loop(clone_state *state, struct exec_list *cf_list, const nir_loop *loop)
    nir_cf_node_insert_end(cf_list, &nloop->cf_node);
 
    clone_cf_list(state, &nloop->body, &loop->body);
-   if (nir_loop_has_continue_construct(loop)) {
-      nir_loop_add_continue_construct(nloop);
-      clone_cf_list(state, &nloop->continue_list, &loop->continue_list);
-   }
 
    return nloop;
 }
@@ -640,8 +624,13 @@ fixup_phi_srcs(clone_state *state)
       /* Remove from this list */
       list_del(&src->src.use_link);
 
-      src->src.ssa = remap_local(state, src->src.ssa);
-      list_addtail(&src->src.use_link, &src->src.ssa->uses);
+      if (src->src.is_ssa) {
+         src->src.ssa = remap_local(state, src->src.ssa);
+         list_addtail(&src->src.use_link, &src->src.ssa->uses);
+      } else {
+         src->src.reg.reg = remap_reg(state, src->src.reg.reg);
+         list_addtail(&src->src.use_link, &src->src.reg.reg->uses);
+      }
    }
    assert(list_is_empty(&state->phi_srcs));
 }
@@ -672,9 +661,6 @@ nir_cf_list_clone(nir_cf_list *dst, nir_cf_list *src, nir_cf_node *parent,
    clone_cf_list(&state, &dst->list, &src->list);
 
    fixup_phi_srcs(&state);
-
-   if (!remap_table)
-      free_clone_state(&state);
 }
 
 static nir_function_impl *
@@ -682,10 +668,9 @@ clone_function_impl(clone_state *state, const nir_function_impl *fi)
 {
    nir_function_impl *nfi = nir_function_impl_create_bare(state->ns);
 
-   if (fi->preamble)
-      nfi->preamble = remap_global(state, fi->preamble);
-
    clone_var_list(state, &nfi->locals, &fi->locals);
+   clone_reg_list(state, &nfi->registers, &fi->registers);
+   nfi->reg_alloc = fi->reg_alloc;
 
    assert(list_is_empty(&state->phi_srcs));
 
@@ -700,100 +685,43 @@ clone_function_impl(clone_state *state, const nir_function_impl *fi)
 }
 
 nir_function_impl *
-nir_function_impl_clone_remap_globals(nir_shader *shader,
-                                      const nir_function_impl *fi,
-                                      struct hash_table *remap_table)
+nir_function_impl_clone(nir_shader *shader, const nir_function_impl *fi)
 {
    clone_state state;
-   init_clone_state(&state, remap_table, !!remap_table, false);
+   init_clone_state(&state, NULL, false, false);
 
    state.ns = shader;
 
    nir_function_impl *nfi = clone_function_impl(&state, fi);
 
-   if (!remap_table)
-      free_clone_state(&state);
+   free_clone_state(&state);
 
    return nfi;
-}
-
-nir_function_impl *
-nir_function_impl_clone(nir_shader *shader, const nir_function_impl *fi)
-{
-   return nir_function_impl_clone_remap_globals(shader, fi, NULL);
-}
-
-nir_function *
-nir_function_clone(nir_shader *ns, const nir_function *fxn)
-{
-   nir_function *nfxn = nir_function_create(ns, fxn->name);
-   nfxn->num_params = fxn->num_params;
-   if (fxn->num_params) {
-      nfxn->params = ralloc_array(ns, nir_parameter, fxn->num_params);
-      memcpy(nfxn->params, fxn->params, sizeof(nir_parameter) * fxn->num_params);
-
-      for (unsigned i = 0; i < fxn->num_params; ++i) {
-         if (fxn->params[i].name)
-            nfxn->params[i].name = ralloc_strdup(ns, fxn->params[i].name);
-      }
-   }
-   nfxn->is_entrypoint = fxn->is_entrypoint;
-   nfxn->is_preamble = fxn->is_preamble;
-   nfxn->should_inline = fxn->should_inline;
-   nfxn->dont_inline = fxn->dont_inline;
-   nfxn->is_subroutine = fxn->is_subroutine;
-   nfxn->driver_attributes = fxn->driver_attributes;
-   nfxn->is_tmp_globals_wrapper = fxn->is_tmp_globals_wrapper;
-   nfxn->num_subroutine_types = fxn->num_subroutine_types;
-   nfxn->subroutine_index = fxn->subroutine_index;
-   nfxn->workgroup_size[0] = fxn->workgroup_size[0];
-   nfxn->workgroup_size[1] = fxn->workgroup_size[1];
-   nfxn->workgroup_size[2] = fxn->workgroup_size[2];
-   if (fxn->num_subroutine_types) {
-      nfxn->subroutine_types = ralloc_array(ns, const struct glsl_type *,
-                                            fxn->num_subroutine_types);
-      for (unsigned i = 0; i < fxn->num_subroutine_types; i++) {
-         nfxn->subroutine_types[i] = fxn->subroutine_types[i];
-      }
-   }
-
-   /* At first glance, it looks like we should clone the function_impl here.
-    * However, call instructions need to be able to reference at least the
-    * function and those will get processed as we clone the function_impls.
-    * We stop here and do function_impls as a second pass.
-    */
-   return nfxn;
 }
 
 static nir_function *
 clone_function(clone_state *state, const nir_function *fxn, nir_shader *ns)
 {
    assert(ns == state->ns);
+   nir_function *nfxn = nir_function_create(ns, fxn->name);
 
-   nir_function *nfxn = nir_function_clone(ns, fxn);
    /* Needed for call instructions */
    add_remap(state, nfxn, fxn);
-   return nfxn;
-}
 
-static u_printf_info *
-clone_printf_info(void *mem_ctx, const nir_shader *s)
-{
-   u_printf_info *infos = ralloc_array(mem_ctx, u_printf_info, s->printf_info_count);
-
-   for (unsigned i = 0; i < s->printf_info_count; i++) {
-      const u_printf_info *src_info = &s->printf_info[i];
-
-      infos[i].num_args = src_info->num_args;
-      infos[i].arg_sizes = ralloc_memdup(mem_ctx, src_info->arg_sizes,
-                                         sizeof(infos[i].arg_sizes[0]) * src_info->num_args);
-
-      infos[i].string_size = src_info->string_size;
-      infos[i].strings = ralloc_memdup(mem_ctx, src_info->strings,
-                                       src_info->string_size);
+   nfxn->num_params = fxn->num_params;
+   if (fxn->num_params) {
+           nfxn->params = ralloc_array(state->ns, nir_parameter, fxn->num_params);
+           memcpy(nfxn->params, fxn->params, sizeof(nir_parameter) * fxn->num_params);
    }
+   nfxn->is_entrypoint = fxn->is_entrypoint;
 
-   return infos;
+   /* At first glance, it looks like we should clone the function_impl here.
+    * However, call instructions need to be able to reference at least the
+    * function and those will get processed as we clone the function_impls.
+    * We stop here and do function_impls as a second pass.
+    */
+
+   return nfxn;
 }
 
 nir_shader *
@@ -805,22 +733,26 @@ nir_shader_clone(void *mem_ctx, const nir_shader *s)
    nir_shader *ns = nir_shader_create(mem_ctx, s->info.stage, s->options, NULL);
    state.ns = ns;
 
-   ns->has_debug_info = s->has_debug_info;
-
-   clone_var_list(&state, &ns->variables, &s->variables);
+   clone_var_list(&state, &ns->uniforms, &s->uniforms);
+   clone_var_list(&state, &ns->inputs,   &s->inputs);
+   clone_var_list(&state, &ns->outputs,  &s->outputs);
+   clone_var_list(&state, &ns->shared,   &s->shared);
+   clone_var_list(&state, &ns->globals,  &s->globals);
+   clone_var_list(&state, &ns->system_values, &s->system_values);
 
    /* Go through and clone functions */
    foreach_list_typed(nir_function, fxn, node, &s->functions)
       clone_function(&state, fxn, ns);
 
    /* Only after all functions are cloned can we clone the actual function
-    * implementations.  This is because nir_call_instrs and preambles need to
-    * reference the functions of other functions and we don't know what order
-    * the functions will have in the list.
+    * implementations.  This is because nir_call_instrs need to reference the
+    * functions of other functions and we don't know what order the functions
+    * will have in the list.
     */
-   nir_foreach_function_with_impl(fxn, impl, s) {
+   nir_foreach_function(fxn, s) {
       nir_function *nfxn = remap_global(&state, fxn);
-      nir_function_set_impl(nfxn, clone_function_impl(&state, impl));
+      nfxn->impl = clone_function_impl(&state, fxn->impl);
+      nfxn->impl->function = nfxn;
    }
 
    ns->info = s->info;
@@ -831,22 +763,13 @@ nir_shader_clone(void *mem_ctx, const nir_shader *s)
    ns->num_inputs = s->num_inputs;
    ns->num_uniforms = s->num_uniforms;
    ns->num_outputs = s->num_outputs;
+   ns->num_shared = s->num_shared;
    ns->scratch_size = s->scratch_size;
 
    ns->constant_data_size = s->constant_data_size;
    if (s->constant_data_size > 0) {
-      ns->constant_data = ralloc_memdup(ns, s->constant_data,
-                                        s->constant_data_size);
-   }
-
-   if (s->xfb_info) {
-      size_t size = nir_xfb_info_size(s->xfb_info->output_count);
-      ns->xfb_info = ralloc_memdup(ns, s->xfb_info, size);
-   }
-
-   if (s->printf_info_count > 0) {
-      ns->printf_info = clone_printf_info(ns, s);
-      ns->printf_info_count = s->printf_info_count;
+      ns->constant_data = ralloc_size(ns, s->constant_data_size);
+      memcpy(ns->constant_data, s->constant_data, s->constant_data_size);
    }
 
    free_clone_state(&state);
@@ -878,7 +801,12 @@ nir_shader_replace(nir_shader *dst, nir_shader *src)
    /* We have to move all the linked lists over separately because we need the
     * pointers in the list elements to point to the lists in dst and not src.
     */
-   exec_list_move_nodes_to(&src->variables, &dst->variables);
+   exec_list_move_nodes_to(&src->uniforms,      &dst->uniforms);
+   exec_list_move_nodes_to(&src->inputs,        &dst->inputs);
+   exec_list_move_nodes_to(&src->outputs,       &dst->outputs);
+   exec_list_move_nodes_to(&src->shared,        &dst->shared);
+   exec_list_move_nodes_to(&src->globals,       &dst->globals);
+   exec_list_move_nodes_to(&src->system_values, &dst->system_values);
 
    /* Now move the functions over.  This takes a tiny bit more work */
    exec_list_move_nodes_to(&src->functions, &dst->functions);

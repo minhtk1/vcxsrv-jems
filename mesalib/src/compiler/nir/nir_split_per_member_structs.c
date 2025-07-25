@@ -21,8 +21,14 @@
  * IN THE SOFTWARE.
  */
 
-#include "nir_builder.h"
+#include "nir.h"
 #include "nir_deref.h"
+
+struct split_struct_state {
+   void *dead_ctx;
+
+   struct hash_table *var_to_member_map;
+};
 
 static nir_variable *
 find_var_member(struct nir_variable *var, unsigned member,
@@ -60,7 +66,7 @@ split_variable(struct nir_variable *var, nir_shader *shader,
    assert(var->state_slots == NULL);
 
    /* Constant initializers are currently not handled */
-   assert(var->constant_initializer == NULL && var->pointer_initializer == NULL);
+   assert(var->constant_initializer == NULL);
 
    nir_variable **members =
       ralloc_array(dead_ctx, nir_variable *, var->num_members);
@@ -97,6 +103,24 @@ split_variable(struct nir_variable *var, nir_shader *shader,
    _mesa_hash_table_insert(var_to_member_map, var, members);
 }
 
+static bool
+split_variables_in_list(struct exec_list *var_list, nir_shader *shader,
+                        struct hash_table *var_to_member_map, void *dead_ctx)
+{
+   bool progress = false;
+
+   nir_foreach_variable_safe(var, var_list) {
+      if (var->num_members == 0)
+         continue;
+
+      split_variable(var, shader, var_to_member_map, dead_ctx);
+      exec_node_remove(&var->node);
+      progress = true;
+   }
+
+   return progress;
+}
+
 static nir_deref_instr *
 build_member_deref(nir_builder *b, nir_deref_instr *deref, nir_variable *member)
 {
@@ -109,18 +133,13 @@ build_member_deref(nir_builder *b, nir_deref_instr *deref, nir_variable *member)
    }
 }
 
-static bool
-rewrite_deref_instr(nir_builder *b, nir_instr *instr, void *cb_data)
+static void
+rewrite_deref_instr(nir_builder *b, nir_deref_instr *deref,
+                    struct hash_table *var_to_member_map)
 {
-   if (instr->type != nir_instr_type_deref)
-      return false;
-
-   nir_deref_instr *deref = nir_instr_as_deref(instr);
-   struct hash_table *var_to_member_map = cb_data;
-
    /* We must be a struct deref */
    if (deref->deref_type != nir_deref_type_struct)
-      return false;
+      return;
 
    nir_deref_instr *base;
    for (base = nir_deref_instr_parent(deref);
@@ -129,12 +148,12 @@ rewrite_deref_instr(nir_builder *b, nir_instr *instr, void *cb_data)
 
       /* If this struct is nested inside another, bail */
       if (base->deref_type == nir_deref_type_struct)
-         return false;
+         return;
    }
 
    /* We must be on a variable with members */
    if (!base || base->var->num_members == 0)
-      return false;
+      return;
 
    nir_variable *member = find_var_member(base->var, deref->strct.index,
                                           var_to_member_map);
@@ -143,13 +162,11 @@ rewrite_deref_instr(nir_builder *b, nir_instr *instr, void *cb_data)
    b->cursor = nir_before_instr(&deref->instr);
    nir_deref_instr *member_deref =
       build_member_deref(b, nir_deref_instr_parent(deref), member);
-   nir_def_rewrite_uses(&deref->def,
-                        &member_deref->def);
+   nir_ssa_def_rewrite_uses(&deref->dest.ssa,
+                            nir_src_for_ssa(&member_deref->dest.ssa));
 
    /* The referenced variable is no longer valid, clean up the deref */
    nir_deref_instr_remove_if_unused(deref);
-
-   return true;
 }
 
 bool
@@ -160,23 +177,32 @@ nir_split_per_member_structs(nir_shader *shader)
    struct hash_table *var_to_member_map =
       _mesa_pointer_hash_table_create(dead_ctx);
 
-   nir_foreach_variable_with_modes_safe(var, shader, nir_var_shader_in | nir_var_shader_out | nir_var_system_value) {
-      if (var->num_members == 0)
-         continue;
-
-      split_variable(var, shader, var_to_member_map, dead_ctx);
-      exec_node_remove(&var->node);
-      progress = true;
-   }
-
+   progress |= split_variables_in_list(&shader->inputs, shader,
+                                       var_to_member_map, dead_ctx);
+   progress |= split_variables_in_list(&shader->outputs, shader,
+                                       var_to_member_map, dead_ctx);
+   progress |= split_variables_in_list(&shader->system_values, shader,
+                                       var_to_member_map, dead_ctx);
    if (!progress) {
       ralloc_free(dead_ctx);
       return false;
    }
 
-   nir_shader_instructions_pass(shader, rewrite_deref_instr,
-                                nir_metadata_control_flow,
-                                var_to_member_map);
+   nir_foreach_function(function, shader) {
+      if (!function->impl)
+         continue;
+
+      nir_builder b;
+      nir_builder_init(&b, function->impl);
+      nir_foreach_block(block, function->impl) {
+         nir_foreach_instr_safe(instr, block) {
+            if (instr->type == nir_instr_type_deref) {
+               rewrite_deref_instr(&b, nir_instr_as_deref(instr),
+                                   var_to_member_map);
+            }
+         }
+      }
+   }
 
    ralloc_free(dead_ctx);
 

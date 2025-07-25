@@ -26,28 +26,6 @@
 #include "ir_optimization.h"
 #include "ir_rvalue_visitor.h"
 
-enum lower_packing_builtins_op {
-   LOWER_PACK_UNPACK_NONE               = 0x0000,
-
-   LOWER_PACK_SNORM_2x16                = 0x0001,
-   LOWER_UNPACK_SNORM_2x16              = 0x0002,
-
-   LOWER_PACK_UNORM_2x16                = 0x0004,
-   LOWER_UNPACK_UNORM_2x16              = 0x0008,
-
-   LOWER_PACK_HALF_2x16                 = 0x0010,
-   LOWER_UNPACK_HALF_2x16               = 0x0020,
-
-   LOWER_PACK_SNORM_4x8                 = 0x0040,
-   LOWER_UNPACK_SNORM_4x8               = 0x0080,
-
-   LOWER_PACK_UNORM_4x8                 = 0x0100,
-   LOWER_UNPACK_UNORM_4x8               = 0x0200,
-
-   LOWER_PACK_USE_BFI                   = 0x0400,
-   LOWER_PACK_USE_BFE                   = 0x0800,
-};
-
 namespace {
 
 using namespace ir_builder;
@@ -72,9 +50,6 @@ public:
    {
       assert(factory_instructions.is_empty());
    }
-
-   lower_packing_builtins_visitor(const lower_packing_builtins_visitor &) = delete;
-   lower_packing_builtins_visitor & operator=(const lower_packing_builtins_visitor &) = delete;
 
    bool get_progress() { return progress; }
 
@@ -232,10 +207,10 @@ private:
    ir_rvalue*
    pack_uvec2_to_uint(ir_rvalue *uvec2_rval)
    {
-      assert(uvec2_rval->type == &glsl_type_builtin_uvec2);
+      assert(uvec2_rval->type == glsl_type::uvec2_type);
 
       /* uvec2 u = UVEC2_RVAL; */
-      ir_variable *u = factory.make_temp(&glsl_type_builtin_uvec2,
+      ir_variable *u = factory.make_temp(glsl_type::uvec2_type,
                                          "tmp_pack_uvec2_to_uint");
       factory.emit(assign(u, uvec2_rval));
 
@@ -261,9 +236,9 @@ private:
    ir_rvalue*
    pack_uvec4_to_uint(ir_rvalue *uvec4_rval)
    {
-      assert(uvec4_rval->type == &glsl_type_builtin_uvec4);
+      assert(uvec4_rval->type == glsl_type::uvec4_type);
 
-      ir_variable *u = factory.make_temp(&glsl_type_builtin_uvec4,
+      ir_variable *u = factory.make_temp(glsl_type::uvec4_type,
                                          "tmp_pack_uvec4_to_uint");
 
       if (op_mask & LOWER_PACK_USE_BFI) {
@@ -298,15 +273,15 @@ private:
    ir_rvalue*
    unpack_uint_to_uvec2(ir_rvalue *uint_rval)
    {
-      assert(uint_rval->type == &glsl_type_builtin_uint);
+      assert(uint_rval->type == glsl_type::uint_type);
 
       /* uint u = UINT_RVAL; */
-      ir_variable *u = factory.make_temp(&glsl_type_builtin_uint,
+      ir_variable *u = factory.make_temp(glsl_type::uint_type,
                                           "tmp_unpack_uint_to_uvec2_u");
       factory.emit(assign(u, uint_rval));
 
       /* uvec2 u2; */
-      ir_variable *u2 = factory.make_temp(&glsl_type_builtin_uvec2,
+      ir_variable *u2 = factory.make_temp(glsl_type::uvec2_type,
                                            "tmp_unpack_uint_to_uvec2_u2");
 
       /* u2.x = u & 0xffffu; */
@@ -327,7 +302,7 @@ private:
    ir_rvalue *
    unpack_uint_to_ivec2(ir_rvalue *uint_rval)
    {
-      assert(uint_rval->type == &glsl_type_builtin_uint);
+      assert(uint_rval->type == glsl_type::uint_type);
 
       if (!(op_mask & LOWER_PACK_USE_BFE)) {
          return rshift(lshift(u2i(unpack_uint_to_uvec2(uint_rval)),
@@ -335,12 +310,12 @@ private:
                        constant(16u));
       }
 
-      ir_variable *i = factory.make_temp(&glsl_type_builtin_int,
+      ir_variable *i = factory.make_temp(glsl_type::int_type,
                                          "tmp_unpack_uint_to_ivec2_i");
       factory.emit(assign(i, u2i(uint_rval)));
 
       /* ivec2 i2; */
-      ir_variable *i2 = factory.make_temp(&glsl_type_builtin_ivec2,
+      ir_variable *i2 = factory.make_temp(glsl_type::ivec2_type,
                                           "tmp_unpack_uint_to_ivec2_i2");
 
       factory.emit(assign(i2, bitfield_extract(i, constant(0), constant(16)),
@@ -361,15 +336,15 @@ private:
    ir_rvalue*
    unpack_uint_to_uvec4(ir_rvalue *uint_rval)
    {
-      assert(uint_rval->type == &glsl_type_builtin_uint);
+      assert(uint_rval->type == glsl_type::uint_type);
 
       /* uint u = UINT_RVAL; */
-      ir_variable *u = factory.make_temp(&glsl_type_builtin_uint,
+      ir_variable *u = factory.make_temp(glsl_type::uint_type,
                                           "tmp_unpack_uint_to_uvec4_u");
       factory.emit(assign(u, uint_rval));
 
       /* uvec4 u4; */
-      ir_variable *u4 = factory.make_temp(&glsl_type_builtin_uvec4,
+      ir_variable *u4 = factory.make_temp(glsl_type::uvec4_type,
                                            "tmp_unpack_uint_to_uvec4_u4");
 
       /* u4.x = u & 0xffu; */
@@ -408,7 +383,7 @@ private:
    ir_rvalue *
    unpack_uint_to_ivec4(ir_rvalue *uint_rval)
    {
-      assert(uint_rval->type == &glsl_type_builtin_uint);
+      assert(uint_rval->type == glsl_type::uint_type);
 
       if (!(op_mask & LOWER_PACK_USE_BFE)) {
          return rshift(lshift(u2i(unpack_uint_to_uvec4(uint_rval)),
@@ -416,12 +391,12 @@ private:
                        constant(24u));
       }
 
-      ir_variable *i = factory.make_temp(&glsl_type_builtin_int,
+      ir_variable *i = factory.make_temp(glsl_type::int_type,
                                          "tmp_unpack_uint_to_ivec4_i");
       factory.emit(assign(i, u2i(uint_rval)));
 
       /* ivec4 i4; */
-      ir_variable *i4 = factory.make_temp(&glsl_type_builtin_ivec4,
+      ir_variable *i4 = factory.make_temp(glsl_type::ivec4_type,
                                           "tmp_unpack_uint_to_ivec4_i4");
 
       factory.emit(assign(i4, bitfield_extract(i, constant(0), constant(8)),
@@ -473,7 +448,7 @@ private:
        * From page 56 (62 of pdf) of the GLSL ES 3.00 spec: "It is undefined to
        * convert a negative floating point value to an uint".
        */
-      assert(vec2_rval->type == &glsl_type_builtin_vec2);
+      assert(vec2_rval->type == glsl_type::vec2_type);
 
       ir_rvalue *result = pack_uvec2_to_uint(
             i2u(f2i(round_even(mul(clamp(vec2_rval,
@@ -481,7 +456,7 @@ private:
                                          constant(1.0f)),
                                    constant(32767.0f))))));
 
-      assert(result->type == &glsl_type_builtin_uint);
+      assert(result->type == glsl_type::uint_type);
       return result;
    }
 
@@ -522,7 +497,7 @@ private:
        * From page 87 (93 of pdf) of the GLSL 4.30 spec: "It is undefined to
        * convert a negative floating point value to an uint".
        */
-      assert(vec4_rval->type == &glsl_type_builtin_vec4);
+      assert(vec4_rval->type == glsl_type::vec4_type);
 
       ir_rvalue *result = pack_uvec4_to_uint(
             i2u(f2i(round_even(mul(clamp(vec4_rval,
@@ -530,7 +505,7 @@ private:
                                          constant(1.0f)),
                                    constant(127.0f))))));
 
-      assert(result->type == &glsl_type_builtin_uint);
+      assert(result->type == glsl_type::uint_type);
       return result;
    }
 
@@ -579,7 +554,7 @@ private:
        * 17-32, which is accomplished by left-shifting then right-shifting.
        */
 
-      assert(uint_rval->type == &glsl_type_builtin_uint);
+      assert(uint_rval->type == glsl_type::uint_type);
 
       ir_rvalue *result =
         clamp(div(i2f(unpack_uint_to_ivec2(uint_rval)),
@@ -587,7 +562,7 @@ private:
               constant(-1.0f),
               constant(1.0f));
 
-      assert(result->type == &glsl_type_builtin_vec2);
+      assert(result->type == glsl_type::vec2_type);
       return result;
    }
 
@@ -636,7 +611,7 @@ private:
        * 9-32, which is accomplished by left-shifting then right-shifting.
        */
 
-      assert(uint_rval->type == &glsl_type_builtin_uint);
+      assert(uint_rval->type == glsl_type::uint_type);
 
       ir_rvalue *result =
         clamp(div(i2f(unpack_uint_to_ivec4(uint_rval)),
@@ -644,7 +619,7 @@ private:
               constant(-1.0f),
               constant(1.0f));
 
-      assert(result->type == &glsl_type_builtin_vec4);
+      assert(result->type == glsl_type::vec4_type);
       return result;
    }
 
@@ -683,12 +658,12 @@ private:
        * has been clamped to a non-negative range.
        */
 
-      assert(vec2_rval->type == &glsl_type_builtin_vec2);
+      assert(vec2_rval->type == glsl_type::vec2_type);
 
       ir_rvalue *result = pack_uvec2_to_uint(
          f2u(round_even(mul(saturate(vec2_rval), constant(65535.0f)))));
 
-      assert(result->type == &glsl_type_builtin_uint);
+      assert(result->type == glsl_type::uint_type);
       return result;
    }
 
@@ -727,12 +702,12 @@ private:
        * has been clamped to a non-negative range.
        */
 
-      assert(vec4_rval->type == &glsl_type_builtin_vec4);
+      assert(vec4_rval->type == glsl_type::vec4_type);
 
       ir_rvalue *result = pack_uvec4_to_uint(
          f2u(round_even(mul(saturate(vec4_rval), constant(255.0f)))));
 
-      assert(result->type == &glsl_type_builtin_uint);
+      assert(result->type == glsl_type::uint_type);
       return result;
    }
 
@@ -768,12 +743,12 @@ private:
        *     return vec2(unpack_uint_to_uvec2(UINT_RVALUE)) / 65535.0;
        */
 
-      assert(uint_rval->type == &glsl_type_builtin_uint);
+      assert(uint_rval->type == glsl_type::uint_type);
 
       ir_rvalue *result = div(u2f(unpack_uint_to_uvec2(uint_rval)),
                               constant(65535.0f));
 
-      assert(result->type == &glsl_type_builtin_vec2);
+      assert(result->type == glsl_type::vec2_type);
       return result;
    }
 
@@ -809,12 +784,12 @@ private:
        *     return vec4(unpack_uint_to_uvec4(UINT_RVALUE)) / 255.0;
        */
 
-      assert(uint_rval->type == &glsl_type_builtin_uint);
+      assert(uint_rval->type == glsl_type::uint_type);
 
       ir_rvalue *result = div(u2f(unpack_uint_to_uvec4(uint_rval)),
                               constant(255.0f));
 
-      assert(result->type == &glsl_type_builtin_vec4);
+      assert(result->type == glsl_type::vec4_type);
       return result;
    }
 
@@ -832,25 +807,25 @@ private:
                          ir_rvalue *e_rval,
                          ir_rvalue *m_rval)
    {
-      assert(e_rval->type == &glsl_type_builtin_uint);
-      assert(m_rval->type == &glsl_type_builtin_uint);
+      assert(e_rval->type == glsl_type::uint_type);
+      assert(m_rval->type == glsl_type::uint_type);
 
       /* uint u16; */
-      ir_variable *u16 = factory.make_temp(&glsl_type_builtin_uint,
+      ir_variable *u16 = factory.make_temp(glsl_type::uint_type,
                                            "tmp_pack_half_1x16_u16");
 
       /* float f = FLOAT_RVAL; */
-      ir_variable *f = factory.make_temp(&glsl_type_builtin_float,
+      ir_variable *f = factory.make_temp(glsl_type::float_type,
                                           "tmp_pack_half_1x16_f");
       factory.emit(assign(f, f_rval));
 
       /* uint e = E_RVAL; */
-      ir_variable *e = factory.make_temp(&glsl_type_builtin_uint,
+      ir_variable *e = factory.make_temp(glsl_type::uint_type,
                                           "tmp_pack_half_1x16_e");
       factory.emit(assign(e, e_rval));
 
       /* uint m = M_RVAL; */
-      ir_variable *m = factory.make_temp(&glsl_type_builtin_uint,
+      ir_variable *m = factory.make_temp(glsl_type::uint_type,
                                           "tmp_pack_half_1x16_m");
       factory.emit(assign(m, m_rval));
 
@@ -1039,27 +1014,27 @@ private:
        *    bits.
        */
 
-      assert(vec2_rval->type == &glsl_type_builtin_vec2);
+      assert(vec2_rval->type == glsl_type::vec2_type);
 
       /* vec2 f = VEC2_RVAL; */
-      ir_variable *f = factory.make_temp(&glsl_type_builtin_vec2,
+      ir_variable *f = factory.make_temp(glsl_type::vec2_type,
                                          "tmp_pack_half_2x16_f");
       factory.emit(assign(f, vec2_rval));
 
       /* uvec2 f32 = bitcast_f2u(f); */
-      ir_variable *f32 = factory.make_temp(&glsl_type_builtin_uvec2,
+      ir_variable *f32 = factory.make_temp(glsl_type::uvec2_type,
                                             "tmp_pack_half_2x16_f32");
       factory.emit(assign(f32, expr(ir_unop_bitcast_f2u, f)));
 
       /* uvec2 f16; */
-      ir_variable *f16 = factory.make_temp(&glsl_type_builtin_uvec2,
+      ir_variable *f16 = factory.make_temp(glsl_type::uvec2_type,
                                         "tmp_pack_half_2x16_f16");
 
       /* Get f32's unshifted exponent bits.
        *
        *   uvec2 e = f32 & 0x7f800000u;
        */
-      ir_variable *e = factory.make_temp(&glsl_type_builtin_uvec2,
+      ir_variable *e = factory.make_temp(glsl_type::uvec2_type,
                                           "tmp_pack_half_2x16_e");
       factory.emit(assign(e, bit_and(f32, constant(0x7f800000u))));
 
@@ -1067,7 +1042,7 @@ private:
        *
        *   uvec2 m = f32 & 0x007fffffu;
        */
-      ir_variable *m = factory.make_temp(&glsl_type_builtin_uvec2,
+      ir_variable *m = factory.make_temp(glsl_type::uvec2_type,
                                           "tmp_pack_half_2x16_m");
       factory.emit(assign(m, bit_and(f32, constant(0x007fffffu))));
 
@@ -1100,7 +1075,7 @@ private:
                                         constant(16u)),
                                  swizzle_x(f16));
 
-      assert(result->type == &glsl_type_builtin_uint);
+      assert(result->type == glsl_type::uint_type);
       return result;
    }
 
@@ -1118,20 +1093,20 @@ private:
    ir_rvalue*
    unpack_half_1x16_nosign(ir_rvalue *e_rval, ir_rvalue *m_rval)
    {
-      assert(e_rval->type == &glsl_type_builtin_uint);
-      assert(m_rval->type == &glsl_type_builtin_uint);
+      assert(e_rval->type == glsl_type::uint_type);
+      assert(m_rval->type == glsl_type::uint_type);
 
       /* uint u32; */
-      ir_variable *u32 = factory.make_temp(&glsl_type_builtin_uint,
+      ir_variable *u32 = factory.make_temp(glsl_type::uint_type,
                                            "tmp_unpack_half_1x16_u32");
 
       /* uint e = E_RVAL; */
-      ir_variable *e = factory.make_temp(&glsl_type_builtin_uint,
+      ir_variable *e = factory.make_temp(glsl_type::uint_type,
                                           "tmp_unpack_half_1x16_e");
       factory.emit(assign(e, e_rval));
 
       /* uint m = M_RVAL; */
-      ir_variable *m = factory.make_temp(&glsl_type_builtin_uint,
+      ir_variable *m = factory.make_temp(glsl_type::uint_type,
                                           "tmp_unpack_half_1x16_m");
       factory.emit(assign(m, m_rval));
 
@@ -1263,24 +1238,24 @@ private:
        *    16 least-significant bits of v; the second component is obtained
        *    from the 16 most-significant bits of v.
        */
-      assert(uint_rval->type == &glsl_type_builtin_uint);
+      assert(uint_rval->type == glsl_type::uint_type);
 
       /* uint u = RVALUE;
        * uvec2 f16 = uvec2(u.x & 0xffff, u.y >> 16);
        */
-      ir_variable *f16 = factory.make_temp(&glsl_type_builtin_uvec2,
+      ir_variable *f16 = factory.make_temp(glsl_type::uvec2_type,
                                             "tmp_unpack_half_2x16_f16");
       factory.emit(assign(f16, unpack_uint_to_uvec2(uint_rval)));
 
       /* uvec2 f32; */
-      ir_variable *f32 = factory.make_temp(&glsl_type_builtin_uvec2,
+      ir_variable *f32 = factory.make_temp(glsl_type::uvec2_type,
                                             "tmp_unpack_half_2x16_f32");
 
       /* Get f16's unshifted exponent bits.
        *
        *    uvec2 e = f16 & 0x7c00u;
        */
-      ir_variable *e = factory.make_temp(&glsl_type_builtin_uvec2,
+      ir_variable *e = factory.make_temp(glsl_type::uvec2_type,
                                           "tmp_unpack_half_2x16_e");
       factory.emit(assign(e, bit_and(f16, constant(0x7c00u))));
 
@@ -1288,7 +1263,7 @@ private:
        *
        *    uvec2 m = f16 & 0x03ffu;
        */
-      ir_variable *m = factory.make_temp(&glsl_type_builtin_uvec2,
+      ir_variable *m = factory.make_temp(glsl_type::uvec2_type,
                                           "tmp_unpack_half_2x16_m");
       factory.emit(assign(m, bit_and(f16, constant(0x03ffu))));
 
@@ -1315,7 +1290,7 @@ private:
 
       /* return bitcast_u2f(f32); */
       ir_rvalue *result = expr(ir_unop_bitcast_u2f, f32);
-      assert(result->type == &glsl_type_builtin_vec2);
+      assert(result->type == glsl_type::vec2_type);
       return result;
    }
 };
@@ -1324,31 +1299,12 @@ private:
 
 /**
  * \brief Lower the builtin packing functions.
+ *
+ * \param op_mask is a bitmask of `enum lower_packing_builtins_op`.
  */
 bool
-lower_packing_builtins(exec_list *instructions,
-                       bool has_shading_language_packing,
-                       bool has_gpu_shader5,
-                       bool has_half_float_packing)
+lower_packing_builtins(exec_list *instructions, int op_mask)
 {
-   if (!has_shading_language_packing)
-      return false;
-
-   int op_mask = LOWER_PACK_SNORM_2x16 |
-                 LOWER_UNPACK_SNORM_2x16 |
-                 LOWER_PACK_UNORM_2x16 |
-                 LOWER_UNPACK_UNORM_2x16 |
-                 LOWER_PACK_SNORM_4x8 |
-                 LOWER_UNPACK_SNORM_4x8 |
-                 LOWER_UNPACK_UNORM_4x8 |
-                 LOWER_PACK_UNORM_4x8;
-
-   if (has_gpu_shader5)
-      op_mask |= LOWER_PACK_USE_BFI | LOWER_PACK_USE_BFE;
-
-   if (!has_half_float_packing)
-      op_mask |= LOWER_PACK_HALF_2x16 | LOWER_UNPACK_HALF_2x16;
-
    lower_packing_builtins_visitor v(op_mask);
    visit_list_elements(&v, instructions, true);
    return v.get_progress();

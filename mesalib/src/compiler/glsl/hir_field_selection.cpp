@@ -44,19 +44,19 @@ _mesa_ast_field_selection_to_hir(const ast_expression *expr,
     * being applied.
     */
    YYLTYPE loc = expr->get_location();
-   if (glsl_type_is_error(op->type)) {
+   if (op->type->is_error()) {
       /* silently propagate the error */
-   } else if (glsl_type_is_struct(op->type) || glsl_type_is_interface(op->type)) {
+   } else if (op->type->is_struct() || op->type->is_interface()) {
       result = new(ctx) ir_dereference_record(op,
 					      expr->primary_expression.identifier);
 
-      if (glsl_type_is_error(result->type)) {
+      if (result->type->is_error()) {
 	 _mesa_glsl_error(& loc, state, "cannot access field `%s' of "
 			  "structure",
 			  expr->primary_expression.identifier);
       }
-   } else if (glsl_type_is_vector(op->type) ||
-              (state->has_420pack() && glsl_type_is_scalar(op->type))) {
+   } else if (op->type->is_vector() ||
+              (state->has_420pack() && op->type->is_scalar())) {
       ir_swizzle *swiz = ir_swizzle::create(op,
 					    expr->primary_expression.identifier,
 					    op->type->vector_elements);

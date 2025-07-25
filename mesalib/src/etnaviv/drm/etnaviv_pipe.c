@@ -26,6 +26,11 @@
 
 #include "etnaviv_priv.h"
 
+int etna_pipe_wait(struct etna_pipe *pipe, uint32_t timestamp, uint32_t ms)
+{
+	return etna_pipe_wait_ns(pipe, timestamp, ms * 1000000);
+}
+
 int etna_pipe_wait_ns(struct etna_pipe *pipe, uint32_t timestamp, uint64_t ns)
 {
 	struct etna_device *dev = pipe->gpu->dev;
@@ -42,10 +47,12 @@ int etna_pipe_wait_ns(struct etna_pipe *pipe, uint32_t timestamp, uint64_t ns)
 	get_abs_timeout(&req.timeout, ns);
 
 	ret = drmCommandWrite(dev->fd, DRM_ETNAVIV_WAIT_FENCE, &req, sizeof(req));
-	if (ret && (ret != -EBUSY) && (ret != -ETIMEDOUT))
+	if (ret) {
 		ERROR_MSG("wait-fence failed! %d (%s)", ret, strerror(errno));
+		return ret;
+	}
 
-	return ret;
+	return 0;
 }
 
 void etna_pipe_del(struct etna_pipe *pipe)
