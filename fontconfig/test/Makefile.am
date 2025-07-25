@@ -1,3 +1,26 @@
+#
+#  test/Makefile.am
+#
+#  Copyright © 2003 Keith Packard
+#
+#  Permission to use, copy, modify, distribute, and sell this software and its
+#  documentation for any purpose is hereby granted without fee, provided that
+#  the above copyright notice appear in all copies and that both that
+#  copyright notice and this permission notice appear in supporting
+#  documentation, and that the name of the author(s) not be used in
+#  advertising or publicity pertaining to distribution of the software without
+#  specific, written prior permission.  The authors make no
+#  representations about the suitability of this software for any purpose.  It
+#  is provided "as is" without express or implied warranty.
+#
+#  THE AUTHOR(S) DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE,
+#  INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS, IN NO
+#  EVENT SHALL THE AUTHOR(S) BE LIABLE FOR ANY SPECIAL, INDIRECT OR
+#  CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
+#  DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+#  TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+#  PERFORMANCE OF THIS SOFTWARE.
+
 check_SCRIPTS=run-test.sh
 TEST_EXTENSIONS = \
 	.sh \
@@ -21,8 +44,14 @@ TESTDATA =			\
 	4x6.pcf			\
 	8x16.pcf		\
 	fonts.conf.in		\
+	test-45-generic.json	\
 	test-60-generic.json	\
+	test-70-no-bitmaps-and-emoji.json	\
+	test-70-no-bitmaps-except-emoji.json	\
 	test-90-synthetic.json	\
+	test-filter.json	\
+	test-issue-286.json	\
+	test-style-match.json	\
 	$(NULL)
 
 if FREETYPE_PCF_LONG_FAMILY_NAMES
@@ -78,8 +107,8 @@ if ENABLE_JSONC
 check_PROGRAMS += test-conf
 test_conf_CFLAGS = $(JSONC_CFLAGS)
 test_conf_LDADD = $(top_builddir)/src/libfontconfig.la $(JSONC_LIBS)
-TESTS += run-test-conf.sh
 endif
+TESTS += run-test-conf.sh
 
 check_PROGRAMS += test-bz106618
 test_bz106618_LDADD = $(top_builddir)/src/libfontconfig.la
@@ -144,7 +173,14 @@ check_PROGRAMS += test-issue180
 test_issue180_LDADD = $(top_builddir)/src/libfontconfig.la
 TESTS += test-issue180
 
-EXTRA_DIST=run-test.sh run-test-conf.sh $(LOG_COMPILER) $(TESTDATA) out.expected-long-family-names out.expected-no-long-family-names
+check_PROGRAMS += test-family-matching
+test_family_matching_LDADD = $(top_builddir)/src/libfontconfig.la
+TESTS += test-family-matching
+
+check_PROGRAMS += test-filter
+test_filter_LDADD = $(top_builddir)/src/libfontconfig.la
+
+EXTRA_DIST=run-test.sh run-test-conf.sh wrapper-script.sh $(TESTDATA) out.expected-long-family-names out.expected-no-long-family-names
 
 CLEANFILES =		\
 	fonts.conf	\

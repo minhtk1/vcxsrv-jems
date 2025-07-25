@@ -26,13 +26,15 @@ NULL =
 EXTRA_DIST =			\
 	$(BUILT_DOCS)		\
 	$(DOC_FUNCS_FNCS)	\
-	$(DOC_FUNCS_SGML)	\
-	$(HTML_DIR)/*		\
 	$(SGML_FILES)		\
 	$(check_SCRIPTS)	\
 	confdir.sgml.in		\
 	func.sgml		\
 	$(NULL)
+BUILT_SOURCES =			\
+	$(DOC_FUNCS_SGML)	\
+	$(NULL)
+
 if USEDOCBOOK
 maintainerdoccleanfiles =	\
 	$(NULL)
@@ -56,8 +58,6 @@ CLEANFILES =			\
 	confdir.sgml		\
 	func.refs		\
 	$(NULL)
-BUILT_SOURCES =			\
-	$(NULL)
 SUFFIXES =	\
 	.fncs	\
 	.sgml	\
@@ -66,6 +66,7 @@ SUFFIXES =	\
 	$(NULL)
 TESTS =				\
 	check-missing-doc	\
+	check-whitespace-in-args	\
 	$(NULL)
 TESTS_ENVIRONMENT = \
 	top_srcdir=${top_srcdir}; export top_srcdir; \
@@ -128,22 +129,19 @@ TXT_FILES = $(SGML_FILES:.sgml=.txt)
 PDF_FILES = $(SGML_FILES:.sgml=.pdf)
 HTML_FILES =			\
 	fontconfig-user.html	\
+	fontconfig-devel.html	\
 	$(NULL)
-HTML_DIR = fontconfig-devel
 #
 noinst_PROGRAMS =	\
 	$(NULL)
-##
-edit_sgml_SOURCES =	\
-	edit-sgml.c	\
+noinst_SCRIPTS =		\
+	edit-sgml.py		\
 	$(NULL)
-$(edit_sgml_OBJECTS) : CC:=$(CC_FOR_BUILD)
-$(edit_sgml_OBJECTS) : CFLAGS:=$(CFLAGS_FOR_BUILD)
-$(edit_sgml_OBJECTS) : CPPFLAGS:=$(CPPFLAGS_FOR_BUILD)
-edit_sgml_LINK = $(CC_FOR_BUILD) -o $@
-#
+##
 check_SCRIPTS =			\
 	check-missing-doc	\
+	check-whitespace-in-args	\
+	check-whitespace-in-args.py	\
 	$(NULL)
 #
 man3_MANS =		\
@@ -159,23 +157,15 @@ doc_DATA =		\
 	$(HTML_FILES)	\
 	$(NULL)
 #
-htmldocdir = $(docdir)/$(HTML_DIR)
-htmldoc_DATA =		\
-	$(NULL)
-
 if USEDOCBOOK
 BUILT_SOURCES +=		\
 	$(LOCAL_SGML_FILES)	\
 	$(NULL)
-noinst_PROGRAMS +=	\
-	edit-sgml	\
-	$(NULL)
-htmldoc_DATA += $(HTML_DIR)/*
 
 ##
 .fncs.sgml:
 	$(AM_V_GEN) $(RM) $@; \
-	$(builddir)/edit-sgml$(EXEEXT) $(srcdir)/func.sgml < '$(srcdir)/$*.fncs' > $*.sgml
+	$(PYTHON) $(srcdir)/edit-sgml.py $(srcdir)/func.sgml '$(srcdir)/$*.fncs' $*.sgml
 .sgml.txt:
 	$(AM_V_GEN) $(RM) $@; \
 	$(DOC2TXT) $*.sgml
@@ -200,16 +190,12 @@ func.refs: local-fontconfig-devel.sgml $(DOCS_DEPS)
 	$(RM) devel-man/manpage.* &&		\
 	rmdir devel-man || rm $@ || :
 confdir.sgml: $(srcdir)/confdir.sgml.in
-	$(AM_V_GEN) sed -e 's,@CONFDIR\@,${CONFDIR},' $(srcdir)/$@.in | awk '{if (NR > 1) printf("\n"); printf("%s", $$0);}' > $@
+	$(AM_V_GEN) sed -e 's,@BASECONFIGDIR\@,${BASECONFIGDIR},' $(srcdir)/$@.in | awk '{if (NR > 1) printf("\n"); printf("%s", $$0);}' > $@
 ##
-$(DOC_FUNCS_SGML): $(DOC_FUNCS_FNCS) edit-sgml$(EXEEXT) $(srcdir)/func.sgml
+$(DOC_FUNCS_SGML): $(DOC_FUNCS_FNCS) $(srcdir)/edit-sgml.py $(srcdir)/func.sgml
 $(TXT_FILES): $(DOCS_DEPS)
 $(PDF_FILES): $(DOCS_DEPS)
 $(HTML_FILES): $(DOCS_DEPS)
-$(HTML_DIR)/*: $(HTML_DIR)
-$(HTML_DIR): local-fontconfig-devel.sgml $(DOCS_DEPS)
-	$(AM_V_GEN) $(RM) -r $@; \
-	$(DOC2HTML) -V '%use-id-as-filename%' -o $@ local-fontconfig-devel.sgml
 local-fontconfig-user.sgml: $(srcdir)/fontconfig-user.sgml
 	$(AM_V_GEN) $(LN_S) $(srcdir)/fontconfig-user.sgml $@;	\
 	[ ! -f $(builddir)/fontconfig-user.sgml ] && cp -a $(srcdir)/fontconfig-user.sgml $(builddir)/fontconfig-user.sgml || :
@@ -217,14 +203,16 @@ local-fontconfig-devel.sgml: $(srcdir)/fontconfig-devel.sgml
 	$(AM_V_GEN) $(LN_S) $(srcdir)/fontconfig-devel.sgml $@;	\
 	[ ! -f $(builddir)/fontconfig-devel.sgml ] && cp -a $(srcdir)/fontconfig-devel.sgml $(builddir)/fontconfig-devel.sgml || :
 #
-all-local: $(BUILT_DOCS) $(HTML_DIR)/*
+all-local: $(BUILT_DOCS)
 clean-local:
-	$(RM) -r $(HTML_DIR) devel-man
+	$(RM) -r devel-man
 	[ "x$(builddir)" != "x$(srcdir)" ] && $(RM) $(builddir)/*.sgml || :
 dist-local-check-docs-enabled:
 	@true
 else
-htmldoc_DATA += $(srcdir)/$(HTML_DIR)/*
+.fncs.sgml:
+	$(AM_V_GEN) $(RM) $@; \
+	touch -r $< $@
 all-local:
 clean-local:
 dist-local-check-docs-enabled:
@@ -232,7 +220,7 @@ dist-local-check-docs-enabled:
 	@false
 endif
 
-# force doc rebulid after configure
+# force doc rebuild after configure
 dist-hook-local: dist-local-check-docs-enabled
 
 -include $(top_srcdir)/git.mk
