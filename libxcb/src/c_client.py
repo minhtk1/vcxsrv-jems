@@ -332,7 +332,7 @@ def c_close(self):
     _h(' */')
 
     # Write header file
-    hfile = open('%s.h' % _ns.header, 'w')
+    hfile = open('%s.h' % _ns.header, 'w', encoding='UTF-8')
     for list in _hlines:
         for line in list:
             hfile.write(line)
@@ -340,7 +340,7 @@ def c_close(self):
     hfile.close()
 
     # Write source file
-    cfile = open('%s.c' % _ns.header, 'w')
+    cfile = open('%s.c' % _ns.header, 'w', encoding='UTF-8')
     for list in _clines:
         for line in list:
             cfile.write(line)
@@ -650,39 +650,42 @@ def _c_helper_resolve_field_names (prefix):
 
     return all_fields
 
+
+def get_expr_field_names(expr):
+    """
+    returns a list of field names referenced in an expression
+    """
+    if expr.op is None or expr.op == 'calculate_len':
+        if expr.lenfield_name is not None:
+            return [expr.lenfield_name]
+        # constant value expr
+        return []
+
+    if expr.op == '~':
+        return get_expr_field_names(expr.rhs)
+    if expr.op == 'popcount':
+        return get_expr_field_names(expr.rhs)
+    if expr.op == 'sumof':
+        # sumof expr references another list,
+        # we need that list's length field here
+        field = None
+        for f in expr.lenfield_parent.fields:
+            if f.field_name == expr.lenfield_name:
+                field = f
+                break
+        if field is None:
+            raise Exception("list field '%s' referenced by sumof not found" % expr.lenfield_name)
+        # referenced list + its length field
+        return [expr.lenfield_name] + get_expr_field_names(field.type.expr)
+    if expr.op == 'enumref':
+        return []
+    return get_expr_field_names(expr.lhs) + get_expr_field_names(expr.rhs)
+
+
 def get_expr_fields(self):
     """
     get the Fields referenced by switch or list expression
     """
-    def get_expr_field_names(expr):
-        if expr.op is None or expr.op == 'calculate_len':
-            if expr.lenfield_name is not None:
-                return [expr.lenfield_name]
-            else:
-                # constant value expr
-                return []
-        else:
-            if expr.op == '~':
-                return get_expr_field_names(expr.rhs)
-            elif expr.op == 'popcount':
-                return get_expr_field_names(expr.rhs)
-            elif expr.op == 'sumof':
-                # sumof expr references another list,
-                # we need that list's length field here
-                field = None
-                for f in expr.lenfield_parent.fields:
-                    if f.field_name == expr.lenfield_name:
-                        field = f
-                        break
-                if field is None:
-                    raise Exception("list field '%s' referenced by sumof not found" % expr.lenfield_name)
-                # referenced list + its length field
-                return [expr.lenfield_name] + get_expr_field_names(field.type.expr)
-            elif expr.op == 'enumref':
-                return []
-            else:
-                return get_expr_field_names(expr.lhs) + get_expr_field_names(expr.rhs)
-    # get_expr_field_names()
 
     # resolve the field names with the parent structure(s)
     unresolved_fields_names = get_expr_field_names(self.expr)
@@ -964,18 +967,15 @@ def _c_get_additional_type_params(type):
         param_fields, wire_fields, params = get_serialize_params('sizeof', type)
         return params[1:]
 
-def _c_serialize_helper_list_field(context, self, field,
-                                   code_lines, temp_vars,
-                                   space, prefix):
+
+def _c_get_field_mapping_for_expr(self, expr, prefix):
     """
-    helper function to cope with lists of variable length
+    helper function to get field mapping of a particular expression.
     """
-    expr = field.type.expr
-    prefix_str = _c_helper_fieldaccess_expr(prefix)
     param_fields, wire_fields, params = get_serialize_params('sizeof', self)
     param_names = [p[2] for p in params]
 
-    expr_fields_names = [f.field_name for f in get_expr_fields(field.type)]
+    expr_fields_names = get_expr_field_names(expr)
     resolved = [x for x in expr_fields_names if x in param_names]
     unresolved = [x for x in expr_fields_names if x not in param_names]
 
@@ -994,6 +994,21 @@ def _c_serialize_helper_list_field(context, self, field,
         unresolved = [x for x in unresolved if x not in field_mapping]
         if len(unresolved)>0:
             raise Exception('could not resolve the length fields required for list %s' % field.c_field_name)
+
+    return field_mapping
+
+
+def _c_serialize_helper_list_field(context, self, field,
+                                   code_lines, temp_vars,
+                                   space, prefix):
+    """
+    helper function to cope with lists of variable length
+    """
+    expr = field.type.expr
+    prefix_str = _c_helper_fieldaccess_expr(prefix)
+
+    field_mapping = _c_get_field_mapping_for_expr(self, field.type.expr, prefix)
+
     if expr.op == 'calculate_len':
         list_length = field.type.expr.lenfield_name
     else:
@@ -1403,6 +1418,16 @@ def _c_serialize(context, self):
 
     elif 'sizeof' == context:
         param_names = [p[2] for p in params]
+        if self.length_expr is not None:
+            _c('    const %s *_aux = (%s *)_buffer;', self.c_type, self.c_type)
+            prefix = [('_aux', '->', self)]
+
+            field_mapping = _c_get_field_mapping_for_expr(self, self.length_expr, prefix)
+
+            _c('    return %s;', _c_accessor_get_expr(self.length_expr, field_mapping))
+            _c('}')
+            _c_pre.redirect_end()
+            return
         if self.is_switch:
             # switch: call _unpack()
             _c('    %s _aux;', self.c_type)
@@ -2242,13 +2267,13 @@ def _c_request_helper(self, name, void, regular, aux=False, reply_fds=False):
             elif base_func_name == 'xcb_create_window' and field.c_field_name == 'value_mask':
                 field.enum = 'CW'
             if field.enum:
-                # XXX: why the 'xcb' prefix?
-                key = ('xcb', field.enum)
+                assert 2 <= len(self.name) <= 3
+                key = (*self.name[:-1], field.enum)
 
                 tname = _t(key)
                 if namecount[tname] > 1:
                     tname = _t(key + ('enum',))
-                _h(' * @param %s A bitmask of #%s values.' % (field.c_field_name, tname))
+                _h(' * @param %s A bitmask of #%s values.', field.c_field_name, tname)
 
             if self.doc and field.field_name in self.doc.fields:
                 desc = self.doc.fields[field.field_name]
@@ -2256,7 +2281,8 @@ def _c_request_helper(self, name, void, regular, aux=False, reply_fds=False):
                     desc = desc.replace('`%s`' % name, '\\a %s' % (name))
                 desc = desc.split("\n")
                 desc = [line if line != '' else '\\n' for line in desc]
-                _h(' * @param %s %s' % (field.c_field_name, "\n * ".join(desc)))
+                _h(' * @param %s %s', field.c_field_name, "\n * ".join(desc))
+
             # If there is no documentation yet, we simply don't generate an
             # @param tag. Doxygen will then warn about missing documentation.
 
@@ -2315,7 +2341,7 @@ def _c_request_helper(self, name, void, regular, aux=False, reply_fds=False):
         for field in param_fields:
             if not field.type.fixed_size() and field.wire:
                 count = count + 2
-                if field.type.c_need_serialize:
+                if field.type.c_need_serialize or field.type.c_need_sizeof:
                     # _serialize() keeps track of padding automatically
                     count -= 1
     dimension = count + 2
@@ -2360,7 +2386,7 @@ def _c_request_helper(self, name, void, regular, aux=False, reply_fds=False):
         num_fds_expr.append('%d' % (num_fds_fixed))
     if len(num_fds_expr) > 0:
         num_fds = '+'.join(num_fds_expr)
-        _c('    int *fds=(int*)_alloca(%s*sizeof(int));' % (num_fds))
+        _c('    int *fds=alloca(%s);' % (num_fds))
         _c('    int fd_index = 0;')
     else:
         num_fds = None
@@ -2587,9 +2613,10 @@ def _c_reply_fds(self, name):
     _h(' * @param c      The connection')
     _h(' * @param reply  The reply')
     _h(' *')
-    _h(' * Returns the array of reply fds of the request asked by')
+    _h(' * Returns a pointer to the array of reply fds of the reply.')
     _h(' *')
-    _h(' * The returned value must be freed by the caller using free().')
+    _h(' * The returned value points into the reply and must not be free().')
+    _h(' * The fds are not managed by xcb. You must close() them before freeing the reply.')
     _h(' */')
     _c('')
     _hc('int *')
@@ -2634,14 +2661,14 @@ def _man_request(self, name, void, aux):
         name = 'man/%s.%s' % (linkname, section)
         if manpaths:
             sys.stdout.write(name)
-        f = open(name, 'w')
+        f = open(name, 'w', encoding='UTF-8')
         f.write('.so man%s/%s.%s' % (section, func_name, section))
         f.close()
 
     if manpaths:
         sys.stdout.write('man/%s.%s ' % (func_name, section))
     # Our CWD is src/, so this will end up in src/man/
-    f = open('man/%s.%s' % (func_name, section), 'w')
+    f = open('man/%s.%s' % (func_name, section), 'w', encoding='UTF-8')
     f.write('.TH %s %s  "%s" "%s" "XCB Requests"\n' % (func_name, section, center_footer, left_footer))
     # Left-adjust instead of adjusting to both sides
     f.write('.ad l\n')
@@ -3009,7 +3036,7 @@ def _man_event(self, name):
     if manpaths:
         sys.stdout.write('man/%s.%s ' % (self.c_type, section))
     # Our CWD is src/, so this will end up in src/man/
-    f = open('man/%s.%s' % (self.c_type, section), 'w')
+    f = open('man/%s.%s' % (self.c_type, section), 'w', encoding='UTF-8')
     f.write('.TH %s %s  "%s" "%s" "XCB Events"\n' % (self.c_type, section, center_footer, left_footer))
     # Left-adjust instead of adjusting to both sides
     f.write('.ad l\n')

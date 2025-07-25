@@ -1,8 +1,15 @@
 '''
 This module contains the classes which represent XCB data types.
 '''
+import sys
 from xcbgen.expr import Field, Expression
 from xcbgen.align import Alignment, AlignmentLog
+
+if sys.version_info[:2] >= (3, 3):
+    from xml.etree.ElementTree import SubElement
+else:
+    from xml.etree.cElementTree import SubElement
+
 import __main__
 
 verbose_align_log = False
@@ -192,12 +199,12 @@ class SimpleType(PrimitiveType):
     Any type which is typedef'ed to cardinal will be one of these.
 
     Public fields added:
-    none
+    xml_type is the original string describing the type in the XML
     '''
-    def __init__(self, name, size):
+    def __init__(self, name, size, xml_type=None):
         PrimitiveType.__init__(self, name, size)
         self.is_simple = True
-
+        self.xml_type = xml_type
 
     def resolve(self, module):
         self.resolved = True
@@ -206,24 +213,27 @@ class SimpleType(PrimitiveType):
 
 
 # Cardinal datatype globals.  See module __init__ method.
-tcard8 = SimpleType(('uint8_t',), 1)
-tcard16 = SimpleType(('uint16_t',), 2)
-tcard32 = SimpleType(('uint32_t',), 4)
-tcard64 = SimpleType(('uint64_t',), 8)
-tint8 =  SimpleType(('int8_t',), 1)
-tint16 = SimpleType(('int16_t',), 2)
-tint32 = SimpleType(('int32_t',), 4)
-tint64 = SimpleType(('int64_t',), 8)
-tchar =  SimpleType(('char',), 1)
-tfloat = SimpleType(('float',), 4)
-tdouble = SimpleType(('double',), 8)
+tcard8 = SimpleType(('uint8_t',), 1, 'CARD8')
+tcard16 = SimpleType(('uint16_t',), 2, 'CARD16')
+tcard32 = SimpleType(('uint32_t',), 4, 'CARD32')
+tcard64 = SimpleType(('uint64_t',), 8, 'CARD64')
+tint8 =  SimpleType(('int8_t',), 1, 'INT8')
+tint16 = SimpleType(('int16_t',), 2, 'INT16')
+tint32 = SimpleType(('int32_t',), 4, 'INT32')
+tint64 = SimpleType(('int64_t',), 8, 'INT64')
+tchar =  SimpleType(('char',), 1, 'char')
+tfloat = SimpleType(('float',), 4, 'float')
+tdouble = SimpleType(('double',), 8, 'double')
+tbyte = SimpleType(('uint8_t',), 1, 'BYTE')
+tbool = SimpleType(('uint8_t',), 1, 'BOOL')
+tvoid = SimpleType(('uint8_t',), 1, 'void')
 
 class FileDescriptor(SimpleType):
     '''
     Derived class which represents a file descriptor.
     '''
     def __init__(self):
-        SimpleType.__init__(self, ('int'), 4)
+        SimpleType.__init__(self, ('int'), 4, 'fd')
         self.is_fd = True
 
     def fixed_size(self):
@@ -240,7 +250,7 @@ class Enum(SimpleType):
     bits contains a list of (name, bitnum) tuples.  items only appear if specified as a bit. bitnum is a number.
     '''
     def __init__(self, name, elt):
-        SimpleType.__init__(self, name, 4)
+        SimpleType.__init__(self, name, 4, 'enum')
         self.values = []
         self.bits = []
         self.doc = None
@@ -332,6 +342,9 @@ class ListType(Type):
             return
         self.member.resolve(module)
         self.expr.resolve(module, self.parents)
+
+        # resolve() could have changed the size (ComplexType starts with size 0)
+        self.size = self.member.size if self.member.fixed_size() else None
 
         self.required_start_align = self.member.required_start_align
 
@@ -497,6 +510,8 @@ class ComplexType(Type):
 
     Public fields added:
     fields is an array of Field objects describing the structure fields.
+    length_expr is an expression that defines the length of the structure.
+
     '''
     def __init__(self, name, elt):
         Type.__init__(self, name)
@@ -506,7 +521,7 @@ class ComplexType(Type):
         self.nmemb = 1
         self.size = 0
         self.lenfield_parent = [self]
-        self.fds = []
+        self.length_expr = None
 
         # get required_start_alignment
         required_start_align_element = elt.find("required_start_align")
@@ -523,10 +538,10 @@ class ComplexType(Type):
     def resolve(self, module):
         if self.resolved:
             return
-        enum = None
 
         # Resolve all of our field datatypes.
         for child in list(self.elt):
+            enum = None
             if child.tag == 'pad':
                 field_name = 'pad' + str(module.pads)
                 fkey = 'CARD8'
@@ -567,6 +582,9 @@ class ComplexType(Type):
                 fd_name = child.get('name')
                 type = module.get_type('INT32')
                 type.make_fd_of(module, self, fd_name)
+                continue
+            elif child.tag == 'length':
+                self.length_expr = Expression(list(child)[0], self)
                 continue
             else:
                 # Hit this on Reply
@@ -1340,6 +1358,15 @@ class Error(ComplexType):
         self.opcodes = {}
         if self.required_start_align is None:
             self.required_start_align = Alignment(4,0)
+
+        # All errors are basically the same, but they still got different XML
+        # for historic reasons. This 'invents' the missing parts.
+        if len(self.elt) < 1:
+            SubElement(self.elt, "field", type="CARD32", name="bad_value")
+        if len(self.elt) < 2:
+            SubElement(self.elt, "field", type="CARD16", name="minor_opcode")
+        if len(self.elt) < 3:
+            SubElement(self.elt, "field", type="CARD8", name="major_opcode")
 
     def add_opcode(self, opcode, name, main):
         self.opcodes[name] = opcode
