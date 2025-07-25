@@ -34,6 +34,8 @@
 #include "win.h"
 #include "winprefs.h"
 
+#include "dix/colormap_priv.h"
+
 /*
  * Local function prototypes
  */
@@ -106,7 +108,7 @@ winQueryScreenDIBFormat(ScreenPtr pScreen, BITMAPINFOHEADER * pbmih)
     }
 
     /* Initialize our bitmap info header */
-    ZeroMemory(pbmih, sizeof(BITMAPINFOHEADER) + 256 * sizeof(RGBQUAD));
+    memset(pbmih, 0, sizeof(BITMAPINFOHEADER) + 256 * sizeof(RGBQUAD));
     pbmih->biSize = sizeof(BITMAPINFOHEADER);
 
     /* Get the biBitCount */
@@ -1140,17 +1142,13 @@ winCreateColormapShadowGDI(ColormapPtr pColormap)
     dwEntriesMax = pVisual->ColormapEntries;
 
     /* Allocate a Windows logical color palette with max entries */
-    lpPaletteNew = malloc(sizeof(LOGPALETTE)
+    lpPaletteNew = calloc(1, sizeof(LOGPALETTE)
                           + (dwEntriesMax - 1) * sizeof(PALETTEENTRY));
     if (lpPaletteNew == NULL) {
         ErrorF("winCreateColormapShadowGDI - Couldn't allocate palette "
                "with %d entries\n", (int) dwEntriesMax);
         return FALSE;
     }
-
-    /* Zero out the colormap */
-    ZeroMemory(lpPaletteNew, sizeof(LOGPALETTE)
-               + (dwEntriesMax - 1) * sizeof(PALETTEENTRY));
 
     /* Set the logical palette structure */
     lpPaletteNew->palVersion = 0x0300;
@@ -1191,7 +1189,7 @@ winDestroyColormapShadowGDI(ColormapPtr pColormap)
      * will not have had winUninstallColormap called on it.  Thus,
      * we need to handle the default colormap in a special way.
      */
-    if (pColormap->flags & IsDefault) {
+    if (pColormap->flags & CM_IsDefault) {
         winDebug("winDestroyColormapShadowGDI - Destroying default "
                  "colormap\n");
 
@@ -1221,7 +1219,7 @@ winDestroyColormapShadowGDI(ColormapPtr pColormap)
 }
 
 /*
- * Set engine specific funtions
+ * Set engine specific functions
  */
 
 Bool

@@ -21,14 +21,16 @@
 #define PRINT_PORT 0
 
 #include <unistd.h>
-
 #include <X11/Xos.h>
+
+#include "os/osdep.h"
+
 #include "xf86.h"
 #include "xf86_OSproc.h"
 #include "compiler.h"
 #define _INT10_PRIVATE
 #include "int10Defines.h"
-#include "xf86int10.h"
+#include "xf86int10_priv.h"
 #include "Pci.h"
 #ifdef _X86EMU
 #include "x86emu/x86emui.h"
@@ -209,7 +211,7 @@ stack_trace(xf86Int10InfoPtr pInt)
     if (stack >= tail)
         return;
 
-    xf86MsgVerb(X_INFO, 3, "stack at 0x%8.8lx:\n", stack);
+    LogMessageVerb(X_INFO, 3, "stack at 0x%8.8lx:\n", stack);
     for (; stack < tail; stack++) {
         xf86ErrorFVerb(3, " %2.2x", MEM_RB(pInt, stack));
         i = (i + 1) % 0x10;
@@ -660,10 +662,10 @@ bios_checksum(const uint8_t *start, int size)
  * an attempt to detect a legacy ISA card. If they find one they might
  * act very strange: for example they might configure the card as a
  * monochrome card. This might cause some drivers to choke.
- * To avoid this we attempt legacy VGA by writing to all know VGA
+ * To avoid this we attempt legacy VGA by writing to all known VGA
  * disable registers before we call the BIOS initialization and
- * restore the original values afterwards. In beween we hold our
- * breath. To get to a (possibly exising) ISA card need to disable
+ * restore the original values afterwards. In between we hold our
+ * breath. To get to a (possibly existing) ISA card need to disable
  * our current PCI card.
  */
 /*
@@ -742,7 +744,7 @@ xf86Int10SaveRestoreBIOSVars(xf86Int10InfoPtr pInt, Bool save)
 
     base += BIOS_SCRATCH_OFF;
     if (save) {
-        if ((pInt->BIOSScratch = xnfalloc(BIOS_SCRATCH_LEN)))
+        if ((pInt->BIOSScratch = XNFalloc(BIOS_SCRATCH_LEN)))
             for (i = 0; i < BIOS_SCRATCH_LEN; i++)
                 *(((char *) pInt->BIOSScratch + i)) = *(base + i);
     }

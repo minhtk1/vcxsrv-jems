@@ -121,7 +121,7 @@ exaDDXDriverInit(ScreenPtr pScreen)
     if (pScreenPriv == NULL)
         return;
 
-    pScreenPriv->options = xnfalloc(sizeof(EXAOptions));
+    pScreenPriv->options = XNFalloc(sizeof(EXAOptions));
     memcpy(pScreenPriv->options, EXAOptions, sizeof(EXAOptions));
     xf86ProcessOptions(pScrn->scrnIndex, pScrn->options, pScreenPriv->options);
 
@@ -182,16 +182,18 @@ exaDDXDriverInit(ScreenPtr pScreen)
 }
 
 static XF86ModuleVersionInfo exaVersRec = {
-    "exa",
-    MODULEVENDORSTRING,
-    MODINFOSTRING1,
-    MODINFOSTRING2,
-    XORG_VERSION_CURRENT,
-    EXA_VERSION_MAJOR, EXA_VERSION_MINOR, EXA_VERSION_RELEASE,
-    ABI_CLASS_VIDEODRV,         /* requires the video driver ABI */
-    ABI_VIDEODRV_VERSION,
-    MOD_CLASS_NONE,
-    {0, 0, 0, 0}
+    .modname      = "exa",
+    .vendor       = MODULEVENDORSTRING,
+    ._modinfo1_   = MODINFOSTRING1,
+    ._modinfo2_   = MODINFOSTRING2,
+    .xf86version  = XORG_VERSION_CURRENT,
+    .majorversion = EXA_VERSION_MAJOR,
+    .minorversion = EXA_VERSION_MINOR,
+    .patchlevel   = EXA_VERSION_RELEASE,
+    .abiclass     = ABI_CLASS_VIDEODRV,
+    .abiversion   = ABI_VIDEODRV_VERSION,
 };
 
-_X_EXPORT XF86ModuleData exaModuleData = { &exaVersRec, NULL, NULL };
+_X_EXPORT XF86ModuleData exaModuleData = {
+    .vers = &exaVersRec
+};

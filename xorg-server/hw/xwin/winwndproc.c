@@ -37,6 +37,9 @@
 #endif
 #include "win.h"
 #include <commctrl.h>
+
+#include "mi/mipointer_priv.h"
+
 #include "winprefs.h"
 #include "winconfig.h"
 #include "winmsg.h"
@@ -225,7 +228,7 @@ winWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_DISPLAYCHANGE:
         /*
            WM_DISPLAYCHANGE seems to be sent when the monitor layout or
-           any monitor's resolution or depth changes, but it's lParam and
+           any monitor's resolution or depth changes, but its lParam and
            wParam always indicate the resolution and bpp for the primary
            monitor (so ignore that as we could be on any monitor...)
          */
@@ -233,7 +236,7 @@ winWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         /* We cannot handle a display mode change during initialization */
         if (s_pScreenInfo == NULL)
             FatalError("winWindowProc - WM_DISPLAYCHANGE - The display "
-                       "mode changed while we were intializing.  This is "
+                       "mode changed while we were initializing.  This is "
                        "very bad and unexpected.  Exiting.\n");
 
         /*
@@ -794,13 +797,11 @@ winWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
         /* Are we tracking yet? */
         if (!s_fTracking) {
-            TRACKMOUSEEVENT tme;
-
-            /* Setup data structure */
-            ZeroMemory(&tme, sizeof(tme));
-            tme.cbSize = sizeof(tme);
-            tme.dwFlags = TME_LEAVE;
-            tme.hwndTrack = hwnd;
+            TRACKMOUSEEVENT tme = (TRACKMOUSEEVENT) {
+                tme.cbSize = sizeof(tme),
+                tme.dwFlags = TME_LEAVE,
+                tme.hwndTrack = hwnd
+            };
 
             /* Call the tracking function */
             if (!TrackMouseEvent(&tme))
@@ -1175,9 +1176,6 @@ winWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             g_fCursor = TRUE;
             ShowCursor(TRUE);
         }
-
-        /* Make sure the clipboard chain is ok. */
-        winFixClipboardChain(0);
 
         /* Call engine specific screen activation/deactivation function */
         (*s_pScreenPriv->pwinActivateApp) (s_pScreen);

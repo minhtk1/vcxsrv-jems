@@ -20,9 +20,7 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#ifdef HAVE_DIX_CONFIG_H
 #include <dix-config.h>
-#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -369,7 +367,7 @@ handleDepthModes(struct glCapabilitiesConfig *c, GLint dmodes)
     assert(c->total_depth_buffer_depths < GLCAPS_DEPTH_BUFFERS);
 }
 
-/* Return non-zero if an error occured. */
+/* Return non-zero if an error occurred. */
 static CGLError
 handleRendererDescriptions(CGLRendererInfoObj info, GLint r,
                            struct glCapabilitiesConfig *c)
@@ -521,7 +519,7 @@ freeGlCapabilities(struct glCapabilities *cap)
     cap->configurations = NULL;
 }
 
-/*Return true if an error occured. */
+/* Return true if an error occurred. */
 bool
 getGlCapabilities(struct glCapabilities *cap)
 {
@@ -566,6 +564,6 @@ getGlCapabilities(struct glCapabilities *cap)
 
     CGLDestroyRendererInfo(info);
 
-    /* No error occured.  We are done. */
+    /* No error occurred.  We are done. */
     return kCGLNoError;
 }

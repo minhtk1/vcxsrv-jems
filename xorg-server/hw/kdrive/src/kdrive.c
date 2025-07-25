@@ -20,13 +20,20 @@
  * PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifdef HAVE_DIX_CONFIG_H
 #include <dix-config.h>
-#endif
+
+#include "config/hotplug_priv.h"
+#include "dix/screenint_priv.h"
+#include "os/cmdline.h"
+#include "os/ddx_priv.h"
+
+#include "os/osdep.h"
+
 #include "kdrive.h"
 #include <mivalidate.h>
 #include <dixstruct.h>
 #include "privates.h"
+
 #ifdef RANDR
 #include <randrstr.h>
 #endif
@@ -42,10 +49,6 @@
 
 #ifdef HAVE_EXECINFO_H
 #include <execinfo.h>
-#endif
-
-#if defined(CONFIG_UDEV) || defined(CONFIG_HAL)
-#include <hotplug.h>
 #endif
 
 /* This stub can be safely removed once we can
@@ -354,7 +357,7 @@ KdUseMsg(void)
     ErrorF
         ("-rgba rgb/bgr/vrgb/vbgr/none   Specify subpixel ordering for LCD panels\n");
     ErrorF
-        ("-mouse driver [,n,,options]    Specify the pointer driver and its options (n is the number of buttons)\n");
+        ("-mouse driver [,n,options]    Specify the pointer driver and its options (n is the number of buttons)\n");
     ErrorF
         ("-keybd driver [,,options]      Specify the keyboard driver and its options\n");
     ErrorF("-xkb-rules       Set default XkbRules value (can be overridden by -keybd options)\n");
@@ -371,7 +374,7 @@ KdUseMsg(void)
     ErrorF("-softCursor      Force software cursor\n");
     ErrorF("-videoTest       Start the server, pause momentarily and exit\n");
     ErrorF
-        ("-origin X,Y      Locates the next screen in the the virtual screen (Xinerama)\n");
+        ("-origin X,Y      Locates the next screen in the virtual screen (Xinerama)\n");
     ErrorF("-switchCmd       Command to execute on vt switch\n");
     ErrorF
         ("vtxx             Use virtual terminal xx instead of the next available\n");

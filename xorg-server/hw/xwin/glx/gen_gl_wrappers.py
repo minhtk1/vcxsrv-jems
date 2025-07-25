@@ -21,7 +21,7 @@
 # TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 # MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
 
-import sys, time, pdb, string, cProfile
+import sys, time
 from reg import *
 
 # debug - start header generation in debugger
@@ -113,10 +113,10 @@ print('Generating ', outFilename, file=sys.stderr)
 startTime = None
 def startTimer():
     global startTime
-    startTime = time.clock()
+    startTime = time.time()
 def endTimer(msg):
     global startTime
-    endTime = time.clock()
+    endTime = time.time()
     if (timeit):
         print(msg, endTime - startTime)
         startTime = None
@@ -216,8 +216,6 @@ if dispatchheader :
 
         if m1 :
             dispatch[prefix+m1.group(1)] = 1
-
-    del dispatch['glby_offset']
 
 def ParseCmdRettype(cmd):
     proto=noneStr(cmd.elem.find('proto'))
@@ -393,7 +391,7 @@ def genHeaders():
     if dispatchheader :
         outFile.write( 'void glWinSetupDispatchTable(void)\n')
         outFile.write( '{\n')
-        outFile.write( '  struct _glapi_table *disp = _glapi_get_dispatch();\n')
+        outFile.write( '  struct _glapi_table *disp = _mesa_glapi_get_dispatch();\n')
 
         for d in sorted(dispatch.keys()) :
                 if d in gen.wrappers :

@@ -25,11 +25,11 @@
  * Support for tracking the DRM's vblank events.
  */
 
-#ifdef HAVE_DIX_CONFIG_H
 #include "dix-config.h"
-#endif
 
+#include <errno.h>
 #include <unistd.h>
+
 #include <xf86.h>
 #include <xf86Crtc.h>
 #include "driver.h"
@@ -49,7 +49,7 @@
 static struct xorg_list ms_drm_queue;
 static uint32_t ms_drm_seq;
 
-static void ms_box_intersect(BoxPtr dest, BoxPtr a, BoxPtr b)
+static void box_intersect(BoxPtr dest, BoxPtr a, BoxPtr b)
 {
     dest->x1 = a->x1 > b->x1 ? a->x1 : b->x1;
     dest->x2 = a->x2 < b->x2 ? a->x2 : b->x2;
@@ -64,20 +64,7 @@ static void ms_box_intersect(BoxPtr dest, BoxPtr a, BoxPtr b)
         dest->x1 = dest->x2 = dest->y1 = dest->y2 = 0;
 }
 
-static void ms_crtc_box(xf86CrtcPtr crtc, BoxPtr crtc_box)
-{
-    if (crtc->enabled) {
-        crtc_box->x1 = crtc->x;
-        crtc_box->x2 =
-            crtc->x + xf86ModeWidth(&crtc->mode, crtc->rotation);
-        crtc_box->y1 = crtc->y;
-        crtc_box->y2 =
-            crtc->y + xf86ModeHeight(&crtc->mode, crtc->rotation);
-    } else
-        crtc_box->x1 = crtc_box->x2 = crtc_box->y1 = crtc_box->y2 = 0;
-}
-
-static void ms_randr_crtc_box(RRCrtcPtr crtc, BoxPtr crtc_box)
+static void rr_crtc_box(RRCrtcPtr crtc, BoxPtr crtc_box)
 {
     if (crtc->mode) {
         crtc_box->x1 = crtc->x;
@@ -99,133 +86,45 @@ static void ms_randr_crtc_box(RRCrtcPtr crtc, BoxPtr crtc_box)
         crtc_box->x1 = crtc_box->x2 = crtc_box->y1 = crtc_box->y2 = 0;
 }
 
-static int ms_box_area(BoxPtr box)
+static int box_area(BoxPtr box)
 {
     return (int)(box->x2 - box->x1) * (int)(box->y2 - box->y1);
 }
 
+static Bool rr_crtc_on(RRCrtcPtr crtc, Bool crtc_is_xf86_hint)
+{
+    if (!crtc) {
+        return FALSE;
+    }
+    if (crtc_is_xf86_hint && crtc->devPrivate) {
+         return xf86_crtc_on(crtc->devPrivate);
+    } else {
+        return !!crtc->mode;
+    }
+}
+
 Bool
-ms_crtc_on(xf86CrtcPtr crtc)
+xf86_crtc_on(xf86CrtcPtr crtc)
 {
     drmmode_crtc_private_ptr drmmode_crtc = crtc->driver_private;
 
     return crtc->enabled && drmmode_crtc->dpms_mode == DPMSModeOn;
 }
 
-/*
- * Return the first output which is connected to an active CRTC on this screen.
- *
- * RRFirstOutput() will return an output from a slave screen if it is primary,
- * which is not the behavior that ms_covering_crtc() wants.
- */
-
-static RROutputPtr ms_first_output(ScreenPtr pScreen)
-{
-    rrScrPriv(pScreen);
-    RROutputPtr output;
-    int i, j;
-
-    if (!pScrPriv)
-        return NULL;
-
-    if (pScrPriv->primaryOutput && pScrPriv->primaryOutput->crtc &&
-        (pScrPriv->primaryOutput->pScreen == pScreen)) {
-        return pScrPriv->primaryOutput;
-    }
-
-    for (i = 0; i < pScrPriv->numCrtcs; i++) {
-        RRCrtcPtr crtc = pScrPriv->crtcs[i];
-
-        for (j = 0; j < pScrPriv->numOutputs; j++) {
-            output = pScrPriv->outputs[j];
-            if (output->crtc == crtc)
-                return output;
-        }
-    }
-    return NULL;
-}
 
 /*
  * Return the crtc covering 'box'. If two crtcs cover a portion of
  * 'box', then prefer the crtc with greater coverage.
  */
-
-static xf86CrtcPtr
-ms_covering_xf86_crtc(ScreenPtr pScreen, BoxPtr box, Bool screen_is_ms)
-{
-    ScrnInfoPtr scrn = xf86ScreenToScrn(pScreen);
-    xf86CrtcConfigPtr xf86_config = XF86_CRTC_CONFIG_PTR(scrn);
-    xf86CrtcPtr crtc, best_crtc;
-    int coverage, best_coverage;
-    int c;
-    BoxRec crtc_box, cover_box;
-    Bool crtc_on;
-
-    best_crtc = NULL;
-    best_coverage = 0;
-
-    if (!xf86_config)
-        return NULL;
-
-    for (c = 0; c < xf86_config->num_crtc; c++) {
-        crtc = xf86_config->crtc[c];
-
-        if (screen_is_ms)
-            crtc_on = ms_crtc_on(crtc);
-        else
-            crtc_on = crtc->enabled;
-
-        /* If the CRTC is off, treat it as not covering */
-        if (!crtc_on)
-            continue;
-
-        ms_crtc_box(crtc, &crtc_box);
-        ms_box_intersect(&cover_box, &crtc_box, box);
-        coverage = ms_box_area(&cover_box);
-        if (coverage > best_coverage) {
-            best_crtc = crtc;
-            best_coverage = coverage;
-        }
-    }
-
-    /* Fallback to primary crtc for drawable's on slave outputs */
-    if (best_crtc == NULL && !pScreen->isGPU) {
-        RROutputPtr primary_output = NULL;
-        ScreenPtr slave;
-
-        if (dixPrivateKeyRegistered(rrPrivKey))
-            primary_output = ms_first_output(scrn->pScreen);
-        if (!primary_output || !primary_output->crtc)
-            return NULL;
-
-        crtc = primary_output->crtc->devPrivate;
-        if (!ms_crtc_on(crtc))
-            return NULL;
-
-        xorg_list_for_each_entry(slave, &pScreen->slave_list, slave_head) {
-            if (!slave->is_output_slave)
-                continue;
-
-            if (ms_covering_xf86_crtc(slave, box, FALSE)) {
-                /* The drawable is on a slave output, return primary crtc */
-                return crtc;
-            }
-        }
-    }
-
-    return best_crtc;
-}
-
 static RRCrtcPtr
-ms_covering_randr_crtc(ScreenPtr pScreen, BoxPtr box, Bool screen_is_ms)
+rr_crtc_covering_box(ScreenPtr pScreen, BoxPtr box, Bool screen_is_xf86_hint)
 {
-    ScrnInfoPtr scrn = xf86ScreenToScrn(pScreen);
     rrScrPrivPtr pScrPriv;
-    RRCrtcPtr crtc, best_crtc;
+    RROutputPtr primary_output;
+    RRCrtcPtr crtc, best_crtc, primary_crtc;
     int coverage, best_coverage;
     int c;
     BoxRec crtc_box, cover_box;
-    Bool crtc_on;
 
     best_crtc = NULL;
     best_coverage = 0;
@@ -238,60 +137,56 @@ ms_covering_randr_crtc(ScreenPtr pScreen, BoxPtr box, Bool screen_is_ms)
     if (!pScrPriv)
         return NULL;
 
+    primary_crtc = NULL;
+    primary_output = RRFirstOutput(pScreen);
+    if (primary_output)
+        primary_crtc = primary_output->crtc;
+
     for (c = 0; c < pScrPriv->numCrtcs; c++) {
         crtc = pScrPriv->crtcs[c];
 
-        if (screen_is_ms) {
-            crtc_on = ms_crtc_on((xf86CrtcPtr) crtc->devPrivate);
-        } else {
-            crtc_on = !!crtc->mode;
-        }
-
         /* If the CRTC is off, treat it as not covering */
-        if (!crtc_on)
+        if (!rr_crtc_on(crtc, screen_is_xf86_hint))
             continue;
 
-        ms_randr_crtc_box(crtc, &crtc_box);
-        ms_box_intersect(&cover_box, &crtc_box, box);
-        coverage = ms_box_area(&cover_box);
-        if (coverage > best_coverage) {
+        rr_crtc_box(crtc, &crtc_box);
+        box_intersect(&cover_box, &crtc_box, box);
+        coverage = box_area(&cover_box);
+        if ((coverage > best_coverage) ||
+            (coverage == best_coverage && crtc == primary_crtc)) {
             best_crtc = crtc;
             best_coverage = coverage;
-        }
-    }
-
-    /* Fallback to primary crtc for drawable's on slave outputs */
-    if (best_crtc == NULL && !pScreen->isGPU) {
-        RROutputPtr primary_output = NULL;
-        ScreenPtr slave;
-
-        if (dixPrivateKeyRegistered(rrPrivKey))
-            primary_output = ms_first_output(scrn->pScreen);
-        if (!primary_output || !primary_output->crtc)
-            return NULL;
-
-        crtc = primary_output->crtc;
-        if (!ms_crtc_on((xf86CrtcPtr) crtc->devPrivate))
-            return NULL;
-
-        xorg_list_for_each_entry(slave, &pScreen->slave_list, slave_head) {
-            if (!slave->is_output_slave)
-                continue;
-
-            if (ms_covering_randr_crtc(slave, box, FALSE)) {
-                /* The drawable is on a slave output, return primary crtc */
-                return crtc;
-            }
         }
     }
 
     return best_crtc;
 }
 
+static RRCrtcPtr
+rr_crtc_covering_box_on_secondary(ScreenPtr pScreen, BoxPtr box)
+{
+    if (!pScreen->isGPU) {
+        ScreenPtr secondary;
+        RRCrtcPtr crtc = NULL;
+
+        xorg_list_for_each_entry(secondary, &pScreen->secondary_list, secondary_head) {
+            if (!secondary->is_output_secondary)
+                continue;
+
+            crtc = rr_crtc_covering_box(secondary, box, FALSE);
+            if (crtc)
+                return crtc;
+        }
+    }
+
+    return NULL;
+}
+
 xf86CrtcPtr
 ms_dri2_crtc_covering_drawable(DrawablePtr pDraw)
 {
     ScreenPtr pScreen = pDraw->pScreen;
+    RRCrtcPtr crtc = NULL;
     BoxRec box;
 
     box.x1 = pDraw->x;
@@ -299,13 +194,18 @@ ms_dri2_crtc_covering_drawable(DrawablePtr pDraw)
     box.x2 = box.x1 + pDraw->width;
     box.y2 = box.y1 + pDraw->height;
 
-    return ms_covering_xf86_crtc(pScreen, &box, TRUE);
+    crtc = rr_crtc_covering_box(pScreen, &box, TRUE);
+    if (crtc) {
+        return crtc->devPrivate;
+    }
+    return NULL;
 }
 
 RRCrtcPtr
 ms_randr_crtc_covering_drawable(DrawablePtr pDraw)
 {
     ScreenPtr pScreen = pDraw->pScreen;
+    RRCrtcPtr crtc = NULL;
     BoxRec box;
 
     box.x1 = pDraw->x;
@@ -313,7 +213,11 @@ ms_randr_crtc_covering_drawable(DrawablePtr pDraw)
     box.x2 = box.x1 + pDraw->width;
     box.y2 = box.y1 + pDraw->height;
 
-    return ms_covering_randr_crtc(pScreen, &box, TRUE);
+    crtc = rr_crtc_covering_box(pScreen, &box, TRUE);
+    if (!crtc) {
+        crtc = rr_crtc_covering_box_on_secondary(pScreen, &box);
+    }
+    return crtc;
 }
 
 static Bool
@@ -356,6 +260,51 @@ ms_get_kernel_ust_msc(xf86CrtcPtr crtc,
     }
 }
 
+static void
+ms_drm_set_seq_msc(uint32_t seq, uint64_t msc)
+{
+    struct ms_drm_queue *q;
+
+    xorg_list_for_each_entry(q, &ms_drm_queue, list) {
+        if (q->seq == seq) {
+            q->msc = msc;
+            break;
+        }
+    }
+}
+
+static void
+ms_drm_set_seq_queued(uint32_t seq, uint64_t msc)
+{
+    drmmode_crtc_private_ptr drmmode_crtc;
+    struct ms_drm_queue *q;
+
+    xorg_list_for_each_entry(q, &ms_drm_queue, list) {
+        if (q->seq == seq) {
+            drmmode_crtc = q->crtc->driver_private;
+            if (msc < drmmode_crtc->next_msc)
+                drmmode_crtc->next_msc = msc;
+            q->msc = msc;
+            q->kernel_queued = TRUE;
+            break;
+        }
+    }
+}
+
+static Bool
+ms_queue_coalesce(xf86CrtcPtr crtc, uint32_t seq, uint64_t msc)
+{
+    drmmode_crtc_private_ptr drmmode_crtc = crtc->driver_private;
+
+    /* If the next MSC is too late, then this event can't be coalesced */
+    if (msc < drmmode_crtc->next_msc)
+        return FALSE;
+
+    /* Set the target MSC on this sequence number */
+    ms_drm_set_seq_msc(seq, msc);
+    return TRUE;
+}
+
 Bool
 ms_queue_vblank(xf86CrtcPtr crtc, ms_queue_flag flags,
                 uint64_t msc, uint64_t *msc_queued, uint32_t seq)
@@ -366,6 +315,10 @@ ms_queue_vblank(xf86CrtcPtr crtc, ms_queue_flag flags,
     drmmode_crtc_private_ptr drmmode_crtc = crtc->driver_private;
     drmVBlank vbl;
     int ret;
+
+    /* Try coalescing this event into another to avoid event queue exhaustion */
+    if (flags == MS_QUEUE_ABSOLUTE && ms_queue_coalesce(crtc, seq, msc))
+        return TRUE;
 
     for (;;) {
         /* Queue an event at the specified sequence */
@@ -383,8 +336,10 @@ ms_queue_vblank(xf86CrtcPtr crtc, ms_queue_flag flags,
             ret = drmCrtcQueueSequence(ms->fd, drmmode_crtc->mode_crtc->crtc_id,
                                        drm_flags, msc, &kernel_queued, seq);
             if (ret == 0) {
+                msc = ms_kernel_msc_to_crtc_msc(crtc, kernel_queued, TRUE);
+                ms_drm_set_seq_queued(seq, msc);
                 if (msc_queued)
-                    *msc_queued = ms_kernel_msc_to_crtc_msc(crtc, kernel_queued, TRUE);
+                    *msc_queued = msc;
                 ms->has_queue_sequence = TRUE;
                 return TRUE;
             }
@@ -406,8 +361,10 @@ ms_queue_vblank(xf86CrtcPtr crtc, ms_queue_flag flags,
         vbl.request.signal = seq;
         ret = drmWaitVBlank(ms->fd, &vbl);
         if (ret == 0) {
+            msc = ms_kernel_msc_to_crtc_msc(crtc, vbl.reply.sequence, FALSE);
+            ms_drm_set_seq_queued(seq, msc);
             if (msc_queued)
-                *msc_queued = ms_kernel_msc_to_crtc_msc(crtc, vbl.reply.sequence, FALSE);
+                *msc_queued = msc;
             return TRUE;
         }
     check:
@@ -514,13 +471,15 @@ ms_drm_queue_alloc(xf86CrtcPtr crtc,
     if (!ms_drm_seq)
         ++ms_drm_seq;
     q->seq = ms_drm_seq++;
+    q->msc = UINT64_MAX;
     q->scrn = scrn;
     q->crtc = crtc;
     q->data = data;
     q->handler = handler;
     q->abort = abort;
 
-    xorg_list_add(&q->list, &ms_drm_queue);
+    /* Keep the list formatted in ascending order of sequence number */
+    xorg_list_append(&q->list, &ms_drm_queue);
 
     return q->seq;
 }
@@ -533,9 +492,18 @@ ms_drm_queue_alloc(xf86CrtcPtr crtc,
 static void
 ms_drm_abort_one(struct ms_drm_queue *q)
 {
+    if (q->aborted)
+        return;
+
+    /* Don't remove vblank events if they were queued in the kernel */
+    if (q->kernel_queued) {
+        q->abort(q->data);
+        q->aborted = TRUE;
+    } else {
         xorg_list_del(&q->list);
         q->abort(q->data);
         free(q);
+    }
 }
 
 /**
@@ -596,16 +564,64 @@ ms_drm_sequence_handler(int fd, uint64_t frame, uint64_t ns, Bool is64bit, uint6
 {
     struct ms_drm_queue *q, *tmp;
     uint32_t seq = (uint32_t) user_data;
+    xf86CrtcPtr crtc = NULL;
+    drmmode_crtc_private_ptr drmmode_crtc;
+    uint64_t msc, next_msc = UINT64_MAX;
 
-    xorg_list_for_each_entry_safe(q, tmp, &ms_drm_queue, list) {
+    /* Handle the seq for this event first in order to get the CRTC */
+    xorg_list_for_each_entry(q, &ms_drm_queue, list) {
         if (q->seq == seq) {
-            uint64_t msc;
+            crtc = q->crtc;
+            msc = ms_kernel_msc_to_crtc_msc(crtc, frame, is64bit);
 
-            msc = ms_kernel_msc_to_crtc_msc(q->crtc, frame, is64bit);
-            xorg_list_del(&q->list);
-            q->handler(msc, ns / 1000, q->data);
-            free(q);
+            /* Write the current MSC to this event to ensure its handler runs in
+             * the loop below. This is done because we don't want to run the
+             * handler right now, since we need to ensure all events are handled
+             * in FIFO order with respect to one another. Otherwise, if this
+             * event were handled first just because it was queued to the
+             * kernel, it could run before older events expiring at this MSC.
+             */
+            q->msc = msc;
             break;
+        }
+    }
+
+    if (!crtc)
+        return;
+
+    /* Now run all of the vblank events for this CRTC with an expired MSC */
+    xorg_list_for_each_entry_safe(q, tmp, &ms_drm_queue, list) {
+        if (q->crtc == crtc && q->msc <= msc) {
+            xorg_list_del(&q->list);
+            if (!q->aborted)
+                q->handler(msc, ns / 1000, q->data);
+            free(q);
+        }
+    }
+
+    /* Find this CRTC's next queued MSC and next non-queued MSC to be handled */
+    msc = UINT64_MAX;
+    xorg_list_for_each_entry(q, &ms_drm_queue, list) {
+        if (q->crtc == crtc) {
+            if (q->kernel_queued) {
+                if (q->msc < next_msc)
+                    next_msc = q->msc;
+            } else if (q->msc < msc) {
+                msc = q->msc;
+                seq = q->seq;
+            }
+        }
+    }
+
+    /* Queue an event if the next queued MSC isn't soon enough */
+    drmmode_crtc = crtc->driver_private;
+    drmmode_crtc->next_msc = next_msc;
+    if (msc < next_msc && !ms_queue_vblank(crtc, MS_QUEUE_ABSOLUTE, msc, NULL, seq)) {
+        xf86DrvMsg(crtc->scrn->scrnIndex, X_WARNING,
+                   "failed to queue next vblank event, aborting lost events\n");
+        xorg_list_for_each_entry_safe(q, tmp, &ms_drm_queue, list) {
+            if (q->crtc == crtc && q->msc < next_msc)
+                ms_drm_abort_one(q);
         }
     }
 }
@@ -624,6 +640,12 @@ ms_drm_handler(int fd, uint32_t frame, uint32_t sec, uint32_t usec,
     /* frame is 32 bit wrapped into 64 bit */
     ms_drm_sequence_handler(fd, frame, ((uint64_t) sec * 1000000 + usec) * 1000,
                             FALSE, (uint32_t) (uintptr_t) user_ptr);
+}
+
+Bool
+ms_drm_queue_is_empty(void)
+{
+    return xorg_list_is_empty(&ms_drm_queue);
 }
 
 Bool

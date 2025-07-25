@@ -81,97 +81,27 @@
 #include <stddef.h>
 
 /**************************************************************************/
-/* SYSV386 (SVR3, SVR4), including Solaris                                */
+/* Solaris or illumos-based system                                        */
 /**************************************************************************/
-#if (defined(SYSV) || defined(SVR4)) && \
-    (defined(__sun) || defined(__i386__))
+#if defined(__SVR4) && defined(__sun)
 #include <sys/ioctl.h>
 #include <signal.h>
 #include <termio.h>
-#include <sys/stat.h>
 #include <sys/types.h>
 
 #include <errno.h>
 
-#if defined(_NEED_SYSI86)
-#if !(defined (__sun) && defined (SVR4))
-#include <sys/immu.h>
-#include <sys/region.h>
-#include <sys/proc.h>
-#endif
-#include <sys/tss.h>
-#include <sys/sysi86.h>
-#if defined(SVR4) && !defined(__sun)
-#include <sys/seg.h>
-#endif                          /* SVR4 && !__sun */
-/* V86SC_IOPL was moved to <sys/sysi86.h> on Solaris 7 and later */
-#if !defined(V86SC_IOPL)        /* Solaris 7 or later? */
-#include <sys/v86.h>            /* Nope */
-#endif
-#if defined(__sun) && (defined (__i386__) || defined(__i386) || defined(__x86))  && defined (SVR4)
-#include <sys/psw.h>
-#endif
-#endif                          /* _NEED_SYSI86 */
-
-#if defined(HAS_SVR3_MMAPDRV)
-#include <sys/sysmacros.h>
-#if !defined(_NEED_SYSI86)
-#include <sys/immu.h>
-#include <sys/region.h>
-#endif
-#include <sys/mmap.h>           /* MMAP driver header */
-#endif
-
-#if !defined(__sun) || defined(HAVE_SYS_VT_H)
+#ifdef HAVE_SYS_VT_H
 #define HAS_USL_VTS
 #endif
-#if !defined(__sun)
-#include <sys/emap.h>
-#endif
-#if   defined(HAS_USL_VTS)
-#if !defined(__sun)
-#include <sys/at_ansi.h>
-#endif
+#ifdef HAS_USL_VTS
 #include <sys/kd.h>
 #include <sys/vt.h>
-
-extern _X_HIDDEN void xf86VTAcquire(int);
-extern _X_HIDDEN void xf86VTRelease(int);
 #endif
 
-#if defined(__sun)
-#include <sys/fbio.h>
-extern _X_HIDDEN char xf86SolarisFbDev[PATH_MAX];
-
-#include <sys/kbd.h>
-#include <sys/kbio.h>
-
-/* undefine symbols from <sys/kbd.h> we don't need that conflict with enum
-   definitions in parser/xf86tokens.h */
-#undef STRING
-#undef LEFTALT
-#undef RIGHTALT
-
-#define LED_CAP LED_CAPS_LOCK
-#define LED_NUM LED_NUM_LOCK
-#define LED_SCR LED_SCROLL_LOCK
-#define LED_COMP LED_COMPOSE
-#endif                          /* __sun */
-
-#if !defined(VT_ACKACQ)
-#define VT_ACKACQ 2
-#endif                          /* !VT_ACKACQ */
-
-#if defined(SVR4)
-#include <sys/mman.h>
-#if !(defined(__sun) && defined (SVR4))
-#define DEV_MEM "/dev/pmem"
-#endif
 #define CLEARDTR_SUPPORT
-#define POSIX_TTY
-#endif                          /* SVR4 */
 
-#endif                          /* (SYSV || SVR4) */
+#endif                          /* SVR4 && __sun */
 
 /**************************************************************************/
 /* Linux or Glibc-based system                                            */
@@ -190,9 +120,6 @@ extern _X_HIDDEN char xf86SolarisFbDev[PATH_MAX];
 
 #include <errno.h>
 
-#include <sys/stat.h>
-
-#include <sys/mman.h>
 #ifdef __linux__
 #define HAS_USL_VTS
 #include <sys/kd.h>
@@ -202,8 +129,6 @@ extern _X_HIDDEN char xf86SolarisFbDev[PATH_MAX];
 #define LDNMAP LDSMAP
 #define CLEARDTR_SUPPORT
 #endif
-
-#define POSIX_TTY
 
 #endif                          /* __linux__ || __GLIBC__ */
 
@@ -217,13 +142,10 @@ extern _X_HIDDEN char xf86SolarisFbDev[PATH_MAX];
 
 #include <termios.h>
 #define termio termios
-#define POSIX_TTY
 
 #include <errno.h>
 
 #include <sys/types.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
 
 #endif                          /* CSRG_BASED */
 
@@ -275,37 +197,8 @@ struct pcvtid {
 #include <sys/mouse.h>
 #endif
     /* Include these definitions in case ioctl_pc.h didn't get included */
-#ifndef CONSOLE_X_MODE_ON
-#define CONSOLE_X_MODE_ON _IO('t',121)
-#endif
-#ifndef CONSOLE_X_MODE_OFF
-#define CONSOLE_X_MODE_OFF _IO('t',122)
-#endif
 #ifndef CONSOLE_X_BELL
 #define CONSOLE_X_BELL _IOW('t',123,int[2])
-#endif
-#ifndef CONSOLE_X_TV_ON
-#define CONSOLE_X_TV_ON _IOW('t',155,int)
-#define XMODE_RGB   0
-#define XMODE_NTSC  1
-#define XMODE_PAL   2
-#define XMODE_SECAM 3
-#endif
-#ifndef CONSOLE_X_TV_OFF
-#define CONSOLE_X_TV_OFF _IO('t',156)
-#endif
-#ifndef CONSOLE_GET_LINEAR_INFO
-#define CONSOLE_GET_LINEAR_INFO         _IOR('t',157,struct map_info)
-#endif
-#ifndef CONSOLE_GET_IO_INFO
-#define CONSOLE_GET_IO_INFO             _IOR('t',158,struct map_info)
-#endif
-#ifndef CONSOLE_GET_MEM_INFO
-#define CONSOLE_GET_MEM_INFO            _IOR('t',159,struct map_info)
-#endif
-
-#if defined(USE_I386_IOPL) || defined(USE_AMD64_IOPL)
-#include <machine/sysarch.h>
 #endif
 
 #define CLEARDTR_SUPPORT
@@ -319,8 +212,6 @@ struct pcvtid {
 /**************************************************************************/
 /* Generic                                                                */
 /**************************************************************************/
-
-#include <sys/wait.h>           /* May need to adjust this for other OSs */
 
 /* For PATH_MAX */
 #include "misc.h"
@@ -339,17 +230,12 @@ struct pcvtid {
 
 #include <limits.h>
 
-#ifndef DEV_MEM
-#define DEV_MEM "/dev/mem"
-#endif
-
 #ifndef MAP_FAILED
 #define MAP_FAILED ((void *)-1)
 #endif
 
 #define SYSCALL(call) while(((call) == -1) && (errno == EINTR))
 
-#define XF86_OS_PRIVS
 #include "xf86_OSproc.h"
 
 #endif                          /* _XF86_OSLIB_H */

@@ -29,46 +29,60 @@
 #include <xwayland-config.h>
 
 #include <dix.h>
+#include <present_priv.h>
 
 #include "xwayland-types.h"
 
-#ifdef GLAMOR_HAS_GBM
 struct xwl_present_window {
-    struct xwl_screen *xwl_screen;
-    struct xwl_present_event *sync_flip;
     WindowPtr window;
+
     struct xorg_list frame_callback_list;
 
     uint64_t msc;
     uint64_t ust;
 
     OsTimerPtr frame_timer;
+    /* Timestamp when the current timer was first armed */
+    CARD32 timer_armed;
 
     struct wl_callback *sync_callback;
 
-    struct xorg_list event_list;
-    struct xorg_list release_queue;
+    struct xorg_list wait_list;
+    struct xorg_list flip_queue;
+    struct xorg_list idle_queue;
+    struct xorg_list blocked_queue;
+
+    present_vblank_ptr flip_active;
+    uint64_t blocking_event;
+
+    OsTimerPtr unredirect_timer;
+    Bool redirected;
+    Bool redirect_failed;
 };
 
 struct xwl_present_event {
-    uint64_t event_id;
-    uint64_t target_msc;
+    present_vblank_rec vblank;
 
-    Bool abort;
-    Bool pending;
-    Bool buffer_released;
+    PixmapPtr pixmap;
+    Bool copy_executed;
 
-    struct xwl_present_window *xwl_present_window;
-    struct wl_buffer *buffer;
+    uint32_t options;
+    uint64_t divisor;
+    uint64_t remainder;
 
-    struct xorg_list list;
+    struct xorg_list blocked;
 };
 
+Bool xwl_present_entered_for_each_frame_callback(void);
+void xwl_present_for_each_frame_callback(struct xwl_window *xwl_window,
+                                         void iter_func(struct xwl_present_window *));
+void xwl_present_reset_timer(struct xwl_present_window *xwl_present_window);
 void xwl_present_frame_callback(struct xwl_present_window *xwl_present_window);
 Bool xwl_present_init(ScreenPtr screen);
 void xwl_present_cleanup(WindowPtr window);
-void xwl_present_unrealize_window(WindowPtr window);
-
-#endif /* GLAMOR_HAS_GBM */
+void xwl_present_unrealize_window(struct xwl_present_window *xwl_present_window);
+Bool xwl_present_maybe_redirect_window(WindowPtr window);
+Bool xwl_present_maybe_unredirect_window(WindowPtr window);
+Bool xwl_present_window_redirected(WindowPtr window);
 
 #endif /* XWAYLAND_PRESENT_H */

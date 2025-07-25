@@ -4,12 +4,13 @@
 #endif
 
 #include <string.h>
+#include <X11/X.h>
+
+#include "dix/colormap_priv.h"
 
 #include "misc.h"
 #include "xf86.h"
 #include "xf86_OSproc.h"
-
-#include <X11/X.h>
 #include "scrnintstr.h"
 #include "pixmapstr.h"
 #include "windowstr.h"
@@ -19,7 +20,6 @@
 #include "mipointer.h"
 #include "randrstr.h"
 #include "xf86CursorPriv.h"
-
 #include "servermd.h"
 
 static void
@@ -150,7 +150,7 @@ xf86CheckHWCursor(ScreenPtr pScreen, CursorPtr cursor, xf86CursorInfoPtr infoPtr
     }
 
     /* ask each driver consuming a pixmap if it can support HW cursor */
-    xorg_list_for_each_entry(pSlave, &pScreen->slave_list, slave_head) {
+    xorg_list_for_each_entry(pSlave, &pScreen->secondary_list, secondary_head) {
         xf86CursorScreenPtr sPriv;
 
         if (!RRHasScanoutPixmap(pSlave))
@@ -162,7 +162,7 @@ xf86CheckHWCursor(ScreenPtr pScreen, CursorPtr cursor, xf86CursorInfoPtr infoPtr
 	    break;
 	}
 
-        /* FALSE if HWCursor not supported by slave */
+        /* FALSE if HWCursor not supported by secondary */
         if (!xf86ScreenCheckHWCursor(pSlave, cursor, sPriv->CursorInfoPtr)) {
             use_hw_cursor = FALSE;
 	    break;
@@ -197,15 +197,15 @@ xf86ScreenSetCursor(ScreenPtr pScreen, CursorPtr pCurs, int x, int y)
     }
 
     /*
-     * Hot plugged GPU's do not have a CursorScreenKey, force sw cursor.
+     * Hot plugged GPU's do not have a xf86ScreenCursorBitsKeyRec, force sw cursor.
      * This check can be removed once dix/privates.c gets relocation code for
      * PRIVATE_CURSOR. Also see the related comment in AddGPUScreen().
      */
-    if (!_dixGetScreenPrivateKey(CursorScreenKey, pScreen))
+    if (!_dixGetScreenPrivateKey(&xf86ScreenCursorBitsKeyRec, pScreen))
         return FALSE;
 
-    bits =
-        dixLookupScreenPrivate(&pCurs->devPrivates, CursorScreenKey, pScreen);
+    bits = dixLookupScreenPrivate(&pCurs->devPrivates,
+                                  &xf86ScreenCursorBitsKeyRec, pScreen);
 
     x -= infoPtr->pScrn->frameX0;
     y -= infoPtr->pScrn->frameY0;
@@ -213,8 +213,8 @@ xf86ScreenSetCursor(ScreenPtr pScreen, CursorPtr pCurs, int x, int y)
     if (!pCurs->bits->argb || !xf86DriverHasLoadCursorARGB(infoPtr))
         if (!bits) {
             bits = (*infoPtr->RealizeCursor) (infoPtr, pCurs);
-            dixSetScreenPrivate(&pCurs->devPrivates, CursorScreenKey, pScreen,
-                                bits);
+            dixSetScreenPrivate(&pCurs->devPrivates,
+                                &xf86ScreenCursorBitsKeyRec, pScreen, bits);
         }
 
     if (!(infoPtr->Flags & HARDWARE_CURSOR_UPDATE_UNHIDDEN))
@@ -252,14 +252,14 @@ xf86SetCursor(ScreenPtr pScreen, CursorPtr pCurs, int x, int y)
     if (!xf86ScreenSetCursor(pScreen, pCurs, x, y))
         goto out;
 
-    /* ask each slave driver to set the cursor. */
-    xorg_list_for_each_entry(pSlave, &pScreen->slave_list, slave_head) {
+    /* ask each secondary driver to set the cursor. */
+    xorg_list_for_each_entry(pSlave, &pScreen->secondary_list, secondary_head) {
         if (!RRHasScanoutPixmap(pSlave))
             continue;
 
         if (!xf86ScreenSetCursor(pSlave, pCurs, x, y)) {
             /*
-             * hide the master (and successfully set slave) cursors,
+             * hide the primary (and successfully set secondary) cursors,
              * otherwise both the hw and sw cursor will show.
              */
             xf86SetCursor(pScreen, NullCursor, x, y);
@@ -328,8 +328,8 @@ xf86MoveCursor(ScreenPtr pScreen, int x, int y)
 
     xf86ScreenMoveCursor(pScreen, x, y);
 
-    /* ask each slave driver to move the cursor */
-    xorg_list_for_each_entry(pSlave, &pScreen->slave_list, slave_head) {
+    /* ask each secondary driver to move the cursor */
+    xorg_list_for_each_entry(pSlave, &pScreen->secondary_list, secondary_head) {
         if (!RRHasScanoutPixmap(pSlave))
             continue;
 

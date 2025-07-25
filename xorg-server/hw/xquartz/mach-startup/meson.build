@@ -58,16 +58,23 @@ endif
 x11_bin = executable('X11.bin',
      [
       'bundle-main.c',
-      # strndup(3) was added in Mac OS X 10.7 (Lion), but we do this
-      # unconditionally to deal with the case where we build on 10.7 or later,
-      # but target 10.6 (Snow Leopard) or earlier as the minimum OS version.
-      '../../../os/strndup.c',
       mach_startup[1], # mach_startupServer.c
       mach_startup[3], # mach_startupUser.c
      ],
      link_with: x11_bin_libs,
      dependencies: [xproto_dep, x11_bin_deps, mach_startup_dep],
      include_directories: [inc, '..', top_dir_inc],
+     c_args: xquartz_defs,
+     link_args: ['-Objc'],
+     install: true,
+     install_dir: x11appdir,
+)
+
+# X11 (Bundle trampoline)
+x11 = executable('X11',
+     [
+      'bundle_trampoline.c',
+     ],
      c_args: xquartz_defs,
      link_args: ['-Objc'],
      install: true,

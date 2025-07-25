@@ -34,11 +34,12 @@
 #endif
 
 #include "xf86.h"
-#include "xf86Parser.h"
+#include "xf86Parser_priv.h"
 #include "xf86tokens.h"
 #include "xf86Config.h"
 #include "xf86MatchDrivers.h"
 #include "xf86Priv.h"
+#include "xf86_os_support.h"
 #include "xf86_OSlib.h"
 #include "xf86platformBus.h"
 #include "xf86pciBus.h"
@@ -103,11 +104,11 @@ AppendToList(const char *s, const char ***list, int *lines)
 {
     char *str, *newstr, *p;
 
-    str = xnfstrdup(s);
+    str = XNFstrdup(s);
     for (p = strtok(str, "\n"); p; p = strtok(NULL, "\n")) {
         (*lines)++;
-        *list = xnfreallocarray(*list, *lines + 1, sizeof(**list));
-        newstr = xnfalloc(strlen(p) + 2);
+        *list = XNFreallocarray(*list, *lines + 1, sizeof(**list));
+        newstr = XNFalloc(strlen(p) + 2);
         strcpy(newstr, p);
         strcat(newstr, "\n");
         (*list)[*lines - 1] = newstr;
@@ -155,11 +156,11 @@ xf86AddMatchedDriver(XF86MatchedDrivers *md, const char *driver)
     }
 
     if (nmatches < MATCH_DRIVERS_LIMIT) {
-        md->matches[nmatches] = xnfstrdup(driver);
+        md->matches[nmatches] = XNFstrdup(driver);
         md->nmatches++;
     }
     else {
-        xf86Msg(X_WARNING, "Too many drivers registered, can't add %s\n", driver);
+        LogMessageVerb(X_WARNING, 1, "Too many drivers registered, can't add %s\n", driver);
     }
 }
 
@@ -177,7 +178,7 @@ xf86AutoConfig(void)
         ret = CONFIG_OK;    /* OK so far */
     }
     else {
-        xf86Msg(X_ERROR, "Couldn't allocate Config record.\n");
+        LogMessageVerb(X_ERROR, 1, "Couldn't allocate Config record.\n");
         return FALSE;
     }
 
@@ -204,14 +205,14 @@ xf86AutoConfig(void)
         free(md.matches[i]);
     }
 
-    xf86MsgVerb(X_DEFAULT, 0,
+    LogMessageVerb(X_DEFAULT, 0,
                 "Using default built-in configuration (%d lines)\n",
                 builtinLines);
 
-    xf86MsgVerb(X_DEFAULT, 3, "--- Start of built-in configuration ---\n");
+    LogMessageVerb(X_DEFAULT, 3, "--- Start of built-in configuration ---\n");
     for (cp = builtinConfig; *cp; cp++)
         xf86ErrorFVerb(3, "\t%s", *cp);
-    xf86MsgVerb(X_DEFAULT, 3, "--- End of built-in configuration ---\n");
+    LogMessageVerb(X_DEFAULT, 3, "--- End of built-in configuration ---\n");
 
     xf86initConfigFiles();
     xf86setBuiltinConfig(builtinConfig);
@@ -219,7 +220,7 @@ xf86AutoConfig(void)
     FreeConfig();
 
     if (ret != CONFIG_OK)
-        xf86Msg(X_ERROR, "Error parsing the built-in default configuration.\n");
+        LogMessageVerb(X_ERROR, 1, "Error parsing the built-in default configuration.\n");
 
     return ret == CONFIG_OK;
 }
@@ -252,12 +253,12 @@ listPossibleVideoDrivers(XF86MatchedDrivers *md)
         }
 
         if (iret < 0) {
-            xf86Msg(X_WARNING,
-                    "could not get frame buffer identifier from %s\n",
-                    xf86SolarisFbDev);
+            LogMessageVerb(X_WARNING, 1,
+                           "could not get frame buffer identifier from %s\n",
+                           xf86SolarisFbDev);
         }
         else {
-            xf86Msg(X_PROBED, "console driver: %s\n", visid.name);
+            LogMessageVerb(X_PROBED, 1, "console driver: %s\n", visid.name);
 
             /* Special case from before the general case was set */
             if (strcmp(visid.name, "NVDAnvda") == 0) {
@@ -271,7 +272,7 @@ listPossibleVideoDrivers(XF86MatchedDrivers *md)
                     /* find end of all uppercase vendor section */
                 }
                 if ((cp != visid.name) && (*cp != '\0')) {
-                    char *vendorName = xnfstrdup(visid.name);
+                    char *vendorName = XNFstrdup(visid.name);
 
                     vendorName[cp - visid.name] = '\0';
 
@@ -294,24 +295,27 @@ listPossibleVideoDrivers(XF86MatchedDrivers *md)
     xf86PciMatchDriver(md);
 #endif
 
-#if defined(__linux__)
+#if defined(HAVE_MODESETTING_DRIVER)
     xf86AddMatchedDriver(md, "modesetting");
 #endif
 
-#if !defined(__sun)
     /* Fallback to platform default frame buffer driver */
-#if !defined(__linux__) && defined(__sparc__)
-    xf86AddMatchedDriver(md, "wsfb");
-#else
+#if defined(__linux__)
     xf86AddMatchedDriver(md, "fbdev");
 #endif
-#endif                          /* !__sun */
+#if defined(__FreeBSD__)
+    xf86AddMatchedDriver(md, "scfb");
+#endif
 
     /* Fallback to platform default hardware */
 #if defined(__i386__) || defined(__amd64__) || defined(__hurd__)
     xf86AddMatchedDriver(md, "vesa");
 #elif defined(__sparc__) && !defined(__sun)
     xf86AddMatchedDriver(md, "sunffb");
+#endif
+
+#if defined(__NetBSD__) || defined(__OpenBSD__)
+    xf86AddMatchedDriver(md, "wsfb");
 #endif
 }
 
@@ -388,7 +392,7 @@ autoConfigDevice(GDevPtr preconf_device)
         /* get all possible video drivers and count them */
         listPossibleVideoDrivers(&md);
         for (i = 0; i < md.nmatches; i++) {
-            xf86Msg(X_DEFAULT, "Matched %s as autoconfigured driver %d\n",
+            LogMessageVerb(X_DEFAULT, 1, "Matched %s as autoconfigured driver %d\n",
                     md.matches[i], i);
         }
 
@@ -399,7 +403,7 @@ autoConfigDevice(GDevPtr preconf_device)
              * minus one for the already existing first one
              * plus one for the terminating NULL */
             for (; slp[num_screens].screen; num_screens++);
-            xf86ConfigLayout.screens = xnfcalloc(num_screens + md.nmatches,
+            xf86ConfigLayout.screens = XNFcallocarray(num_screens + md.nmatches,
                                                  sizeof(screenLayoutRec));
             xf86ConfigLayout.screens[0] = slp[0];
 
@@ -437,7 +441,7 @@ autoConfigDevice(GDevPtr preconf_device)
         }
     }
 
-    xf86Msg(X_DEFAULT, "Assigned the driver to the xf86ConfigLayout\n");
+    LogMessageVerb(X_DEFAULT, 1, "Assigned the driver to the xf86ConfigLayout\n");
 
     return ptr;
 }

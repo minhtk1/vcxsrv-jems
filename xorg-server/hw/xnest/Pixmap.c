@@ -11,13 +11,12 @@ the suitability of this software for any purpose.  It is provided "as
 is" without express or implied warranty.
 
 */
-
-#ifdef HAVE_XNEST_CONFIG_H
-#include <xnest-config.h>
-#endif
+#include <dix-config.h>
 
 #include <X11/X.h>
+#include <X11/Xdefs.h>
 #include <X11/Xproto.h>
+
 #include "regionstr.h"
 #include "pixmapstr.h"
 #include "scrnintstr.h"

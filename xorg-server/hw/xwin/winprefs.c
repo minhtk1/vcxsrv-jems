@@ -298,7 +298,7 @@ HandleCustomWM_INITMENU(HWND hwnd, HMENU hmenu)
 
 /*
  * Searches for the custom WM_COMMAND command ID and performs action.
- * Return TRUE if command is proccessed, FALSE otherwise.
+ * Return TRUE if command is processed, FALSE otherwise.
  */
 Bool
 HandleCustomWM_COMMAND(HWND hwnd, WORD command, winPrivScreenPtr pScreenPriv)
@@ -545,7 +545,9 @@ LoadImageComma(char *fname, char *iconDirectory, int sx, int sy, int flags)
     }
     else {
         char *file = malloc(PATH_MAX + NAME_MAX + 2);
+#ifdef  __CYGWIN__
         Bool convert = FALSE;
+#endif
 
         if (!file)
             return NULL;

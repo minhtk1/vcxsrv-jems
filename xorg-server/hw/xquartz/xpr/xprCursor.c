@@ -31,14 +31,14 @@
 
 #include "sanitizedCarbon.h"
 
-#ifdef HAVE_DIX_CONFIG_H
 #include <dix-config.h>
-#endif
 
 #include "quartz.h"
 #include "xpr.h"
 #include "darwinEvents.h"
 #include <Xplugin.h>
+
+#include "mi/mipointer_priv.h"
 
 #include "mi.h"
 #include "scrnintstr.h"
@@ -380,7 +380,9 @@ QuartzInitCursor(ScreenPtr pScreen)
  */
 void
 QuartzSuspendXCursor(ScreenPtr pScreen)
-{}
+{
+    xp_show_cursor();
+}
 
 /*
  * QuartzResumeXCursor

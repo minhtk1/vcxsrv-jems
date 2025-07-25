@@ -11,18 +11,17 @@ the suitability of this software for any purpose.  It is provided "as
 is" without express or implied warranty.
 
 */
-
-#ifdef HAVE_XNEST_CONFIG_H
-#include <xnest-config.h>
-#endif
+#include <dix-config.h>
 
 #ifdef WIN32
 #include <X11/Xwindows.h>
 #endif
 
 #include <X11/X.h>
+#include <X11/Xdefs.h>
 #include <X11/Xproto.h>
 #include <X11/keysym.h>
+
 #include "screenint.h"
 #include "inputstr.h"
 #include "misc.h"
@@ -37,28 +36,11 @@ is" without express or implied warranty.
 #include "Args.h"
 #include "Events.h"
 
+// must come after Xnest.h, because of trickery to avoid name clash
+#include <X11/XKBlib.h>
 #include <X11/extensions/XKB.h>
+
 #include "xkbsrv.h"
-#include <X11/extensions/XKBconfig.h>
-
-extern Bool
- XkbQueryExtension(Display * /* dpy */ ,
-                   int * /* opcodeReturn */ ,
-                   int * /* eventBaseReturn */ ,
-                   int * /* errorBaseReturn */ ,
-                   int * /* majorRtrn */ ,
-                   int *        /* minorRtrn */
-    );
-
-extern XkbDescPtr XkbGetKeyboard(Display * /* dpy */ ,
-                                 unsigned int /* which */ ,
-                                 unsigned int   /* deviceSpec */
-    );
-
-extern Status XkbGetControls(Display * /* dpy */ ,
-                             unsigned long /* which */ ,
-                             XkbDescPtr /* desc */
-    );
 
 DeviceIntPtr xnestKeyboardDevice = NULL;
 
@@ -189,7 +171,7 @@ xnestKeyboardProc(DeviceIntPtr pDev, int onoff)
                               modmap, serverClient);
 
         XkbDDXChangeControls(pDev, xkb->ctrls, xkb->ctrls);
-        XkbFreeKeyboard(xkb, 0, False);
+        XkbFreeKeyboard(xkb, 0, FALSE);
         free(keymap);
         break;
     case DEVICE_ON:
@@ -238,8 +220,7 @@ xnestUpdateModifierState(unsigned int state)
     for (i = 0, mask = 1; i < 8; i++, mask <<= 1) {
         int key;
 
-        /* Modifier is down, but shouldn't be
-         */
+        /* Modifier is down, but shouldn't be */
         if ((xkb_state & mask) && !(state & mask)) {
             int count = keyc->modifierKeyCount[i];
 
@@ -257,8 +238,7 @@ xnestUpdateModifierState(unsigned int state)
                 }
         }
 
-        /* Modifier shoud be down, but isn't
-         */
+        /* Modifier should be down, but isn't */
         if (!(xkb_state & mask) && (state & mask))
             for (key = 0; key < MAP_LENGTH; key++)
                 if (keyc->xkbInfo->desc->map->modmap[key] & mask) {

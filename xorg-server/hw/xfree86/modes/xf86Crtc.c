@@ -30,7 +30,7 @@
 #include <stdio.h>
 
 #include "xf86.h"
-#include "xf86DDC.h"
+#include "xf86DDC_priv.h"
 #include "xf86Crtc.h"
 #include "xf86Modes.h"
 #include "xf86Priv.h"
@@ -59,7 +59,7 @@ xf86CrtcConfigInit(ScrnInfoPtr scrn, const xf86CrtcConfigFuncsRec * funcs)
 
     if (xf86CrtcConfigPrivateIndex == -1)
         xf86CrtcConfigPrivateIndex = xf86AllocateScrnInfoPrivateIndex();
-    config = xnfcalloc(1, sizeof(xf86CrtcConfigRec));
+    config = XNFcallocarray(1, sizeof(xf86CrtcConfigRec));
 
     config->funcs = funcs;
     config->compat_output = -1;
@@ -88,7 +88,7 @@ xf86CrtcCreate(ScrnInfoPtr scrn, const xf86CrtcFuncsRec * funcs)
     xf86CrtcConfigPtr xf86_config = XF86_CRTC_CONFIG_PTR(scrn);
     xf86CrtcPtr crtc, *crtcs;
 
-    crtc = calloc(sizeof(xf86CrtcRec), 1);
+    crtc = calloc(1, sizeof(xf86CrtcRec));
     if (!crtc)
         return NULL;
     crtc->version = XF86_CRTC_VERSION;
@@ -521,7 +521,7 @@ xf86OutputSetMonitor(xf86OutputPtr output)
 
     free(output->options);
 
-    output->options = xnfalloc(sizeof(xf86OutputOptions));
+    output->options = XNFalloc(sizeof(xf86OutputOptions));
     memcpy(output->options, xf86OutputOptions, sizeof(xf86OutputOptions));
 
     XNFasprintf(&option_name, "monitor-%s", output->name);
@@ -640,7 +640,7 @@ xf86OutputCreate(ScrnInfoPtr scrn,
     else
         len = 0;
 
-    output = calloc(sizeof(xf86OutputRec) + len, 1);
+    output = calloc(1, sizeof(xf86OutputRec) + len);
     if (!output)
         return NULL;
     output->scrn = scrn;
@@ -1731,11 +1731,10 @@ xf86ProbeOutputModes(ScrnInfoPtr scrn, int maxX, int maxY)
 
         if (edid_monitor) {
             struct det_monrec_parameter p;
-            struct disp_features *features = &edid_monitor->features;
             struct cea_data_block *hdmi_db;
 
             /* if display is not continuous-frequency, don't add default modes */
-            if (!GTF_SUPPORTED(features->msc))
+            if (!gtf_supported(edid_monitor))
                 add_default_modes = FALSE;
 
             p.mon_rec = &mon_rec;
@@ -2285,8 +2284,8 @@ xf86TargetPreferred(ScrnInfoPtr scrn, xf86CrtcConfigPtr config,
     DisplayModePtr *preferred, *preferred_match;
     Bool ret = FALSE;
 
-    preferred = xnfcalloc(config->num_output, sizeof(DisplayModePtr));
-    preferred_match = xnfcalloc(config->num_output, sizeof(DisplayModePtr));
+    preferred = XNFcallocarray(config->num_output, sizeof(DisplayModePtr));
+    preferred_match = XNFcallocarray(config->num_output, sizeof(DisplayModePtr));
 
     /* Check if the preferred mode is available on all outputs */
     for (p = -1; nextEnabledOutput(config, enabled, &p);) {
@@ -2395,7 +2394,7 @@ xf86TargetAspect(ScrnInfoPtr scrn, xf86CrtcConfigPtr config,
     Bool ret = FALSE;
     DisplayModePtr guess = NULL, aspect_guess = NULL, base_guess = NULL;
 
-    aspects = xnfcalloc(config->num_output, sizeof(float));
+    aspects = XNFcallocarray(config->num_output, sizeof(float));
 
     /* collect the aspect ratios */
     for (o = -1; nextEnabledOutput(config, enabled, &o);) {
@@ -2552,7 +2551,7 @@ xf86InitialConfiguration(ScrnInfoPtr scrn, Bool canGrow)
     Bool success = FALSE;
 
     /* Set up the device options */
-    config->options = xnfalloc(sizeof(xf86DeviceOptions));
+    config->options = XNFalloc(sizeof(xf86DeviceOptions));
     memcpy(config->options, xf86DeviceOptions, sizeof(xf86DeviceOptions));
     xf86ProcessOptions(scrn->scrnIndex, scrn->options, config->options);
     config->debug_modes = xf86ReturnOptValBool(config->options,
@@ -2572,9 +2571,9 @@ xf86InitialConfiguration(ScrnInfoPtr scrn, Bool canGrow)
 
     xf86ProbeOutputModes(scrn, width, height);
 
-    crtcs = xnfcalloc(config->num_output, sizeof(xf86CrtcPtr));
-    modes = xnfcalloc(config->num_output, sizeof(DisplayModePtr));
-    enabled = xnfcalloc(config->num_output, sizeof(Bool));
+    crtcs = XNFcallocarray(config->num_output, sizeof(xf86CrtcPtr));
+    modes = XNFcallocarray(config->num_output, sizeof(DisplayModePtr));
+    enabled = XNFcallocarray(config->num_output, sizeof(Bool));
 
     ret = xf86CollectEnabledOutputs(scrn, config, enabled);
     if (ret == FALSE && canGrow) {
@@ -2738,7 +2737,7 @@ xf86DisableCrtc(xf86CrtcPtr crtc)
 }
 
 /*
- * Check the CRTC we're going to map each output to vs. it's current
+ * Check the CRTC we're going to map each output to vs. its current
  * CRTC.  If they don't match, we have to disable the output and the CRTC
  * since the driver will have to re-route things.
  */
@@ -3111,7 +3110,7 @@ xf86DisableUnusedFunctions(ScrnInfoPtr pScrn)
         pScrn->ModeSet(pScrn);
     if (pScrn->pScreen) {
         if (pScrn->pScreen->isGPU)
-            xf86CursorResetCursor(pScrn->pScreen->current_master);
+            xf86CursorResetCursor(pScrn->pScreen->current_primary);
         else
             xf86CursorResetCursor(pScrn->pScreen);
     }
@@ -3165,7 +3164,7 @@ xf86OutputSetTileProperty(xf86OutputPtr output)
 
 #endif
 
-/* Pull out a phyiscal size from a detailed timing if available. */
+/* Pull out a physical size from a detailed timing if available. */
 struct det_phySize_parameter {
     xf86OutputPtr output;
     ddc_quirk_t quirks;

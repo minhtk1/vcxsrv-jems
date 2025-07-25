@@ -56,6 +56,7 @@ struct xwl_cursor {
 struct xwl_seat {
     DeviceIntPtr pointer;
     DeviceIntPtr relative_pointer;
+    DeviceIntPtr pointer_gestures;
     DeviceIntPtr keyboard;
     DeviceIntPtr touch;
     DeviceIntPtr stylus;
@@ -65,6 +66,8 @@ struct xwl_seat {
     struct wl_seat *seat;
     struct wl_pointer *wl_pointer;
     struct zwp_relative_pointer_v1 *wp_relative_pointer;
+    struct zwp_pointer_gesture_swipe_v1 *wp_pointer_gesture_swipe;
+    struct zwp_pointer_gesture_pinch_v1 *wp_pointer_gesture_pinch;
     struct wl_keyboard *wl_keyboard;
     struct wl_touch *wl_touch;
     struct zwp_tablet_seat_v2 *tablet_seat;
@@ -75,8 +78,14 @@ struct xwl_seat {
     uint32_t pointer_enter_serial;
     struct xorg_list link;
     CursorPtr x_cursor;
+    OsTimerPtr x_cursor_timer;
+    CursorPtr pending_x_cursor;
     struct xwl_cursor cursor;
-    WindowPtr last_xwindow;
+    struct xwl_window *last_focus_window;
+
+    uint32_t pointer_gesture_swipe_fingers;
+    uint32_t pointer_gesture_pinch_fingers;
+    double pointer_gesture_pinch_last_scale;
 
     struct xorg_list touches;
 
@@ -84,7 +93,6 @@ struct xwl_seat {
     char *keymap;
     struct wl_surface *keyboard_focus;
 
-    struct xorg_list axis_discrete_pending;
     struct xorg_list sync_pending;
 
     struct xwl_pointer_warp_emulator *pointer_warp_emulator;
@@ -102,6 +110,15 @@ struct xwl_seat {
         double dy;
         double dx_unaccel;
         double dy_unaccel;
+
+        wl_fixed_t scroll_dy;
+        wl_fixed_t scroll_dx;
+        int32_t scroll_dy_v120;
+        int32_t scroll_dx_v120;
+        Bool has_vertical_scroll;
+        Bool has_horizontal_scroll;
+        Bool has_vertical_scroll_v120;
+        Bool has_horizontal_scroll_v120;
     } pending_pointer_event;
 
     struct xorg_list tablets;
@@ -173,9 +190,12 @@ struct xwl_tablet_pad {
     struct xorg_list pad_group_list;
 };
 
+void xwl_seat_leave_ptr(struct xwl_seat *xwl_seat, Bool focus_lost);
+void xwl_seat_leave_kbd(struct xwl_seat *xwl_seat);
+
 void xwl_seat_destroy(struct xwl_seat *xwl_seat);
 
-void xwl_seat_clear_touch(struct xwl_seat *xwl_seat, WindowPtr window);
+void xwl_seat_clear_touch(struct xwl_seat *xwl_seat, struct xwl_window *xwl_window);
 
 void xwl_seat_emulate_pointer_warp(struct xwl_seat *xwl_seat,
                                    struct xwl_window *xwl_window,

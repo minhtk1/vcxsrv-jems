@@ -29,6 +29,8 @@
 
 /* exported functions are/were used by the X Server */
 
+#include <X11/Xfuncproto.h>
+
 /* Device.c */
 XF86ConfDevicePtr xf86parseDeviceSection(void);
 void xf86printDeviceSection(FILE * cf, XF86ConfDevicePtr ptr);
@@ -143,6 +145,4 @@ xf86freeExtensions(XF86ConfExtensionsPtr ptr);
 /* Externally provided functions */
 void
 ErrorF(const char *f, ...);
-void
-VErrorF(const char *f, va_list args);
 #endif

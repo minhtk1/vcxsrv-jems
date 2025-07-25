@@ -25,11 +25,12 @@
  * authorization from the copyright holder(s) and author(s).
  */
 
-#ifdef HAVE_DIX_CONFIG_H
 #include <dix-config.h>
-#endif
 
 #include <X11/X.h>
+
+#include "dix/dix_priv.h"
+
 #include "misc.h"
 #include "os.h"
 #include "extinit.h"
@@ -110,8 +111,9 @@ static RRModePtr
 xwlVidModeGetRRMode(ScreenPtr pScreen, int32_t width, int32_t height)
 {
     struct xwl_screen *xwl_screen = xwl_screen_get(pScreen);
-    struct xwl_output *xwl_output = xwl_screen_get_first_output(xwl_screen);
+    struct xwl_output *xwl_output;
 
+    xwl_output = xwl_screen_get_fixed_or_first_output(xwl_screen);
     if (!xwl_output)
         return NULL;
 
@@ -122,9 +124,10 @@ static RRModePtr
 xwlVidModeGetCurrentRRMode(ScreenPtr pScreen)
 {
     struct xwl_screen *xwl_screen = xwl_screen_get(pScreen);
-    struct xwl_output *xwl_output = xwl_screen_get_first_output(xwl_screen);
     struct xwl_emulated_mode *emulated_mode;
+    struct xwl_output *xwl_output;
 
+    xwl_output = xwl_screen_get_fixed_or_first_output(xwl_screen);
     if (!xwl_output)
         return NULL;
 
@@ -238,14 +241,18 @@ static Bool
 xwlVidModeGetNextModeline(ScreenPtr pScreen, DisplayModePtr *mode, int *dotClock)
 {
     struct xwl_screen *xwl_screen = xwl_screen_get(pScreen);
-    struct xwl_output *xwl_output = xwl_screen_get_first_output(xwl_screen);
+    struct xwl_output *xwl_output;
     VidModePtr pVidMode;
     DisplayModePtr pMod;
     intptr_t index;
 
+    xwl_output = xwl_screen_get_fixed_or_first_output(xwl_screen);
+    if (xwl_output == NULL)
+        return FALSE;
+
     pMod = dixLookupPrivate(&pScreen->devPrivates, xwlVidModePrivateKey);
     pVidMode = VidModeGetPtr(pScreen);
-    if (xwl_output == NULL || pMod == NULL || pVidMode == NULL)
+    if (pMod == NULL || pVidMode == NULL)
         return FALSE;
 
     index = (intptr_t)pVidMode->Next;
@@ -294,9 +301,10 @@ static Bool
 xwlVidModeSetViewPort(ScreenPtr pScreen, int x, int y)
 {
     struct xwl_screen *xwl_screen = xwl_screen_get(pScreen);
-    struct xwl_output *xwl_output = xwl_screen_get_first_output(xwl_screen);
+    struct xwl_output *xwl_output;
 
-    if (!xwl_output)
+    xwl_output = xwl_screen_get_fixed_or_first_output(xwl_screen);
+    if (xwl_output == NULL)
         return FALSE;
 
     /* Support only default viewport */
@@ -307,9 +315,10 @@ static Bool
 xwlVidModeGetViewPort(ScreenPtr pScreen, int *x, int *y)
 {
     struct xwl_screen *xwl_screen = xwl_screen_get(pScreen);
-    struct xwl_output *xwl_output = xwl_screen_get_first_output(xwl_screen);
+    struct xwl_output *xwl_output;
 
-    if (!xwl_output)
+    xwl_output = xwl_screen_get_fixed_or_first_output(xwl_screen);
+    if (xwl_output == NULL)
         return FALSE;
 
     *x = xwl_output->x;
@@ -322,17 +331,22 @@ static Bool
 xwlVidModeSwitchMode(ScreenPtr pScreen, DisplayModePtr mode)
 {
     struct xwl_screen *xwl_screen = xwl_screen_get(pScreen);
-    struct xwl_output *xwl_output = xwl_screen_get_first_output(xwl_screen);
+    struct xwl_output *xwl_output;
     RRModePtr rrmode;
 
-    if (!xwl_output)
+    xwl_output = xwl_screen_get_fixed_or_first_output(xwl_screen);
+    if (xwl_output == NULL)
         return FALSE;
 
     rrmode = xwl_output_find_mode(xwl_output, mode->HDisplay, mode->VDisplay);
     if (rrmode == NULL)
         return FALSE;
 
-    xwl_output_set_emulated_mode(xwl_output, GetCurrentClient(), rrmode, TRUE);
+    if (xwl_screen->rootless)
+        xwl_output_set_emulated_mode(xwl_output, GetCurrentClient(), rrmode, TRUE);
+    else if (xwl_screen->fixed_output)
+        xwl_output_set_mode_fixed(xwl_screen->fixed_output, rrmode);
+
     return TRUE;
 }
 
@@ -388,7 +402,9 @@ static int
 xwlVidModeGetNumOfModes(ScreenPtr pScreen)
 {
     struct xwl_screen *xwl_screen = xwl_screen_get(pScreen);
-    struct xwl_output *xwl_output = xwl_screen_get_first_output(xwl_screen);
+    struct xwl_output *xwl_output;
+
+    xwl_output = xwl_screen_get_fixed_or_first_output(xwl_screen);
 
     return xwl_output ? xwl_output->randr_output->numModes : 0;
 }
@@ -404,6 +420,7 @@ static Bool
 xwlVidModeGetGamma(ScreenPtr pScreen, float *red, float *green, float *blue)
 {
     /* Unsupported for now, but pretend it works */
+    *red = *green = *blue = 1.0f;
     return TRUE;
 }
 

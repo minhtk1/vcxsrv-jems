@@ -1,5 +1,5 @@
 /*
- * Xephyr - A kdrive X server thats runs in a host X window.
+ * Xephyr - A kdrive X server that runs in a host X window.
  *          Authored by Matthew Allum <mallum@openedhand.com>
  *
  * Copyright © 2004 Nokia
@@ -23,15 +23,16 @@
  * PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifdef HAVE_DIX_CONFIG_H
 #include <dix-config.h>
-#endif
 
 #include <xcb/xcb_keysyms.h>
 #include <X11/keysym.h>
 
-#include "ephyr.h"
+#include "mi/mipointer_priv.h"
+#include "os/client_priv.h"
+#include "os/osdep.h"
 
+#include "ephyr.h"
 #include "inputstr.h"
 #include "scrnintstr.h"
 #include "ephyrlog.h"
@@ -39,7 +40,7 @@
 #ifdef GLAMOR
 #include "glamor.h"
 #endif
-#include "ephyr_glamor_glx.h"
+#include "ephyr_glamor.h"
 #include "glx_extinit.h"
 #include "xkbsrv.h"
 
@@ -222,7 +223,7 @@ ephyrMapFramebuffer(KdScreenInfo * screen)
 
     /*
      * Use the rotation last applied to ourselves (in the Xephyr case the fb
-     * coordinate system moves independently of the pointer coordiante system).
+     * coordinate system moves independently of the pointer coordinate system).
      */
     KdComputePointerMatrix(&m, ephyrRandr, screen->width, screen->height);
     KdSetPointerMatrix(&m);
@@ -297,11 +298,11 @@ ephyrShadowUpdate(ScreenPtr pScreen, shadowBufPtr pBuf)
     EPHYR_LOG("slow paint");
 
     /* FIXME: Slow Rotated/Reflected updates could be much
-     * much faster efficiently updating via tranforming
+     * much faster efficiently updating via transforming
      * pBuf->pDamage  regions
      */
     shadowUpdateRotatePacked(pScreen, pBuf);
-    hostx_paint_rect(screen, 0, 0, 0, 0, screen->width, screen->height);
+    hostx_paint_rect(screen, 0, 0, 0, 0, screen->width, screen->height, TRUE);
 }
 
 static void
@@ -331,7 +332,8 @@ ephyrInternalDamageRedisplay(ScreenPtr pScreen)
                 hostx_paint_rect(screen,
                                  pbox->x1, pbox->y1,
                                  pbox->x1, pbox->y1,
-                                 pbox->x2 - pbox->x1, pbox->y2 - pbox->y1);
+                                 pbox->x2 - pbox->x1, pbox->y2 - pbox->y1,
+                                 nbox == 0);
                 pbox++;
             }
         }
@@ -569,6 +571,7 @@ ephyrRandRSetConfig(ScreenPtr pScreen,
     if (wasEnabled)
         KdEnableScreen(pScreen);
 
+    RRGetInfo(pScreen, TRUE);
     RRScreenSizeNotify(pScreen);
 
     return TRUE;
@@ -780,8 +783,7 @@ ephyrUpdateModifierState(unsigned int state)
     for (i = 0, mask = 1; i < 8; i++, mask <<= 1) {
         int key;
 
-        /* Modifier is down, but shouldn't be
-         */
+        /* Modifier is down, but shouldn't be */
         if ((xkb_state & mask) && !(state & mask)) {
             int count = keyc->modifierKeyCount[i];
 
@@ -799,8 +801,7 @@ ephyrUpdateModifierState(unsigned int state)
                 }
         }
 
-        /* Modifier shoud be down, but isn't
-         */
+        /* Modifier should be down, but isn't */
         if (!(xkb_state & mask) && (state & mask))
             for (key = 0; key < MAP_LENGTH; key++)
                 if (keyc->xkbInfo->desc->map->modmap[key] & mask) {
@@ -902,7 +903,8 @@ ephyrProcessExpose(xcb_generic_event_t *xev)
     if (scrpriv) {
         hostx_paint_rect(scrpriv->screen, 0, 0, 0, 0,
                          scrpriv->win_width,
-                         scrpriv->win_height);
+                         scrpriv->win_height,
+                         TRUE);
     } else {
         EPHYR_LOG_ERROR("failed to get host screen\n");
     }
@@ -1184,9 +1186,6 @@ ephyrXcbProcessEvents(Bool queued_only)
         }
 
         if (xev) {
-            if (ephyr_glamor)
-                ephyr_glamor_process_event(xev);
-
             free(xev);
         }
     }
@@ -1277,7 +1276,7 @@ static Status
 MouseInit(KdPointerInfo * pi)
 {
     pi->driverPrivate = (EphyrPointerPrivate *)
-        calloc(sizeof(EphyrPointerPrivate), 1);
+        calloc(1, sizeof(EphyrPointerPrivate));
     ((EphyrPointerPrivate *) pi->driverPrivate)->enabled = FALSE;
     pi->nAxes = 3;
     pi->nButtons = 32;
@@ -1338,7 +1337,7 @@ EphyrKeyboardInit(KdKeyboardInfo * ki)
     XkbControlsRec controls;
 
     ki->driverPrivate = (EphyrKbdPrivate *)
-        calloc(sizeof(EphyrKbdPrivate), 1);
+        calloc(1, sizeof(EphyrKbdPrivate));
 
     if (hostx_load_keymap(&keySyms, modmap, &controls)) {
         XkbApplyMappingChange(ki->dixdev, &keySyms,

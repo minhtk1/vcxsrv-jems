@@ -39,6 +39,8 @@
 #ifndef __X86EMU_DEBUG_H
 #define __X86EMU_DEBUG_H
 
+#include <X11/Xfuncproto.h>
+
 /*---------------------- Macros and type definitions ----------------------*/
 
 /* checks to be enabled for "runtime" */
@@ -107,8 +109,8 @@
 									x86emu_decode_printf(x,y)
 
 /*
- * The following allow us to look at the bytes of an instruction.  The
- * first INCR_INSTRN_LEN, is called everytime bytes are consumed in
+ * The following allows us to look at the bytes of an instruction.  The
+ * first INCR_INSTRN_LEN, is called every time bytes are consumed in
  * the decoding process.  The SAVE_IP_CS is called initially when the
  * major opcode of the instruction is accessed.
  */
@@ -182,27 +184,18 @@
 #define	DB(x)
 #endif
 
-/*-------------------------- Function Prototypes --------------------------*/
+void x86emu_inc_decoded_inst_len(int x);
+void x86emu_decode_printf(const char *x, ...) _X_ATTRIBUTE_PRINTF(1,2);
+void x86emu_just_disassemble(void);
+void x86emu_single_step(void);
+void x86emu_end_instr(void);
+void x86emu_dump_regs(void);
+void x86emu_dump_xregs(void);
+void x86emu_print_int_vect(u16 iv);
+void x86emu_instrument_instruction(void);
+void x86emu_check_ip_access(void);
+void x86emu_check_sp_access(void);
+void x86emu_check_mem_access(u32 p);
+void x86emu_check_data_access(uint s, uint o);
 
-#ifdef  __cplusplus
-extern "C" {                    /* Use "C" linkage when in C++ mode */
-#endif
-
-    extern void x86emu_inc_decoded_inst_len(int x);
-    extern void x86emu_decode_printf(const char *x, ...) _X_ATTRIBUTE_PRINTF(1,2);
-    extern void x86emu_just_disassemble(void);
-    extern void x86emu_single_step(void);
-    extern void x86emu_end_instr(void);
-    extern void x86emu_dump_regs(void);
-    extern void x86emu_dump_xregs(void);
-    extern void x86emu_print_int_vect(u16 iv);
-    extern void x86emu_instrument_instruction(void);
-    extern void x86emu_check_ip_access(void);
-    extern void x86emu_check_sp_access(void);
-    extern void x86emu_check_mem_access(u32 p);
-    extern void x86emu_check_data_access(uint s, uint o);
-
-#ifdef  __cplusplus
-}                               /* End of "C" linkage for C++           */
-#endif
 #endif                          /* __X86EMU_DEBUG_H */

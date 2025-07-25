@@ -11,13 +11,14 @@ the suitability of this software for any purpose.  It is provided "as
 is" without express or implied warranty.
 
 */
-
-#ifdef HAVE_XNEST_CONFIG_H
-#include <xnest-config.h>
-#endif
+#include <dix-config.h>
 
 #include <X11/X.h>
+#include <X11/Xdefs.h>
 #include <X11/Xproto.h>
+
+#include "dix/colormap_priv.h"
+
 #include "scrnintstr.h"
 #include "window.h"
 #include "windowstr.h"
@@ -124,7 +125,7 @@ xnestCreateColormap(ColormapPtr pCmap)
         break;
     }
 
-    return True;
+    return TRUE;
 }
 
 void
@@ -173,19 +174,19 @@ static Bool
 xnestSameInstalledColormapWindows(Window *windows, int numWindows)
 {
     if (xnestNumOldInstalledColormapWindows != numWindows)
-        return False;
+        return FALSE;
 
     if (xnestOldInstalledColormapWindows == windows)
-        return True;
+        return TRUE;
 
     if (xnestOldInstalledColormapWindows == NULL || windows == NULL)
-        return False;
+        return FALSE;
 
     if (memcmp(xnestOldInstalledColormapWindows, windows,
                numWindows * sizeof(Window)))
-        return False;
+        return FALSE;
 
-    return True;
+    return TRUE;
 }
 
 void
@@ -250,11 +251,11 @@ xnestSetInstalledColormapWindows(ScreenPtr pScreen)
 
             if (visual == xnestDefaultVisual(pScreen))
                 dixLookupResourceByType((void **) &pCmap, wColormap(pWin),
-                                        RT_COLORMAP, serverClient,
+                                        X11_RESTYPE_COLORMAP, serverClient,
                                         DixUseAccess);
             else
                 dixLookupResourceByType((void **) &pCmap,
-                                        pScreen->defColormap, RT_COLORMAP,
+                                        pScreen->defColormap, X11_RESTYPE_COLORMAP,
                                         serverClient, DixUseAccess);
 
             XSetWindowColormap(xnestDisplay,
@@ -306,7 +307,7 @@ xnestDirectInstallColormaps(ScreenPtr pScreen)
     for (i = 0; i < n; i++) {
         ColormapPtr pCmap;
 
-        dixLookupResourceByType((void **) &pCmap, pCmapIDs[i], RT_COLORMAP,
+        dixLookupResourceByType((void **) &pCmap, pCmapIDs[i], X11_RESTYPE_COLORMAP,
                                 serverClient, DixInstallAccess);
         if (pCmap)
             XInstallColormap(xnestDisplay, xnestColormap(pCmap));
@@ -327,7 +328,7 @@ xnestDirectUninstallColormaps(ScreenPtr pScreen)
     for (i = 0; i < n; i++) {
         ColormapPtr pCmap;
 
-        dixLookupResourceByType((void **) &pCmap, pCmapIDs[i], RT_COLORMAP,
+        dixLookupResourceByType((void **) &pCmap, pCmapIDs[i], X11_RESTYPE_COLORMAP,
                                 serverClient, DixUninstallAccess);
         if (pCmap)
             XUninstallColormap(xnestDisplay, xnestColormap(pCmap));
@@ -363,14 +364,14 @@ xnestUninstallColormap(ColormapPtr pCmap)
         if (pCmap->mid != pCmap->pScreen->defColormap) {
             dixLookupResourceByType((void **) &pCurCmap,
                                     pCmap->pScreen->defColormap,
-                                    RT_COLORMAP,
+                                    X11_RESTYPE_COLORMAP,
                                     serverClient, DixInstallAccess);
             (*pCmap->pScreen->InstallColormap) (pCurCmap);
         }
     }
 }
 
-static Bool xnestInstalledDefaultColormap = False;
+static Bool xnestInstalledDefaultColormap = FALSE;
 
 int
 xnestListInstalledColormaps(ScreenPtr pScreen, Colormap * pCmapIDs)
@@ -472,7 +473,7 @@ xnestCreateDefaultColormap(ScreenPtr pScreen)
                        (pVisual->class & DynamicClass) ? AllocNone : AllocAll,
                        0)
         != Success)
-        return False;
+        return FALSE;
 
     wp = pScreen->whitePixel;
     bp = pScreen->blackPixel;
@@ -484,7 +485,7 @@ xnestCreateDefaultColormap(ScreenPtr pScreen)
     pScreen->blackPixel = bp;
     (*pScreen->InstallColormap) (pCmap);
 
-    xnestInstalledDefaultColormap = True;
+    xnestInstalledDefaultColormap = TRUE;
 
-    return True;
+    return TRUE;
 }

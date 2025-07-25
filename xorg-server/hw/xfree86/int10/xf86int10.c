@@ -11,7 +11,7 @@
 #include "xf86.h"
 #include "compiler.h"
 #define _INT10_PRIVATE
-#include "xf86int10.h"
+#include "xf86int10_priv.h"
 #include "int10Defines.h"
 #include "Pci.h"
 
@@ -598,7 +598,7 @@ int42_handler(xf86Int10InfoPtr pInt)
 /**
  * These functions are meant to be used by the PCI BIOS emulation. Some
  * BIOSes need to see if there are \b other chips of the same type around so
- * by setting \c exclude one PCI device can be explicitely excluded, if
+ * by setting \c exclude one PCI device can be explicitly excluded, if
  * required.
  */
 static struct pci_device *

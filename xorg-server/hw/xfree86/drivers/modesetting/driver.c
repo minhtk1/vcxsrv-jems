@@ -1,6 +1,7 @@
 /*
  * Copyright 2008 Tungsten Graphics, Inc., Cedar Park, Texas.
  * Copyright 2011 Dave Airlie
+ * Copyright 2019 NVIDIA CORPORATION
  * All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -26,15 +27,22 @@
  *
  * Original Author: Alan Hourihane <alanh@tungstengraphics.com>
  * Rewrite: Dave Airlie <airlied@redhat.com>
+ * Additional contributors:
+ *   Aaron Plattner <aplattner@nvidia.com>
  *
  */
 
-#ifdef HAVE_DIX_CONFIG_H
 #include "dix-config.h"
-#endif
 
+#include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <X11/extensions/randr.h>
+#include <X11/extensions/Xv.h>
+
+#include "config/hotplug_priv.h"
+#include "dix/dix_priv.h"
+
 #include "xf86.h"
 #include "xf86Priv.h"
 #include "xf86_OSproc.h"
@@ -43,7 +51,6 @@
 #include "mipointer.h"
 #include "mipointrst.h"
 #include "micmap.h"
-#include <X11/extensions/randr.h>
 #include "fb.h"
 #include "edid.h"
 #include "xf86i2c.h"
@@ -51,7 +58,6 @@
 #include "miscstruct.h"
 #include "dixstruct.h"
 #include "xf86xv.h"
-#include <X11/extensions/Xv.h>
 #include <xorg-config.h>
 #ifdef XSERVER_PLATFORM_BUS
 #include "xf86platformBus.h"
@@ -79,6 +85,14 @@ static Bool ms_pci_probe(DriverPtr driver,
                          int entity_num, struct pci_device *device,
                          intptr_t match_data);
 static Bool ms_driver_func(ScrnInfoPtr scrn, xorgDriverFuncOp op, void *data);
+
+/* window wrapper functions used to get the notification when
+ * the window property changes */
+static Atom vrr_atom;
+static Bool property_vectors_wrapped;
+static Bool restore_property_vector;
+static int (*saved_change_property) (ClientPtr client);
+static int (*saved_delete_property) (ClientPtr client);
 
 #ifdef XSERVER_LIBPCIACCESS
 static const struct pci_id_match ms_device_match[] = {
@@ -131,6 +145,10 @@ static const OptionInfoRec Options[] = {
     {OPTION_ZAPHOD_HEADS, "ZaphodHeads", OPTV_STRING, {0}, FALSE},
     {OPTION_DOUBLE_SHADOW, "DoubleShadow", OPTV_BOOLEAN, {0}, FALSE},
     {OPTION_ATOMIC, "Atomic", OPTV_BOOLEAN, {0}, FALSE},
+    {OPTION_VARIABLE_REFRESH, "VariableRefresh", OPTV_BOOLEAN, {0}, FALSE},
+    {OPTION_USE_GAMMA_LUT, "UseGammaLUT", OPTV_BOOLEAN, {0}, FALSE},
+    {OPTION_ASYNC_FLIP_SECONDARIES, "AsyncFlipSecondaries", OPTV_BOOLEAN, {0}, FALSE},
+    {OPTION_TEARFREE, "TearFree", OPTV_BOOLEAN, {0}, FALSE},
     {-1, NULL, OPTV_NONE, {0}, FALSE}
 };
 
@@ -139,21 +157,23 @@ int ms_entity_index = -1;
 static MODULESETUPPROTO(Setup);
 
 static XF86ModuleVersionInfo VersRec = {
-    "modesetting",
-    MODULEVENDORSTRING,
-    MODINFOSTRING1,
-    MODINFOSTRING2,
-    XORG_VERSION_CURRENT,
-    XORG_VERSION_MAJOR,
-    XORG_VERSION_MINOR,
-    XORG_VERSION_PATCH,
-    ABI_CLASS_VIDEODRV,
-    ABI_VIDEODRV_VERSION,
-    MOD_CLASS_VIDEODRV,
-    {0, 0, 0, 0}
+    .modname      = "modesetting",
+    .vendor       = MODULEVENDORSTRING,
+    ._modinfo1_   = MODINFOSTRING1,
+    ._modinfo1_   = MODINFOSTRING2,
+    .xf86version  = XORG_VERSION_CURRENT,
+    .majorversion = XORG_VERSION_MAJOR,
+    .minorversion = XORG_VERSION_MINOR,
+    .patchlevel   = XORG_VERSION_PATCH,
+    .abiclass     = ABI_CLASS_VIDEODRV,
+    .abiversion   = ABI_VIDEODRV_VERSION,
+    .moduleclass  = MOD_CLASS_VIDEODRV,
 };
 
-_X_EXPORT XF86ModuleData modesettingModuleData = { &VersRec, Setup, NULL };
+_X_EXPORT XF86ModuleData modesettingModuleData = {
+    .vers = &VersRec,
+    .setup = Setup
+};
 
 static void *
 Setup(void *module, void *opts, int *errmaj, int *errmin)
@@ -377,7 +397,7 @@ ms_setup_entity(ScrnInfoPtr scrn, int entity_num)
     xf86SetEntityInstanceForScreen(scrn, entity_num, xf86GetNumEntityInstances(entity_num) - 1);
 
     if (!pPriv->ptr)
-        pPriv->ptr = xnfcalloc(sizeof(modesettingEntRec), 1);
+        pPriv->ptr = XNFcallocarray(1, sizeof(modesettingEntRec));
 }
 
 #ifdef XSERVER_LIBPCIACCESS
@@ -496,71 +516,240 @@ GetRec(ScrnInfoPtr pScrn)
     if (pScrn->driverPrivate)
         return TRUE;
 
-    pScrn->driverPrivate = xnfcalloc(sizeof(modesettingRec), 1);
+    pScrn->driverPrivate = XNFcallocarray(1, sizeof(modesettingRec));
 
     return TRUE;
 }
 
 static int
-dispatch_dirty_region(ScrnInfoPtr scrn,
-                      PixmapPtr pixmap, DamagePtr damage, int fb_id)
+rotate_clip(PixmapPtr pixmap, xf86CrtcPtr crtc, BoxPtr rect, drmModeClip *clip,
+            Rotation rotation, int x, int y)
+{
+    int w, h;
+    int x1, y1, x2, y2;
+
+    if (rotation == RR_Rotate_90 || rotation == RR_Rotate_270) {
+	/* width and height are swapped if rotated 90 or 270 degrees */
+        w = pixmap->drawable.height;
+        h = pixmap->drawable.width;
+    } else {
+        w = pixmap->drawable.width;
+        h = pixmap->drawable.height;
+    }
+
+    /* check if the given rect covers any area in FB of the crtc */
+    if (rect->x2 > crtc->x && rect->x1 < crtc->x + w &&
+        rect->y2 > crtc->y && rect->y1 < crtc->y + h) {
+        /* new coordinate of the partial rect on the crtc area
+         * + x/y offsets in the framebuffer */
+        x1 = max(rect->x1 - crtc->x, 0) + x;
+        y1 = max(rect->y1 - crtc->y, 0) + y;
+        x2 = min(rect->x2 - crtc->x, w) + x;
+        y2 = min(rect->y2 - crtc->y, h) + y;
+
+        /* coordinate transposing/inversion and offset adjustment */
+        if (rotation == RR_Rotate_90) {
+            clip->x1 = y1;
+            clip->y1 = w - x2;
+            clip->x2 = y2;
+            clip->y2 = w - x1;
+        } else if (rotation == RR_Rotate_180) {
+            clip->x1 = w - x2;
+            clip->y1 = h - y2;
+            clip->x2 = w - x1;
+            clip->y2 = h - y1;
+        } else if (rotation == RR_Rotate_270) {
+            clip->x1 = h - y2;
+            clip->y1 = x1;
+            clip->x2 = h - y1;;
+            clip->y2 = x2;
+        } else {
+            clip->x1 = x1;
+            clip->y1 = y1;
+            clip->x2 = x2;
+            clip->y2 = y2;
+        }
+    } else {
+        return -1;
+    }
+
+    return 0;
+}
+
+static int
+dispatch_damages(ScrnInfoPtr scrn, xf86CrtcPtr crtc, RegionPtr dirty,
+                 PixmapPtr pixmap, DamagePtr damage, int fb_id, int x, int y)
 {
     modesettingPtr ms = modesettingPTR(scrn);
-    RegionPtr dirty = DamageRegion(damage);
     unsigned num_cliprects = REGION_NUM_RECTS(dirty);
     int ret = 0;
+
+    if (!ms->dirty_enabled)
+        return 0;
 
     if (num_cliprects) {
         drmModeClip *clip = xallocarray(num_cliprects, sizeof(drmModeClip));
         BoxPtr rect = REGION_RECTS(dirty);
         int i;
+        int c = 0;
 
         if (!clip)
             return -ENOMEM;
 
-        /* XXX no need for copy? */
+        /* Create clips for the given rects in case the rect covers any
+         * area in the FB.
+         */
         for (i = 0; i < num_cliprects; i++, rect++) {
-            clip[i].x1 = rect->x1;
-            clip[i].y1 = rect->y1;
-            clip[i].x2 = rect->x2;
-            clip[i].y2 = rect->y2;
+            if (rotate_clip(pixmap, crtc, rect, &clip[c], crtc->rotation, x, y) < 0)
+                continue;
+
+            c++;
         }
 
+        if (!c)
+            return 0;
+
         /* TODO query connector property to see if this is needed */
-        ret = drmModeDirtyFB(ms->fd, fb_id, clip, num_cliprects);
+        ret = drmModeDirtyFB(ms->fd, fb_id, clip, c);
 
         /* if we're swamping it with work, try one at a time */
         if (ret == -EINVAL) {
-            for (i = 0; i < num_cliprects; i++) {
+            for (i = 0; i < c; i++) {
                 if ((ret = drmModeDirtyFB(ms->fd, fb_id, &clip[i], 1)) < 0)
                     break;
             }
         }
 
+        if (ret == -EINVAL || ret == -ENOSYS) {
+            xf86DrvMsg(scrn->scrnIndex, X_INFO,
+                       "Disabling kernel dirty updates, not required.\n");
+            ms->dirty_enabled = FALSE;
+        }
+
         free(clip);
-        DamageEmpty(damage);
     }
     return ret;
+}
+
+static int
+dispatch_dirty_region(ScrnInfoPtr scrn, xf86CrtcPtr crtc,
+                      PixmapPtr pixmap, DamagePtr damage,
+                      int fb_id, int x, int y)
+{
+    return dispatch_damages(scrn, crtc, DamageRegion(damage),
+                            pixmap, damage, fb_id, x, y);
+}
+
+static void
+ms_tearfree_update_damages(ScreenPtr pScreen)
+{
+    ScrnInfoPtr scrn = xf86ScreenToScrn(pScreen);
+    xf86CrtcConfigPtr xf86_config = XF86_CRTC_CONFIG_PTR(scrn);
+    modesettingPtr ms = modesettingPTR(scrn);
+    RegionPtr dirty = DamageRegion(ms->damage);
+    int c, i;
+
+    if (RegionNil(dirty))
+        return;
+
+    for (c = 0; c < xf86_config->num_crtc; c++) {
+        xf86CrtcPtr crtc = xf86_config->crtc[c];
+        drmmode_crtc_private_ptr drmmode_crtc = crtc->driver_private;
+        drmmode_tearfree_ptr trf = &drmmode_crtc->tearfree;
+        RegionRec region;
+
+        /* Compute how much of the damage intersects with this CRTC */
+        RegionInit(&region, &crtc->bounds, 0);
+        RegionIntersect(&region, &region, dirty);
+
+        if (trf->buf[0].px) {
+            for (i = 0; i < ARRAY_SIZE(trf->buf); i++)
+                RegionUnion(&trf->buf[i].dmg, &trf->buf[i].dmg, &region);
+        } else {
+            /* Just notify the kernel of the damages if TearFree isn't used */
+            dispatch_damages(scrn, crtc, &region,
+                             pScreen->GetScreenPixmap(pScreen),
+                             NULL, ms->drmmode.fb_id, 0, 0);
+        }
+    }
+    DamageEmpty(ms->damage);
+}
+
+static void
+ms_tearfree_do_flips(ScreenPtr pScreen)
+{
+#ifdef GLAMOR_HAS_GBM
+    ScrnInfoPtr scrn = xf86ScreenToScrn(pScreen);
+    xf86CrtcConfigPtr xf86_config = XF86_CRTC_CONFIG_PTR(scrn);
+    modesettingPtr ms = modesettingPTR(scrn);
+    int c;
+
+    if (!ms->drmmode.tearfree_enable)
+        return;
+
+    for (c = 0; c < xf86_config->num_crtc; c++) {
+        xf86CrtcPtr crtc = xf86_config->crtc[c];
+        drmmode_crtc_private_ptr drmmode_crtc = crtc->driver_private;
+        drmmode_tearfree_ptr trf = &drmmode_crtc->tearfree;
+
+        if (!ms_tearfree_is_active_on_crtc(crtc)) {
+            /* Notify any lingering DRI clients waiting for a flip to finish */
+            ms_tearfree_dri_abort_all(crtc);
+            continue;
+        }
+
+        /* Skip if the last flip is still pending, a DRI client is flipping, or
+         * there isn't any damage on the front buffer.
+         */
+        if (trf->flip_seq || ms->drmmode.dri2_flipping ||
+            ms->drmmode.present_flipping ||
+            RegionNil(&trf->buf[trf->back_idx ^ 1].dmg))
+            continue;
+
+        /* Flip. If it fails, notify the kernel of the front buffer damages */
+        if (ms_do_tearfree_flip(pScreen, crtc)) {
+            dispatch_damages(scrn, crtc, &trf->buf[trf->back_idx ^ 1].dmg,
+                             trf->buf[trf->back_idx ^ 1].px, NULL,
+                             trf->buf[trf->back_idx ^ 1].fb_id, 0, 0);
+            RegionEmpty(&trf->buf[trf->back_idx ^ 1].dmg);
+        }
+    }
+#endif
 }
 
 static void
 dispatch_dirty(ScreenPtr pScreen)
 {
     ScrnInfoPtr scrn = xf86ScreenToScrn(pScreen);
+    xf86CrtcConfigPtr xf86_config = XF86_CRTC_CONFIG_PTR(scrn);
     modesettingPtr ms = modesettingPTR(scrn);
     PixmapPtr pixmap = pScreen->GetScreenPixmap(pScreen);
-    int fb_id = ms->drmmode.fb_id;
-    int ret;
+    uint32_t fb_id;
+    int ret, c, x, y ;
 
-    ret = dispatch_dirty_region(scrn, pixmap, ms->damage, fb_id);
-    if (ret == -EINVAL || ret == -ENOSYS) {
-        ms->dirty_enabled = FALSE;
-        DamageUnregister(ms->damage);
-        DamageDestroy(ms->damage);
-        ms->damage = NULL;
-        xf86DrvMsg(scrn->scrnIndex, X_INFO,
-                   "Disabling kernel dirty updates, not required.\n");
-        return;
+    for (c = 0; c < xf86_config->num_crtc; c++) {
+        xf86CrtcPtr crtc = xf86_config->crtc[c];
+        PixmapPtr pmap;
+
+        drmmode_crtc_private_ptr drmmode_crtc = crtc->driver_private;
+
+        if (!drmmode_crtc)
+            continue;
+
+	drmmode_crtc_get_fb_id(crtc, &fb_id, &x, &y);
+
+        if (crtc->rotatedPixmap)
+            pmap = crtc->rotatedPixmap;
+        else
+            pmap = pixmap;
+
+        ret = dispatch_dirty_region(scrn, crtc, pmap, ms->damage, fb_id, x, y);
+        if (ret == -EINVAL || ret == -ENOSYS) {
+            DamageUnregister(ms->damage);
+            DamageDestroy(ms->damage);
+            ms->damage = NULL;
+            return;
+        }
     }
 }
 
@@ -569,14 +758,14 @@ dispatch_dirty_pixmap(ScrnInfoPtr scrn, xf86CrtcPtr crtc, PixmapPtr ppix)
 {
     modesettingPtr ms = modesettingPTR(scrn);
     msPixmapPrivPtr ppriv = msGetPixmapPriv(&ms->drmmode, ppix);
-    DamagePtr damage = ppriv->slave_damage;
+    DamagePtr damage = ppriv->secondary_damage;
     int fb_id = ppriv->fb_id;
 
-    dispatch_dirty_region(scrn, ppix, damage, fb_id);
+    dispatch_dirty_region(scrn, crtc, ppix, damage, fb_id, 0, 0);
 }
 
 static void
-dispatch_slave_dirty(ScreenPtr pScreen)
+dispatch_secondary_dirty(ScreenPtr pScreen)
 {
     ScrnInfoPtr scrn = xf86ScreenToScrn(pScreen);
     xf86CrtcConfigPtr xf86_config = XF86_CRTC_CONFIG_PTR(scrn);
@@ -601,28 +790,28 @@ redisplay_dirty(ScreenPtr screen, PixmapDirtyUpdatePtr dirty, int *timeout)
 {
     RegionRec pixregion;
 
-    PixmapRegionInit(&pixregion, dirty->slave_dst);
-    DamageRegionAppend(&dirty->slave_dst->drawable, &pixregion);
+    PixmapRegionInit(&pixregion, dirty->secondary_dst);
+    DamageRegionAppend(&dirty->secondary_dst->drawable, &pixregion);
     PixmapSyncDirtyHelper(dirty);
 
     if (!screen->isGPU) {
 #ifdef GLAMOR_HAS_GBM
         modesettingPtr ms = modesettingPTR(xf86ScreenToScrn(screen));
         /*
-         * When copying from the master framebuffer to the shared pixmap,
-         * we must ensure the copy is complete before the slave starts a
-         * copy to its own framebuffer (some slaves scanout directly from
+         * When copying from the primary framebuffer to the shared pixmap,
+         * we must ensure the copy is complete before the secondary starts a
+         * copy to its own framebuffer (some secondarys scanout directly from
          * the shared pixmap, but not all).
          */
         if (ms->drmmode.glamor)
             ms->glamor.finish(screen);
 #endif
-        /* Ensure the slave processes the damage immediately */
+        /* Ensure the secondary processes the damage immediately */
         if (timeout)
             *timeout = 0;
     }
 
-    DamageRegionProcessPending(&dirty->slave_dst->drawable);
+    DamageRegionProcessPending(&dirty->secondary_dst->drawable);
     RegionUninit(&pixregion);
 }
 
@@ -642,13 +831,13 @@ ms_dirty_update(ScreenPtr screen, int *timeout)
         if (RegionNotEmpty(region)) {
             if (!screen->isGPU) {
                    msPixmapPrivPtr ppriv =
-                    msGetPixmapPriv(&ms->drmmode, ent->slave_dst->master_pixmap);
+                    msGetPixmapPriv(&ms->drmmode, ent->secondary_dst->primary_pixmap);
 
                 if (ppriv->notify_on_damage) {
                     ppriv->notify_on_damage = FALSE;
 
-                    ent->slave_dst->drawable.pScreen->
-                        SharedPixmapNotifyDamage(ent->slave_dst);
+                    ent->secondary_dst->drawable.pScreen->
+                        SharedPixmapNotifyDamage(ent->secondary_dst);
                 }
 
                 /* Requested manual updating */
@@ -663,7 +852,7 @@ ms_dirty_update(ScreenPtr screen, int *timeout)
 }
 
 static PixmapDirtyUpdatePtr
-ms_dirty_get_ent(ScreenPtr screen, PixmapPtr slave_dst)
+ms_dirty_get_ent(ScreenPtr screen, PixmapPtr secondary_dst)
 {
     PixmapDirtyUpdatePtr ent;
 
@@ -671,7 +860,7 @@ ms_dirty_get_ent(ScreenPtr screen, PixmapPtr slave_dst)
         return NULL;
 
     xorg_list_for_each_entry(ent, &screen->pixmap_dirty_list, ent) {
-        if (ent->slave_dst == slave_dst)
+        if (ent->secondary_dst == secondary_dst)
             return ent;
     }
 
@@ -688,11 +877,14 @@ msBlockHandler(ScreenPtr pScreen, void *timeout)
     ms->BlockHandler = pScreen->BlockHandler;
     pScreen->BlockHandler = msBlockHandler;
     if (pScreen->isGPU && !ms->drmmode.reverse_prime_offload_mode)
-        dispatch_slave_dirty(pScreen);
+        dispatch_secondary_dirty(pScreen);
+    else if (ms->drmmode.tearfree_enable)
+        ms_tearfree_update_damages(pScreen);
     else if (ms->dirty_enabled)
         dispatch_dirty(pScreen);
 
     ms_dirty_update(pScreen, timeout);
+    ms_tearfree_do_flips(pScreen);
 }
 
 static void
@@ -703,11 +895,138 @@ msBlockHandler_oneshot(ScreenPtr pScreen, void *pTimeout)
 
     msBlockHandler(pScreen, pTimeout);
 
-    drmmode_set_desired_modes(pScrn, &ms->drmmode, TRUE);
+    drmmode_set_desired_modes(pScrn, &ms->drmmode, TRUE, FALSE);
+}
+
+Bool
+ms_window_has_variable_refresh(modesettingPtr ms, WindowPtr win) {
+	struct ms_vrr_priv *priv = dixLookupPrivate(&win->devPrivates, &ms->drmmode.vrrPrivateKeyRec);
+
+	return priv->variable_refresh;
 }
 
 static void
-FreeRec(ScrnInfoPtr pScrn)
+ms_vrr_property_update(WindowPtr window, Bool variable_refresh)
+{
+    ScrnInfoPtr scrn = xf86ScreenToScrn(window->drawable.pScreen);
+    modesettingPtr ms = modesettingPTR(scrn);
+
+    struct ms_vrr_priv *priv = dixLookupPrivate(&window->devPrivates,
+                                                &ms->drmmode.vrrPrivateKeyRec);
+    priv->variable_refresh = variable_refresh;
+
+    if (ms->flip_window == window && ms->drmmode.present_flipping)
+        ms_present_set_screen_vrr(scrn, variable_refresh);
+}
+
+/* Wrapper for xserver/dix/property.c:ProcChangeProperty */
+static int
+ms_change_property(ClientPtr client)
+{
+    WindowPtr window = NULL;
+    int ret = 0;
+
+    REQUEST(xChangePropertyReq);
+
+    client->requestVector[X_ChangeProperty] = saved_change_property;
+    ret = saved_change_property(client);
+
+    if (restore_property_vector)
+        return ret;
+
+    client->requestVector[X_ChangeProperty] = ms_change_property;
+
+    if (ret != Success)
+        return ret;
+
+    ret = dixLookupWindow(&window, stuff->window, client, DixSetPropAccess);
+    if (ret != Success)
+        return ret;
+
+    // Checking for the VRR property change on the window
+    if (stuff->property == vrr_atom &&
+        xf86ScreenToScrn(window->drawable.pScreen)->PreInit == PreInit &&
+        stuff->format == 32 && stuff->nUnits == 1) {
+        uint32_t *value = (uint32_t *)(stuff + 1);
+        ms_vrr_property_update(window, *value != 0);
+    }
+
+    return ret;
+}
+
+/* Wrapper for xserver/dix/property.c:ProcDeleteProperty */
+static int
+ms_delete_property(ClientPtr client)
+{
+    WindowPtr window;
+    int ret;
+
+    REQUEST(xDeletePropertyReq);
+
+    client->requestVector[X_DeleteProperty] = saved_delete_property;
+    ret = saved_delete_property(client);
+
+    if (restore_property_vector)
+        return ret;
+
+    client->requestVector[X_DeleteProperty] = ms_delete_property;
+
+    if (ret != Success)
+        return ret;
+
+    ret = dixLookupWindow(&window, stuff->window, client, DixSetPropAccess);
+    if (ret != Success)
+        return ret;
+
+    if (stuff->property == vrr_atom &&
+        xf86ScreenToScrn(window->drawable.pScreen)->PreInit == PreInit)
+        ms_vrr_property_update(window, FALSE);
+
+    return ret;
+}
+
+static void
+ms_unwrap_property_requests(ScrnInfoPtr scrn)
+{
+    int i;
+
+    if (!property_vectors_wrapped)
+        return;
+
+    if (ProcVector[X_ChangeProperty] == ms_change_property)
+        ProcVector[X_ChangeProperty] = saved_change_property;
+    else
+        restore_property_vector = TRUE;
+
+    if (ProcVector[X_DeleteProperty] == ms_delete_property)
+        ProcVector[X_DeleteProperty] = saved_delete_property;
+    else
+        restore_property_vector = TRUE;
+
+    for (i = 0; i < currentMaxClients; i++) {
+        if (clients[i]->requestVector[X_ChangeProperty] == ms_change_property) {
+            clients[i]->requestVector[X_ChangeProperty] = saved_change_property;
+        } else {
+            restore_property_vector = TRUE;
+        }
+
+        if (clients[i]->requestVector[X_DeleteProperty] == ms_delete_property) {
+            clients[i]->requestVector[X_DeleteProperty] = saved_delete_property;
+        } else {
+            restore_property_vector = TRUE;
+        }
+    }
+
+    if (restore_property_vector) {
+        xf86DrvMsg(scrn->scrnIndex, X_WARNING,
+                   "Couldn't unwrap some window property request vectors\n");
+    }
+
+    property_vectors_wrapped = FALSE;
+}
+
+static void
+FreeScreen(ScrnInfoPtr pScrn)
 {
     modesettingPtr ms;
 
@@ -725,6 +1044,7 @@ FreeRec(ScrnInfoPtr pScrn)
         ms_ent = ms_ent_priv(pScrn);
         ms_ent->fd_ref--;
         if (!ms_ent->fd_ref) {
+            ms_unwrap_property_requests(pScrn);
             if (ms->pEnt->location.type == BUS_PCI)
                 ret = drmClose(ms->fd);
             else
@@ -743,9 +1063,17 @@ FreeRec(ScrnInfoPtr pScrn)
 
 }
 
-static void
-bind_glamor_api(void *mod, modesettingPtr ms)
+#ifdef GLAMOR_HAS_GBM
+
+static Bool
+load_glamor(ScrnInfoPtr pScrn)
 {
+    void *mod = xf86LoadSubModule(pScrn, GLAMOR_EGL_MODULE_NAME);
+    modesettingPtr ms = modesettingPTR(pScrn);
+
+    if (!mod)
+        return FALSE;
+
     ms->glamor.back_pixmap_from_fd = LoaderSymbolFromModule(mod, "glamor_back_pixmap_from_fd");
     ms->glamor.block_handler = LoaderSymbolFromModule(mod, "glamor_block_handler");
     ms->glamor.clear_pixmap = LoaderSymbolFromModule(mod, "glamor_clear_pixmap");
@@ -763,7 +1091,11 @@ bind_glamor_api(void *mod, modesettingPtr ms)
     ms->glamor.supports_pixmap_import_export = LoaderSymbolFromModule(mod, "glamor_supports_pixmap_import_export");
     ms->glamor.xv_init = LoaderSymbolFromModule(mod, "glamor_xv_init");
     ms->glamor.egl_get_driver_name = LoaderSymbolFromModule(mod, "glamor_egl_get_driver_name");
+
+    return TRUE;
 }
+
+#endif
 
 static void
 try_enable_glamor(ScrnInfoPtr pScrn)
@@ -773,7 +1105,6 @@ try_enable_glamor(ScrnInfoPtr pScrn)
                                                        OPTION_ACCEL_METHOD);
     Bool do_glamor = (!accel_method_str ||
                       strcmp(accel_method_str, "glamor") == 0);
-    void *mod;
 
     ms->drmmode.glamor = FALSE;
 
@@ -788,9 +1119,7 @@ try_enable_glamor(ScrnInfoPtr pScrn)
         return;
     }
 
-    mod = xf86LoadSubModule(pScrn, GLAMOR_EGL_MODULE_NAME);
-    if (mod) {
-        bind_glamor_api(mod, ms);
+    if (load_glamor(pScrn)) {
         if (ms->glamor.egl_init(pScrn, ms->fd)) {
             xf86DrvMsg(pScrn->scrnIndex, X_INFO, "glamor initialized\n");
             ms->drmmode.glamor = TRUE;
@@ -815,16 +1144,21 @@ msShouldDoubleShadow(ScrnInfoPtr pScrn, modesettingPtr ms)
 {
     Bool ret = FALSE, asked;
     int from;
-    drmVersionPtr v = drmGetVersion(ms->fd);
+    drmVersionPtr v;
 
     if (!ms->drmmode.shadow_enable)
         return FALSE;
 
-    if (!strcmp(v->name, "mgag200") ||
-        !strcmp(v->name, "ast")) /* XXX || rn50 */
-        ret = TRUE;
+    if ((v = drmGetVersion(ms->fd))) {
+        if (!strcmp(v->name, "mgag200") ||
+            !strcmp(v->name, "ast")) /* XXX || rn50 */
+            ret = TRUE;
 
-    drmFreeVersion(v);
+        drmFreeVersion(v);
+    }
+    else
+        xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
+                   "Failed to query DRM version.\n");
 
     asked = xf86GetOptValBool(ms->drmmode.Options, OPTION_DOUBLE_SHADOW, &ret);
 
@@ -1007,15 +1341,15 @@ PreInit(ScrnInfoPtr pScrn, int flags)
         ms->drmmode.sw_cursor = TRUE;
     }
 
-    ms->cursor_width = 64;
-    ms->cursor_height = 64;
+    ms->max_cursor_width = 64;
+    ms->max_cursor_height = 64;
     ret = drmGetCap(ms->fd, DRM_CAP_CURSOR_WIDTH, &value);
     if (!ret) {
-        ms->cursor_width = value;
+        ms->max_cursor_width = value;
     }
     ret = drmGetCap(ms->fd, DRM_CAP_CURSOR_HEIGHT, &value);
     if (!ret) {
-        ms->cursor_height = value;
+        ms->max_cursor_height = value;
     }
 
     try_enable_glamor(pScrn);
@@ -1044,6 +1378,19 @@ PreInit(ScrnInfoPtr pScrn, int flags)
                    ms->drmmode.shadow_enable ? "YES" : "NO");
 
         ms->drmmode.shadow_enable2 = msShouldDoubleShadow(pScrn, ms);
+    } else {
+        if (!pScrn->is_gpu) {
+            MessageType from = xf86GetOptValBool(ms->drmmode.Options, OPTION_VARIABLE_REFRESH,
+                                                 &ms->vrr_support) ? X_CONFIG : X_DEFAULT;
+            xf86DrvMsg(pScrn->scrnIndex, from, "VariableRefresh: %sabled\n",
+                       ms->vrr_support ? "en" : "dis");
+
+            ms->drmmode.async_flip_secondaries = FALSE;
+            from = xf86GetOptValBool(ms->drmmode.Options, OPTION_ASYNC_FLIP_SECONDARIES,
+                                     &ms->drmmode.async_flip_secondaries) ? X_CONFIG : X_DEFAULT;
+            xf86DrvMsg(pScrn->scrnIndex, from, "AsyncFlipSecondaries: %sabled\n",
+                       ms->drmmode.async_flip_secondaries ? "en" : "dis");
+        }
     }
 
     ms->drmmode.pageflip =
@@ -1063,11 +1410,44 @@ PreInit(ScrnInfoPtr pScrn, int flags)
 #endif
     }
 
+    /*
+     * Use "atomic modesetting disable" request to detect if the kms driver is
+     * atomic capable, regardless if we will actually use atomic modesetting.
+     * This is effectively a no-op, we only care about the return status code.
+     */
+    ret = drmSetClientCap(ms->fd, DRM_CLIENT_CAP_ATOMIC, 0);
+    ms->atomic_modeset_capable = (ret == 0);
+
     if (xf86ReturnOptValBool(ms->drmmode.Options, OPTION_ATOMIC, FALSE)) {
         ret = drmSetClientCap(ms->fd, DRM_CLIENT_CAP_ATOMIC, 1);
         ms->atomic_modeset = (ret == 0);
+        if (!ms->atomic_modeset)
+            xf86DrvMsg(pScrn->scrnIndex, X_WARNING, "Atomic modesetting not supported\n");
     } else {
         ms->atomic_modeset = FALSE;
+    }
+    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+               "Atomic modesetting %sabled\n", ms->atomic_modeset ? "en" : "dis");
+
+    /* TearFree requires glamor and, if PageFlip is enabled, universal planes */
+    if (xf86ReturnOptValBool(ms->drmmode.Options, OPTION_TEARFREE, TRUE)) {
+        if (pScrn->is_gpu) {
+            xf86DrvMsg(pScrn->scrnIndex, X_WARNING,
+                       "TearFree cannot synchronize PRIME; use 'PRIME Synchronization' instead\n");
+        } else if (ms->drmmode.glamor) {
+            /* Atomic modesetting implicitly enables universal planes */
+            if (!ms->drmmode.pageflip || ms->atomic_modeset ||
+                !drmSetClientCap(ms->fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1)) {
+                ms->drmmode.tearfree_enable = TRUE;
+                xf86DrvMsg(pScrn->scrnIndex, X_INFO, "TearFree: enabled\n");
+            } else {
+                xf86DrvMsg(pScrn->scrnIndex, X_WARNING,
+                           "TearFree requires either universal planes, or setting 'Option \"PageFlip\" \"off\"'\n");
+            }
+        } else {
+            xf86DrvMsg(pScrn->scrnIndex, X_WARNING,
+                       "TearFree requires Glamor acceleration\n");
+        }
     }
 
     ms->kms_has_modifiers = FALSE;
@@ -1232,7 +1612,6 @@ msEnableSharedPixmapFlipping(RRCrtcPtr crtc, PixmapPtr front, PixmapPtr back)
     ScreenPtr screen = crtc->pScreen;
     ScrnInfoPtr scrn = xf86ScreenToScrn(screen);
     modesettingPtr ms = modesettingPTR(scrn);
-    EntityInfoPtr pEnt = ms->pEnt;
     xf86CrtcPtr xf86Crtc = crtc->devPrivate;
 
     if (!xf86Crtc)
@@ -1247,9 +1626,9 @@ msEnableSharedPixmapFlipping(RRCrtcPtr crtc, PixmapPtr front, PixmapPtr back)
         return FALSE;
 
 #ifdef XSERVER_PLATFORM_BUS
-    if (pEnt->location.type == BUS_PLATFORM) {
-        char *syspath =
-            xf86_platform_device_odev_attributes(pEnt->location.id.plat)->
+    if (ms->pEnt->location.type == BUS_PLATFORM) {
+        const char *syspath =
+            xf86_platform_device_odev_attributes(ms->pEnt->location.id.plat)->
             syspath;
 
         /* Not supported for devices using USB transport due to misbehaved
@@ -1258,7 +1637,7 @@ msEnableSharedPixmapFlipping(RRCrtcPtr crtc, PixmapPtr front, PixmapPtr back)
             return FALSE;
 
         /* EVDI uses USB transport but is platform device, not usb.
-         * Blacklist it explicitly */
+         * Exclude it explicitly. */
         if (syspath && strstr(syspath, "evdi"))
             return FALSE;
     }
@@ -1282,32 +1661,32 @@ msDisableSharedPixmapFlipping(RRCrtcPtr crtc)
 
 static Bool
 msStartFlippingPixmapTracking(RRCrtcPtr crtc, DrawablePtr src,
-                              PixmapPtr slave_dst1, PixmapPtr slave_dst2,
+                              PixmapPtr secondary_dst1, PixmapPtr secondary_dst2,
                               int x, int y, int dst_x, int dst_y,
                               Rotation rotation)
 {
     ScreenPtr pScreen = src->pScreen;
     modesettingPtr ms = modesettingPTR(xf86ScreenToScrn(pScreen));
 
-    msPixmapPrivPtr ppriv1 = msGetPixmapPriv(&ms->drmmode, slave_dst1->master_pixmap),
-                    ppriv2 = msGetPixmapPriv(&ms->drmmode, slave_dst2->master_pixmap);
+    msPixmapPrivPtr ppriv1 = msGetPixmapPriv(&ms->drmmode, secondary_dst1->primary_pixmap),
+                    ppriv2 = msGetPixmapPriv(&ms->drmmode, secondary_dst2->primary_pixmap);
 
-    if (!PixmapStartDirtyTracking(src, slave_dst1, x, y,
+    if (!PixmapStartDirtyTracking(src, secondary_dst1, x, y,
                                   dst_x, dst_y, rotation)) {
         return FALSE;
     }
 
-    if (!PixmapStartDirtyTracking(src, slave_dst2, x, y,
+    if (!PixmapStartDirtyTracking(src, secondary_dst2, x, y,
                                   dst_x, dst_y, rotation)) {
-        PixmapStopDirtyTracking(src, slave_dst1);
+        PixmapStopDirtyTracking(src, secondary_dst1);
         return FALSE;
     }
 
-    ppriv1->slave_src = src;
-    ppriv2->slave_src = src;
+    ppriv1->secondary_src = src;
+    ppriv2->secondary_src = src;
 
-    ppriv1->dirty = ms_dirty_get_ent(pScreen, slave_dst1);
-    ppriv2->dirty = ms_dirty_get_ent(pScreen, slave_dst2);
+    ppriv1->dirty = ms_dirty_get_ent(pScreen, secondary_dst1);
+    ppriv2->dirty = ms_dirty_get_ent(pScreen, secondary_dst2);
 
     ppriv1->defer_dirty_update = TRUE;
     ppriv2->defer_dirty_update = TRUE;
@@ -1316,17 +1695,17 @@ msStartFlippingPixmapTracking(RRCrtcPtr crtc, DrawablePtr src,
 }
 
 static Bool
-msPresentSharedPixmap(PixmapPtr slave_dst)
+msPresentSharedPixmap(PixmapPtr secondary_dst)
 {
-    ScreenPtr pScreen = slave_dst->master_pixmap->drawable.pScreen;
+    ScreenPtr pScreen = secondary_dst->primary_pixmap->drawable.pScreen;
     modesettingPtr ms = modesettingPTR(xf86ScreenToScrn(pScreen));
 
-    msPixmapPrivPtr ppriv = msGetPixmapPriv(&ms->drmmode, slave_dst->master_pixmap);
+    msPixmapPrivPtr ppriv = msGetPixmapPriv(&ms->drmmode, secondary_dst->primary_pixmap);
 
     RegionPtr region = DamageRegion(ppriv->dirty->damage);
 
     if (RegionNotEmpty(region)) {
-        redisplay_dirty(ppriv->slave_src->pScreen, ppriv->dirty, NULL);
+        redisplay_dirty(ppriv->secondary_src->pScreen, ppriv->dirty, NULL);
         DamageEmpty(ppriv->dirty->damage);
 
         return TRUE;
@@ -1337,22 +1716,22 @@ msPresentSharedPixmap(PixmapPtr slave_dst)
 
 static Bool
 msStopFlippingPixmapTracking(DrawablePtr src,
-                             PixmapPtr slave_dst1, PixmapPtr slave_dst2)
+                             PixmapPtr secondary_dst1, PixmapPtr secondary_dst2)
 {
     ScreenPtr pScreen = src->pScreen;
     modesettingPtr ms = modesettingPTR(xf86ScreenToScrn(pScreen));
 
-    msPixmapPrivPtr ppriv1 = msGetPixmapPriv(&ms->drmmode, slave_dst1->master_pixmap),
-                    ppriv2 = msGetPixmapPriv(&ms->drmmode, slave_dst2->master_pixmap);
+    msPixmapPrivPtr ppriv1 = msGetPixmapPriv(&ms->drmmode, secondary_dst1->primary_pixmap),
+                    ppriv2 = msGetPixmapPriv(&ms->drmmode, secondary_dst2->primary_pixmap);
 
     Bool ret = TRUE;
 
-    ret &= PixmapStopDirtyTracking(src, slave_dst1);
-    ret &= PixmapStopDirtyTracking(src, slave_dst2);
+    ret &= PixmapStopDirtyTracking(src, secondary_dst1);
+    ret &= PixmapStopDirtyTracking(src, secondary_dst2);
 
     if (ret) {
-        ppriv1->slave_src = NULL;
-        ppriv2->slave_src = NULL;
+        ppriv1->secondary_src = NULL;
+        ppriv2->secondary_src = NULL;
 
         ppriv1->dirty = NULL;
         ppriv2->dirty = NULL;
@@ -1378,7 +1757,7 @@ CreateScreenResources(ScreenPtr pScreen)
     ret = pScreen->CreateScreenResources(pScreen);
     pScreen->CreateScreenResources = CreateScreenResources;
 
-    if (!drmmode_set_desired_modes(pScrn, &ms->drmmode, pScrn->is_gpu))
+    if (!drmmode_set_desired_modes(pScrn, &ms->drmmode, pScrn->is_gpu, FALSE))
         return FALSE;
 
     if (!drmmode_glamor_handle_new_screen_pixmap(&ms->drmmode))
@@ -1417,13 +1796,13 @@ CreateScreenResources(ScreenPtr pScreen)
 
     err = drmModeDirtyFB(ms->fd, ms->drmmode.fb_id, NULL, 0);
 
-    if (err != -EINVAL && err != -ENOSYS) {
+    if ((err != -EINVAL && err != -ENOSYS) || ms->drmmode.tearfree_enable) {
         ms->damage = DamageCreate(NULL, NULL, DamageReportNone, TRUE,
                                   pScreen, rootPixmap);
 
         if (ms->damage) {
             DamageRegister(&rootPixmap->drawable, ms->damage);
-            ms->dirty_enabled = TRUE;
+            ms->dirty_enabled = err != -EINVAL && err != -ENOSYS;
             xf86DrvMsg(pScrn->scrnIndex, X_INFO, "Damage tracking initialized\n");
         }
         else {
@@ -1442,11 +1821,17 @@ CreateScreenResources(ScreenPtr pScreen)
         pScrPriv->rrStartFlippingPixmapTracking = msStartFlippingPixmapTracking;
     }
 
+    if (ms->vrr_support &&
+        !dixRegisterPrivateKey(&ms->drmmode.vrrPrivateKeyRec,
+                               PRIVATE_WINDOW,
+                               sizeof(struct ms_vrr_priv)))
+            return FALSE;
+
     return ret;
 }
 
 static Bool
-msSharePixmapBacking(PixmapPtr ppix, ScreenPtr slave, void **handle)
+msSharePixmapBacking(PixmapPtr ppix, ScreenPtr secondary, void **handle)
 {
 #ifdef GLAMOR_HAS_GBM
     modesettingPtr ms =
@@ -1506,7 +1891,7 @@ msRequestSharedPixmapNotifyDamage(PixmapPtr ppix)
     ScrnInfoPtr scrn = xf86ScreenToScrn(screen);
     modesettingPtr ms = modesettingPTR(scrn);
 
-    msPixmapPrivPtr ppriv = msGetPixmapPriv(&ms->drmmode, ppix->master_pixmap);
+    msPixmapPrivPtr ppriv = msGetPixmapPriv(&ms->drmmode, ppix->primary_pixmap);
 
     ppriv->notify_on_damage = TRUE;
 
@@ -1539,7 +1924,7 @@ msSharedPixmapNotifyDamage(PixmapPtr ppix)
         if (!(drmmode_crtc->prime_pixmap && drmmode_crtc->prime_pixmap_back))
             continue;
 
-        // Received damage on master screen pixmap, schedule present on vblank
+        // Received damage on primary screen pixmap, schedule present on vblank
         ret |= drmmode_SharedPixmapPresentOnVBlank(ppix, crtc, &ms->drmmode);
     }
 
@@ -1682,7 +2067,7 @@ ScreenInit(ScreenPtr pScreen, int argc, char **argv)
     miDCInitialize(pScreen, xf86GetPointerScreenFuncs());
 
     /* If pageflip is enabled hook the screen's cursor-sprite (swcursor) funcs.
-     * So that we can disabe page-flipping on fallback to a swcursor. */
+     * So that we can disable page-flipping on fallback to a swcursor. */
     if (ms->drmmode.pageflip) {
         miPointerScreenPtr PointPriv =
             dixLookupPrivate(&pScreen->devPrivates, miPointerScreenKey);
@@ -1698,7 +2083,7 @@ ScreenInit(ScreenPtr pScreen, int argc, char **argv)
 
     /* Need to extend HWcursor support to handle mask interleave */
     if (!ms->drmmode.sw_cursor)
-        xf86_cursors_init(pScreen, ms->cursor_width, ms->cursor_height,
+        xf86_cursors_init(pScreen, ms->max_cursor_width, ms->max_cursor_height,
                           HARDWARE_CURSOR_SOURCE_MASK_INTERLEAVE_64 |
                           HARDWARE_CURSOR_UPDATE_UNHIDDEN |
                           HARDWARE_CURSOR_ARGB);
@@ -1771,30 +2156,55 @@ ScreenInit(ScreenPtr pScreen, int argc, char **argv)
                        "Failed to initialize the DRI2 extension.\n");
         }
 
-        if (!(ms->drmmode.present_enable = ms_present_screen_init(pScreen))) {
-            xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
-                       "Failed to initialize the Present extension.\n");
-        }
         /* enable reverse prime if we are a GPU screen, and accelerated, and not
-         * i915. i915 is happy scanning out from sysmem. */
+         * i915, evdi or udl. i915 is happy scanning out from sysmem.
+         * evdi and udl are virtual drivers scanning out from sysmem
+         * backed dumb buffers.
+         */
         if (pScreen->isGPU) {
             drmVersionPtr version;
 
             /* enable if we are an accelerated GPU screen */
             ms->drmmode.reverse_prime_offload_mode = TRUE;
 
-            /* disable if we detect i915 */
             if ((version = drmGetVersion(ms->drmmode.fd))) {
                 if (!strncmp("i915", version->name, version->name_len)) {
                     ms->drmmode.reverse_prime_offload_mode = FALSE;
+                }
+                if (!strncmp("evdi", version->name, version->name_len)) {
+                    ms->drmmode.reverse_prime_offload_mode = FALSE;
+                }
+                if (!strncmp("udl", version->name, version->name_len)) {
+                    ms->drmmode.reverse_prime_offload_mode = FALSE;
+                }
+                if (!ms->drmmode.reverse_prime_offload_mode) {
+                    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+                       "Disable reverse prime offload mode for %s.\n", version->name);
                 }
                 drmFreeVersion(version);
             }
         }
     }
 #endif
+    if (!(ms->drmmode.present_enable = ms_present_screen_init(pScreen))) {
+        xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
+                   "Failed to initialize the Present extension.\n");
+    }
+
 
     pScrn->vtSema = TRUE;
+
+    if (ms->vrr_support) {
+        if (!property_vectors_wrapped) {
+            saved_change_property = ProcVector[X_ChangeProperty];
+            ProcVector[X_ChangeProperty] = ms_change_property;
+            saved_delete_property = ProcVector[X_DeleteProperty];
+            ProcVector[X_DeleteProperty] = ms_delete_property;
+            property_vectors_wrapped = TRUE;
+        }
+        vrr_atom = MakeAtom("_VARIABLE_REFRESH",
+                             strlen("_VARIABLE_REFRESH"), TRUE);
+    }
 
     return TRUE;
 }
@@ -1805,12 +2215,6 @@ AdjustFrame(ScrnInfoPtr pScrn, int x, int y)
     modesettingPtr ms = modesettingPTR(pScrn);
 
     drmmode_adjust_frame(pScrn, &ms->drmmode, x, y);
-}
-
-static void
-FreeScreen(ScrnInfoPtr pScrn)
-{
-    FreeRec(pScrn);
 }
 
 static void
@@ -1844,8 +2248,25 @@ EnterVT(ScrnInfoPtr pScrn)
 
     SetMaster(pScrn);
 
-    if (!drmmode_set_desired_modes(pScrn, &ms->drmmode, TRUE))
-        return FALSE;
+    drmmode_update_kms_state(&ms->drmmode);
+
+    /* allow not all modes to be set successfully since some events might have
+     * happened while not being master that could prevent the previous
+     * configuration from being re-applied.
+     */
+    if (!drmmode_set_desired_modes(pScrn, &ms->drmmode, TRUE, TRUE)) {
+        xf86DisableUnusedFunctions(pScrn);
+
+        /* TODO: check that at least one screen is on, to allow the user to fix
+         * their setup if all modeset failed...
+         */
+
+        /* Tell the desktop environment that something changed, so that they
+         * can hopefully correct the situation
+         */
+        RRSetChanged(xf86ScrnToScreen(pScrn));
+        RRTellChanged(xf86ScrnToScreen(pScrn));
+    }
 
     return TRUE;
 }

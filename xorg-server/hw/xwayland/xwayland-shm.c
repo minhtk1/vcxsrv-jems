@@ -36,8 +36,9 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include "os/osdep.h"
+
 #include "fb.h"
-#include "os.h"
 #include "pixmapstr.h"
 
 #include "xwayland-pixmap.h"
@@ -111,9 +112,16 @@ create_tmpfile_cloexec(char *tmpname)
  *
  * If the C library implements posix_fallocate(), it is used to
  * guarantee that disk space is available for the file at the
- * given size. If disk space is insufficent, errno is set to ENOSPC.
+ * given size. If disk space is insufficient, errno is set to ENOSPC.
  * If posix_fallocate() is not supported, program may receive
  * SIGBUS on accessing mmap()'ed file contents instead.
+ *
+ * If the C library implements memfd_create(), it is used to create the
+ * file purely in memory, without any backing file name on the file
+ * system, and then sealing off the possibility of shrinking it.  This
+ * can then be checked before accessing mmap()'ed file contents, to
+ * make sure SIGBUS can't happen.  It also avoids requiring
+ * XDG_RUNTIME_DIR.
  */
 static int
 os_create_anonymous_file(off_t size)
@@ -124,25 +132,39 @@ os_create_anonymous_file(off_t size)
     int fd;
     int ret;
 
-    path = getenv("XDG_RUNTIME_DIR");
-    if (!path) {
-        errno = ENOENT;
-        return -1;
+#ifdef HAVE_MEMFD_CREATE
+    fd = memfd_create("xwayland-shared", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (fd >= 0) {
+        /* We can add this seal before calling posix_fallocate(), as
+         * the file is currently zero-sized anyway.
+         *
+         * There is also no need to check for the return value, we
+         * couldn't do anything with it anyway.
+         */
+        fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK);
+    } else
+#endif
+    {
+        path = getenv("XDG_RUNTIME_DIR");
+        if (!path) {
+            errno = ENOENT;
+            return -1;
+        }
+
+        name = malloc(strlen(path) + sizeof(template));
+        if (!name)
+            return -1;
+
+        strcpy(name, path);
+        strcat(name, template);
+
+        fd = create_tmpfile_cloexec(name);
+
+        free(name);
+
+        if (fd < 0)
+            return -1;
     }
-
-    name = malloc(strlen(path) + sizeof(template));
-    if (!name)
-        return -1;
-
-    strcpy(name, path);
-    strcat(name, template);
-
-    fd = create_tmpfile_cloexec(name);
-
-    free(name);
-
-    if (fd < 0)
-        return -1;
 
 #ifdef HAVE_POSIX_FALLOCATE
     /*
@@ -193,6 +215,28 @@ shm_format_for_depth(int depth)
     }
 }
 
+static Bool
+dimensions_match_toplevel_window(ScreenPtr screen, int width, int height)
+{
+    struct xwl_screen *xwl_screen = xwl_screen_get(screen);
+    WindowPtr toplevel;
+
+    if (xwl_screen->rootless)
+        toplevel = screen->root->firstChild;
+    else
+        toplevel = screen->root;
+
+    while (toplevel) {
+        if (width == toplevel->drawable.width &&
+            height == toplevel->drawable.height)
+            return TRUE;
+
+        toplevel = toplevel->nextSib;
+    }
+
+    return FALSE;
+}
+
 static const struct wl_buffer_listener xwl_shm_buffer_listener = {
     xwl_pixmap_buffer_release_cb,
 };
@@ -210,9 +254,19 @@ xwl_shm_create_pixmap(ScreenPtr screen,
     int fd;
 
     if (hint == CREATE_PIXMAP_USAGE_GLYPH_PICTURE ||
-        (!xwl_screen->rootless && hint != CREATE_PIXMAP_USAGE_BACKING_PIXMAP) ||
-        (width == 0 && height == 0) || depth < 15)
+        (width == 0 && height == 0) || depth < 15 ||
+        (hint != CREATE_PIXMAP_USAGE_BACKING_PIXMAP &&
+         !dimensions_match_toplevel_window(screen, width, height)))
         return fbCreatePixmap(screen, width, height, depth, hint);
+
+    stride = PixmapBytePad(width, depth);
+    size = stride * height;
+    /* Size in the protocol is an integer, make sure we don't exceed
+     * INT32_MAX or else the Wayland compositor will raise an error and
+     * kill the Wayland connection!
+     */
+    if (size > INT32_MAX)
+        return NULL;
 
     pixmap = fbCreatePixmap(screen, 0, 0, depth, hint);
     if (!pixmap)
@@ -222,8 +276,6 @@ xwl_shm_create_pixmap(ScreenPtr screen,
     if (xwl_pixmap == NULL)
         goto err_destroy_pixmap;
 
-    stride = PixmapBytePad(width, depth);
-    size = stride * height;
     xwl_pixmap->buffer = NULL;
     xwl_pixmap->size = size;
     fd = os_create_anonymous_file(size);
@@ -287,7 +339,12 @@ xwl_shm_destroy_pixmap(PixmapPtr pixmap)
 struct wl_buffer *
 xwl_shm_pixmap_get_wl_buffer(PixmapPtr pixmap)
 {
-    return xwl_pixmap_get(pixmap)->buffer;
+    struct xwl_pixmap *xwl_pixmap = xwl_pixmap_get(pixmap);
+
+    if (!xwl_pixmap)
+        return NULL;
+
+    return xwl_pixmap->buffer;
 }
 
 Bool

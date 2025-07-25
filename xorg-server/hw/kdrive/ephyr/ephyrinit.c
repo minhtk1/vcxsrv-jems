@@ -1,5 +1,5 @@
 /*
- * Xephyr - A kdrive X server thats runs in a host X window.
+ * Xephyr - A kdrive X server that runs in a host X window.
  *          Authored by Matthew Allum <mallum@o-hand.com>
  *
  * Copyright © 2004 Nokia
@@ -23,9 +23,13 @@
  * PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifdef HAVE_DIX_CONFIG_H
 #include <dix-config.h>
-#endif
+
+#include "dix/dix_priv.h"
+#include "os/cmdline.h"
+#include "os/ddx_priv.h"
+#include "os/osdep.h"
+
 #include "ephyr.h"
 #include "ephyrlog.h"
 #include "glx_extinit.h"
@@ -71,25 +75,23 @@ InitInput(int argc, char **argv)
     KdKeyboardInfo *ki;
     KdPointerInfo *pi;
 
-    if (!SeatId) {
-        KdAddKeyboardDriver(&EphyrKeyboardDriver);
-        KdAddPointerDriver(&EphyrMouseDriver);
+    KdAddKeyboardDriver(&EphyrKeyboardDriver);
+    KdAddPointerDriver(&EphyrMouseDriver);
 
-        if (!kdHasKbd) {
-            ki = KdNewKeyboard();
-            if (!ki)
-                FatalError("Couldn't create Xephyr keyboard\n");
-            ki->driver = &EphyrKeyboardDriver;
-            KdAddKeyboard(ki);
-        }
+    if (!kdHasKbd) {
+        ki = KdNewKeyboard();
+        if (!ki)
+            FatalError("Couldn't create Xephyr keyboard\n");
+        ki->driver = &EphyrKeyboardDriver;
+        KdAddKeyboard(ki);
+    }
 
-        if (!kdHasPointer) {
-            pi = KdNewPointer();
-            if (!pi)
-                FatalError("Couldn't create Xephyr pointer\n");
-            pi->driver = &EphyrMouseDriver;
-            KdAddPointer(pi);
-        }
+    if (!kdHasPointer) {
+        pi = KdNewPointer();
+        if (!pi)
+            FatalError("Couldn't create Xephyr pointer\n");
+        pi->driver = &EphyrMouseDriver;
+        KdAddPointer(pi);
     }
 
     KdInitInput();

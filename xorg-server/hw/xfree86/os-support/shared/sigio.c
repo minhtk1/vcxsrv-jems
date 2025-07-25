@@ -56,10 +56,16 @@
 #include <xorg-config.h>
 #endif
 
+#include <errno.h>
+#include <sys/stat.h>
 #include <X11/X.h>
-#include <xserver_poll.h>
+
+#include "os/osdep.h"
+#include "os/xserver_poll.h"
+
 #include "xf86.h"
 #include "xf86Priv.h"
+#include "xf86_os_support.h"
 #include "xf86_OSlib.h"
 #include "inputstr.h"
 
@@ -68,7 +74,7 @@
 #endif
 
 #ifdef MAXDEVICES
-/* MAXDEVICES represents the maximimum number of input devices usable
+/* MAXDEVICES represents the maximum number of input devices usable
  * at the same time plus one entry for DRM support.
  */
 #define MAX_FUNCS   (MAXDEVICES + 1)
@@ -139,7 +145,7 @@ xf86SIGIO(int sig)
         }
     }
     if (r > 0) {
-        xf86Msg(X_ERROR, "SIGIO %d descriptors not handled\n", r);
+        LogMessageVerb(X_ERROR, 1, "SIGIO %d descriptors not handled\n", r);
     }
     /* restore global errno */
     errno = save_errno;
@@ -185,9 +191,6 @@ xf86InstallSIGIOHandler(int fd, void (*f) (int, void *), void *closure)
     int i;
     int installed = FALSE;
 
-    if (!xf86Info.useSIGIO)
-        return 0;
-
     for (i = 0; i < MAX_FUNCS; i++) {
         if (!xf86SigIOFuncs[i].f) {
             if (xf86IsPipe(fd))
@@ -195,13 +198,13 @@ xf86InstallSIGIOHandler(int fd, void (*f) (int, void *), void *closure)
             block_sigio();
 #ifdef O_ASYNC
             if (fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_ASYNC) == -1) {
-                xf86Msg(X_WARNING, "fcntl(%d, O_ASYNC): %s\n",
-                        fd, strerror(errno));
+                LogMessageVerb(X_WARNING, 1, "fcntl(%d, O_ASYNC): %s\n",
+                               fd, strerror(errno));
             }
             else {
                 if (fcntl(fd, F_SETOWN, getpid()) == -1) {
-                    xf86Msg(X_WARNING, "fcntl(%d, F_SETOWN): %s\n",
-                            fd, strerror(errno));
+                    LogMessageVerb(X_WARNING, 1, "fcntl(%d, F_SETOWN): %s\n",
+                                   fd, strerror(errno));
                 }
                 else {
                     installed = TRUE;
@@ -212,8 +215,8 @@ xf86InstallSIGIOHandler(int fd, void (*f) (int, void *), void *closure)
             /* System V Streams - used on Solaris for input devices */
             if (!installed && isastream(fd)) {
                 if (ioctl(fd, I_SETSIG, S_INPUT | S_ERROR | S_HANGUP) == -1) {
-                    xf86Msg(X_WARNING, "fcntl(%d, I_SETSIG): %s\n",
-                            fd, strerror(errno));
+                    LogMessageVerb(X_WARNING, 1, "fcntl(%d, I_SETSIG): %s\n",
+                                   fd, strerror(errno));
                 }
                 else {
                     installed = TRUE;
@@ -257,9 +260,6 @@ xf86RemoveSIGIOHandler(int fd)
     int max;
     int ret;
 
-    if (!xf86Info.useSIGIO)
-        return 0;
-
     max = 0;
     ret = 0;
     for (i = 0; i < MAX_FUNCS; i++) {
@@ -283,8 +283,8 @@ xf86RemoveSIGIOHandler(int fd)
 #if defined(I_SETSIG) && defined(HAVE_ISASTREAM)
         if (isastream(fd)) {
             if (ioctl(fd, I_SETSIG, 0) == -1) {
-                xf86Msg(X_WARNING, "fcntl(%d, I_SETSIG, 0): %s\n",
-                        fd, strerror(errno));
+                LogMessageVerb(X_WARNING, 1, "fcntl(%d, I_SETSIG, 0): %s\n",
+                               fd, strerror(errno));
             }
         }
 #endif

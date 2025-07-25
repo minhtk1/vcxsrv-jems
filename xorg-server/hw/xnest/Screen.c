@@ -11,16 +11,17 @@ the suitability of this software for any purpose.  It is provided "as
 is" without express or implied warranty.
 
 */
-
-#ifdef HAVE_XNEST_CONFIG_H
-#include <xnest-config.h>
-#endif
+#include <dix-config.h>
 
 #include <X11/X.h>
+#include <X11/Xdefs.h>
 #include <X11/Xproto.h>
+
+#include "mi/mi_priv.h"
+#include "mi/mipointer_priv.h"
+
 #include "scrnintstr.h"
 #include "dix.h"
-#include "mi.h"
 #include "micmap.h"
 #include "colormapst.h"
 #include "resource.h"
@@ -44,7 +45,8 @@ is" without express or implied warranty.
 
 Window xnestDefaultWindows[MAXSCREENS];
 Window xnestScreenSaverWindows[MAXSCREENS];
-DevPrivateKeyRec xnestCursorScreenKeyRec;
+DevPrivateKeyRec xnestScreenCursorFuncKeyRec;
+DevScreenPrivateKeyRec xnestScreenCursorPrivKeyRec;
 
 ScreenPtr
 xnestScreen(Window window)
@@ -73,7 +75,7 @@ static Bool
 xnestSaveScreen(ScreenPtr pScreen, int what)
 {
     if (xnestSoftwareScreenSaver)
-        return False;
+        return FALSE;
     else {
         switch (what) {
         case SCREEN_SAVER_ON:
@@ -97,7 +99,7 @@ xnestSaveScreen(ScreenPtr pScreen, int what)
             xnestSetInstalledColormapWindows(pScreen);
             break;
         }
-        return True;
+        return TRUE;
     }
 }
 
@@ -155,7 +157,11 @@ xnestOpenScreen(ScreenPtr pScreen, int argc, char *argv[])
         (&xnestColormapPrivateKeyRec, PRIVATE_COLORMAP,
          sizeof(xnestPrivColormap)))
         return FALSE;
-    if (!dixRegisterPrivateKey(&xnestCursorScreenKeyRec, PRIVATE_SCREEN, 0))
+    if (!dixRegisterPrivateKey(&xnestScreenCursorFuncKeyRec, PRIVATE_SCREEN, 0))
+        return FALSE;
+
+    if (!dixRegisterScreenPrivateKey(&xnestScreenCursorPrivKeyRec, pScreen,
+                                     PRIVATE_CURSOR, 0))
         return FALSE;
 
     visuals = xallocarray(xnestNumVisuals, sizeof(VisualRec));
@@ -237,8 +243,9 @@ xnestOpenScreen(ScreenPtr pScreen, int argc, char *argv[])
 
     /* myNum */
     /* id */
-    miScreenInit(pScreen, NULL, xnestWidth, xnestHeight, 1, 1, xnestWidth, rootDepth, numDepths, depths, defaultVisual, /* root visual */
-                 numVisuals, visuals);
+    if (!miScreenInit(pScreen, NULL, xnestWidth, xnestHeight, 1, 1, xnestWidth, rootDepth, numDepths, depths, defaultVisual, /* root visual */
+                      numVisuals, visuals))
+        return FALSE;
 
     pScreen->defColormap = (Colormap) FakeClientID(0);
     pScreen->minInstalledCmaps = MINCMAPS;
@@ -249,7 +256,6 @@ xnestOpenScreen(ScreenPtr pScreen, int argc, char *argv[])
     pScreen->blackPixel = xnestBlackPixel;
     /* GCperDepth */
     /* defaultStipple */
-    pScreen->devPrivate = NULL;
     /* WindowPrivateLen */
     /* WindowPrivateSizes */
     /* totalWindowSize */
@@ -312,7 +318,7 @@ xnestOpenScreen(ScreenPtr pScreen, int argc, char *argv[])
     miDCInitialize(pScreen, &xnestPointerCursorFuncs);  /* init SW rendering */
     PointPriv = dixLookupPrivate(&pScreen->devPrivates, miPointerScreenKey);
     xnestCursorFuncs.spriteFuncs = PointPriv->spriteFuncs;
-    dixSetPrivate(&pScreen->devPrivates, xnestCursorScreenKey,
+    dixSetPrivate(&pScreen->devPrivates, &xnestScreenCursorFuncKeyRec,
                   &xnestCursorFuncs);
     PointPriv->spriteFuncs = &xnestPointerSpriteFuncs;
 
@@ -326,9 +332,6 @@ xnestOpenScreen(ScreenPtr pScreen, int argc, char *argv[])
 
     /* overwrite miCloseScreen with our own */
     pScreen->CloseScreen = xnestCloseScreen;
-
-    if (!miScreenDevPrivateInit(pScreen, xnestWidth, NULL))
-        return FALSE;
 
     /* overwrite miSetShape with our own */
     pScreen->SetShape = xnestSetShape;
@@ -400,9 +403,9 @@ xnestOpenScreen(ScreenPtr pScreen, int argc, char *argv[])
     }
 
     if (!xnestCreateDefaultColormap(pScreen))
-        return False;
+        return FALSE;
 
-    return True;
+    return TRUE;
 }
 
 Bool
@@ -414,12 +417,12 @@ xnestCloseScreen(ScreenPtr pScreen)
         free(pScreen->allowedDepths[i].vids);
     free(pScreen->allowedDepths);
     free(pScreen->visuals);
-    free(pScreen->devPrivate);
+    miScreenClose(pScreen);
 
     /*
        If xnestDoFullGeneration all x resources will be destroyed upon closing
        the display connection.  There is no need to generate extra protocol.
      */
 
-    return True;
+    return TRUE;
 }

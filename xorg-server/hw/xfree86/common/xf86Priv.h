@@ -69,6 +69,7 @@ extern _X_EXPORT char *xf86KeyboardName;
 extern _X_EXPORT int xf86FbBpp;
 extern _X_EXPORT int xf86Depth;
 extern _X_EXPORT rgb xf86Weight;
+extern _X_EXPORT Bool xf86FlipPixels;
 extern _X_EXPORT Gamma xf86Gamma;
 
 /* Other parameters */
@@ -150,14 +151,11 @@ xf86CloseLog(enum ExitCode error);
 /* xf86Init.c */
 extern _X_EXPORT Bool
 xf86LoadModules(const char **list, void **optlist);
-extern _X_EXPORT int
-xf86SetVerbosity(int verb);
-extern _X_EXPORT int
-xf86SetLogVerbosity(int verb);
+
 extern _X_EXPORT Bool
 xf86CallDriverProbe(struct _DriverRec *drv, Bool detect_only);
 extern _X_EXPORT Bool
-xf86PrivsElevated(void);
+xf86HasTTYs(void);
 
 #endif                          /* _NO_XF86_PROTOTYPES */
 

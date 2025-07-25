@@ -11,18 +11,21 @@ the suitability of this software for any purpose.  It is provided "as
 is" without express or implied warranty.
 
 */
-
-#ifdef HAVE_XNEST_CONFIG_H
-#include <xnest-config.h>
-#endif
+#include <dix-config.h>
 
 #include <X11/X.h>
+#include <X11/Xdefs.h>
 #include <X11/Xproto.h>
+
+#include "include/extinit_priv.h"
+#include "os/ddx_priv.h"
+
 #include "screenint.h"
 #include "input.h"
 #include "misc.h"
 #include "scrnintstr.h"
 #include "servermd.h"
+#include "extinit.h"
 
 #include "Xnest.h"
 
@@ -30,28 +33,41 @@ is" without express or implied warranty.
 #include "Args.h"
 
 char *xnestDisplayName = NULL;
-Bool xnestSynchronize = False;
-Bool xnestFullGeneration = False;
+Bool xnestSynchronize = FALSE;
+Bool xnestFullGeneration = FALSE;
 int xnestDefaultClass;
-Bool xnestUserDefaultClass = False;
+Bool xnestUserDefaultClass = FALSE;
 int xnestDefaultDepth;
-Bool xnestUserDefaultDepth = False;
-Bool xnestSoftwareScreenSaver = False;
+Bool xnestUserDefaultDepth = FALSE;
+Bool xnestSoftwareScreenSaver = FALSE;
 int xnestX;
 int xnestY;
 unsigned int xnestWidth;
 unsigned int xnestHeight;
 int xnestUserGeometry = 0;
 int xnestBorderWidth;
-Bool xnestUserBorderWidth = False;
+Bool xnestUserBorderWidth = FALSE;
 char *xnestWindowName = NULL;
 int xnestNumScreens = 0;
-Bool xnestDoDirectColormaps = False;
+Bool xnestDoDirectColormaps = FALSE;
 Window xnestParentWindow = 0;
 
 int
 ddxProcessArgument(int argc, char *argv[], int i)
 {
+    /* disable some extensions we currently don't support yet */
+#ifdef MITSHM
+    noMITShmExtension = TRUE;
+#endif
+
+#ifdef COMPOSITE
+    noCompositeExtension = TRUE;
+#endif
+
+#ifdef DPMSExtension
+    noDPMSExtension = TRUE;
+#endif
+
     if (!strcmp(argv[i], "-display")) {
         if (++i < argc) {
             xnestDisplayName = argv[i];
@@ -60,43 +76,43 @@ ddxProcessArgument(int argc, char *argv[], int i)
         return 0;
     }
     if (!strcmp(argv[i], "-sync")) {
-        xnestSynchronize = True;
+        xnestSynchronize = TRUE;
         return 1;
     }
     if (!strcmp(argv[i], "-full")) {
-        xnestFullGeneration = True;
+        xnestFullGeneration = TRUE;
         return 1;
     }
     if (!strcmp(argv[i], "-class")) {
         if (++i < argc) {
             if (!strcmp(argv[i], "StaticGray")) {
                 xnestDefaultClass = StaticGray;
-                xnestUserDefaultClass = True;
+                xnestUserDefaultClass = TRUE;
                 return 2;
             }
             else if (!strcmp(argv[i], "GrayScale")) {
                 xnestDefaultClass = GrayScale;
-                xnestUserDefaultClass = True;
+                xnestUserDefaultClass = TRUE;
                 return 2;
             }
             else if (!strcmp(argv[i], "StaticColor")) {
                 xnestDefaultClass = StaticColor;
-                xnestUserDefaultClass = True;
+                xnestUserDefaultClass = TRUE;
                 return 2;
             }
             else if (!strcmp(argv[i], "PseudoColor")) {
                 xnestDefaultClass = PseudoColor;
-                xnestUserDefaultClass = True;
+                xnestUserDefaultClass = TRUE;
                 return 2;
             }
             else if (!strcmp(argv[i], "TrueColor")) {
                 xnestDefaultClass = TrueColor;
-                xnestUserDefaultClass = True;
+                xnestUserDefaultClass = TRUE;
                 return 2;
             }
             else if (!strcmp(argv[i], "DirectColor")) {
                 xnestDefaultClass = DirectColor;
-                xnestUserDefaultClass = True;
+                xnestUserDefaultClass = TRUE;
                 return 2;
             }
         }
@@ -105,7 +121,7 @@ ddxProcessArgument(int argc, char *argv[], int i)
     if (!strcmp(argv[i], "-cc")) {
         if (++i < argc && sscanf(argv[i], "%i", &xnestDefaultClass) == 1) {
             if (xnestDefaultClass >= 0 && xnestDefaultClass <= 5) {
-                xnestUserDefaultClass = True;
+                xnestUserDefaultClass = TRUE;
                 /* lex the OS layer process it as well, so return 0 */
             }
         }
@@ -114,14 +130,14 @@ ddxProcessArgument(int argc, char *argv[], int i)
     if (!strcmp(argv[i], "-depth")) {
         if (++i < argc && sscanf(argv[i], "%i", &xnestDefaultDepth) == 1) {
             if (xnestDefaultDepth > 0) {
-                xnestUserDefaultDepth = True;
+                xnestUserDefaultDepth = TRUE;
                 return 2;
             }
         }
         return 0;
     }
     if (!strcmp(argv[i], "-sss")) {
-        xnestSoftwareScreenSaver = True;
+        xnestSoftwareScreenSaver = TRUE;
         return 1;
     }
     if (!strcmp(argv[i], "-geometry")) {
@@ -137,7 +153,7 @@ ddxProcessArgument(int argc, char *argv[], int i)
     if (!strcmp(argv[i], "-bw")) {
         if (++i < argc && sscanf(argv[i], "%i", &xnestBorderWidth) == 1) {
             if (xnestBorderWidth >= 0) {
-                xnestUserBorderWidth = True;
+                xnestUserBorderWidth = TRUE;
                 return 2;
             }
         }
@@ -163,7 +179,7 @@ ddxProcessArgument(int argc, char *argv[], int i)
         return 0;
     }
     if (!strcmp(argv[i], "-install")) {
-        xnestDoDirectColormaps = True;
+        xnestDoDirectColormaps = TRUE;
         return 1;
     }
     if (!strcmp(argv[i], "-parent")) {
@@ -188,5 +204,5 @@ ddxUseMsg(void)
     ErrorF("-bw int                window border width\n");
     ErrorF("-name string           window name\n");
     ErrorF("-scrns int             number of screens to generate\n");
-    ErrorF("-install               instal colormaps directly\n");
+    ErrorF("-install               install colormaps directly\n");
 }

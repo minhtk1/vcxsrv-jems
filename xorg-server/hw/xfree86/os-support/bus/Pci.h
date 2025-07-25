@@ -106,6 +106,8 @@
 #ifndef _PCI_H
 #define _PCI_H 1
 
+#include <X11/Xdefs.h>
+
 #include "xf86Pci.h"
 
 /*
@@ -135,14 +137,6 @@
 #define PCI_BUS_NO_DOMAIN(bus) ((bus) & 0xffu)
 #define PCI_TAG_NO_DOMAIN(tag) ((tag) & 0x00ffff00u)
 
-#if defined(__linux__)
-#define osPciInit(x) do {} while (0)
-#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || \
-	defined(__OpenBSD__) || defined(__NetBSD__) || \
-	defined(__DragonFly__) || defined(__sun) || defined(__GNU__)
-extern void osPciInit(void);
-#else
-#error No PCI support available for this architecture/OS combination
-#endif
+Bool xf86scanpci(void);
 
 #endif                          /* _PCI_H */

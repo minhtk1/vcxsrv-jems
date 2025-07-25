@@ -137,9 +137,11 @@ typedef int pid_t;
 #endif                          /* HAVE_MMAP */
 
 #include <X11/X.h>
+#include <X11/Xfuncproto.h>
 #include <X11/Xproto.h>
 #include <X11/Xos.h>
 #include <X11/Xprotostr.h>
+
 #include "scrnintstr.h"
 #include "pixmapstr.h"
 #include "pixmap.h"
@@ -435,7 +437,7 @@ typedef struct _winPrivScreenRec {
     void *pWMInfo;
     Bool fRootWindowShown;
 
-    /* Privates used for any module running in a seperate thread */
+    /* Privates used for any module running in a separate thread */
     pthread_mutex_t pmServerStarted;
     Bool fServerStarted;
 
@@ -635,14 +637,6 @@ Bool
  winAllocateCmapPrivates(ColormapPtr pCmap);
 
 /*
- * winauth.c
- */
-
-Bool
- winGenerateAuthorization(void);
-void winSetAuthorization(void);
-
-/*
  * winblock.c
  */
 
@@ -715,12 +709,6 @@ void
 /*
  * winerror.c
  */
-
-#ifdef DDXOSVERRORF
-void
-OsVendorVErrorF(const char *pszFormat, va_list va_args)
-_X_ATTRIBUTE_PRINTF(1, 0);
-#endif
 
 void
 winMessageBoxF(const char *pszError, UINT uType, ...)
@@ -1022,6 +1010,9 @@ winCreateMsgWindowThread(void);
  */
 void
 winOS(void);
+
+Bool
+winValidateArgs(void);
 
 /*
  * END DDX and DIX Function Prototypes

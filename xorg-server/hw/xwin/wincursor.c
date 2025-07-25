@@ -36,6 +36,9 @@
 #endif
 #include "win.h"
 #include "winmsg.h"
+
+#include "mi/mipointer_priv.h"
+
 #include <cursorstr.h>
 #include <mipointrst.h>
 #include <servermd.h>
@@ -172,7 +175,7 @@ winLoadCursor(ScreenPtr pScreen, CursorPtr pCursor, int screen)
     dBackY = BRIGHTNESS(pCursor->back);
     fReverse = dForeY < dBackY;
 
-    /* Check wether the X11 cursor is bigger than the win32 cursor */
+    /* Check whether the X11 cursor is bigger than the win32 cursor */
     if (pScreenPriv->cursor.sm_cx < pCursor->bits->width ||
         pScreenPriv->cursor.sm_cy < pCursor->bits->height) {
         ErrorF (

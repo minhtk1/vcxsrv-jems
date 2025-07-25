@@ -31,7 +31,14 @@ from The Open Group.
 #ifdef HAVE_XWIN_CONFIG_H
 #include <xwin-config.h>
 #endif
+
 #include "win.h"
+
+#include "dix/dix_priv.h"
+#include "dix/screenint_priv.h"
+#include "os/ddx_priv.h"
+#include "os/osdep.h"
+
 #include "winmsg.h"
 #include "winconfig.h"
 #include "winprefs.h"
@@ -56,17 +63,23 @@ typedef HRESULT  (__stdcall *  SHGETFOLDERPATHPROC)(HWND hwndOwner,
 
 #include "winmonitors.h"
 #include "nonsdk_extinit.h"
+#include "extinit_priv.h"
 #include "pseudoramiX/pseudoramiX.h"
+
+#include "dix/dix_priv.h"
 
 #include "glx_extinit.h"
 #ifdef XWIN_GLX_WINDOWS
 #include "glx/glwindows.h"
 #include "dri/windowsdri.h"
 #endif
+#include "winauth.h"
 
 /*
  * References to external symbols
  */
+
+extern int xserver_resetting;
 
 /*
  * Function prototypes
@@ -108,6 +121,8 @@ static PixmapFormatRec g_PixmapFormats[] = {
 };
 
 #if defined(GLXEXT) && defined(XWIN_WINDOWS_DRI)
+static Bool noDriExtension;
+
 static const ExtensionModule xwinExtensions[] = {
   { WindowsDRIExtensionInit, "Windows-DRI", &noDriExtension },
 };
@@ -137,12 +152,13 @@ void XwinExtensionInit(void)
 #if defined(DDXBEFORERESET)
 /*
  * Called right before KillAllClients when the server is going to reset,
- * allows us to shutdown our seperate threads cleanly.
+ * allows us to shutdown our separate threads cleanly.
  */
 
 void
 ddxBeforeReset(void)
 {
+    xserver_resetting = 1;
     winDebug("ddxBeforeReset - Hello\n");
 
     winClipboardShutdown();
@@ -585,9 +601,9 @@ winFixupPaths(void)
         putenv(buffer);
     }
     if (getenv("HOME") == NULL) {
-        char buffer[MAX_PATH + 5];
+        char buffer[MAX_PATH + 5] = {0};
 
-        strncpy(buffer, "HOME=", 5);
+        strncpy(buffer, "HOME=", 6);
 
         /* query appdata directory */
         if (SHGetFolderPathA
@@ -628,11 +644,6 @@ void
 OsVendorPreInit(int argc, char *argv[])
 {
     winFixupPaths();
-
-#ifdef DDXOSVERRORF
-    if (!OsVendorVErrorFProc)
-        OsVendorVErrorFProc = OsVendorVErrorF;
-#endif
 
     if (!g_fLogInited) {
         /* keep this order. If LogInit fails it calls Abort which then calls
@@ -834,9 +845,6 @@ winUseMsg(void)
            "\tDo not draw a window border, title bar, etc.  Windowed\n"
            "\tmode only i.e. ignored when -fullscreen specified.\n");
 
-    ErrorF("-nounicodeclipboard\n"
-           "\tDisable Unicode in the clipboard.\n");
-
     ErrorF("-[no]primary\n"
            "\tWhen clipboard integration is enabled, map the X11 PRIMARY selection\n"
            "\tto the Windows clipboard. Default is enabled.\n");
@@ -942,6 +950,7 @@ void
 InitOutput(ScreenInfo * pScreenInfo, int argc, char *argv[])
 {
     int i;
+    xserver_resetting = 0;
 
     if (serverGeneration == 1)
         XwinExtensionInit();
@@ -1064,24 +1073,6 @@ InitOutput(ScreenInfo * pScreenInfo, int argc, char *argv[])
     if (g_fXdmcpEnabled || g_fAuthEnabled)
         winGenerateAuthorization();
 
-    /* Perform some one time initialization */
-    if (1 == serverGeneration) {
-        /*
-         * setlocale applies to all threads in the current process.
-         * Apply locale specified in LANG environment variable.
-         */
-        if (!setlocale (LC_ALL, ""))
-          {
-            ErrorF ("setlocale failed.\n");
-          }
-
-        /* See if X supports the current locale */
-        if (XSupportsLocale () == FALSE)
-          {
-            ErrorF ("Warning: Locale not supported by X, falling back to 'C' locale.\n");
-            setlocale(LC_ALL, "C");
-          }
-    }
 
     winDebug("InitOutput - Returning.\n");
 }

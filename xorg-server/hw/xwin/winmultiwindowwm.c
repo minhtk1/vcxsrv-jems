@@ -68,6 +68,7 @@ typedef int pid_t;
 #include "winglobals.h"
 #include "windisplay.h"
 #include "winmultiwindowicons.h"
+#include "winauth.h"
 
 #include <xcb/xcb.h>
 #include <xcb/xcb_icccm.h>
@@ -87,7 +88,6 @@ typedef int pid_t;
 extern void winDebug(const char *format, ...);
 extern void winReshapeMultiWindow(WindowPtr pWin);
 extern void winUpdateRgnMultiWindow(WindowPtr pWin);
-extern xcb_auth_info_t *winGetXcbAuthInfo(void);
 
 extern void winSetAuthorization(void);
 
@@ -713,7 +713,7 @@ UpdateStyle(WMInfoPtr pWMInfo, xcb_window_t iWindow, unsigned long *maxmin, int 
     if (extra)
     {
       winUpdateWindowPosition(hWnd, &zstyle);
-      /* Apply the updated window style, without changing it's show or activation state */
+      /* Apply the updated window style, without changing its show or activation state */
       flags = SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE;
       if (zstyle == HWND_NOTOPMOST)
           flags |= SWP_NOZORDER | SWP_NOOWNERZORDER;
@@ -1055,6 +1055,7 @@ winMultiWindowWMProc(void *pArg)
                -- independently, the WM_TAKE_FOCUS protocol determines whether
                the WM should send a WM_TAKE_FOCUS ClientMessage.
             */
+            if (pNode->msg.iWindow)
             {
               Bool neverFocus = FALSE;
               xcb_get_property_cookie_t cookie;
@@ -1068,7 +1069,7 @@ winMultiWindowWMProc(void *pArg)
               }
 
               if (!neverFocus)
-                xcb_set_input_focus(pWMInfo->conn, XCB_INPUT_FOCUS_POINTER_ROOT,
+                xcb_set_input_focus(pWMInfo->conn, XCB_INPUT_FOCUS_PARENT,
                                     pNode->msg.iWindow, XCB_CURRENT_TIME);
 
               if (IsWmProtocolAvailable(pWMInfo,
@@ -1077,6 +1078,13 @@ winMultiWindowWMProc(void *pArg)
                 SendXMessage(pWMInfo->conn,
                              pNode->msg.iWindow,
                              pWMInfo->atmWmProtos, pWMInfo->atmWmTakeFocus);
+
+            }
+            else
+            /* Set the input focus to none */
+            {
+              xcb_set_input_focus(pWMInfo->conn, XCB_INPUT_FOCUS_NONE,
+                                  XCB_NONE, XCB_CURRENT_TIME);
 
             }
             break;
@@ -1432,7 +1440,7 @@ winMultiWindowXMsgProc(void *pArg)
                 if ((reply->root == reply_qt->parent) && !notify->override_redirect) {
                     xcb_reparent_notify_event_t event_send;
 
-                    event_send.response_type = ReparentNotify;
+                    event_send.response_type = XCB_REPARENT_NOTIFY;
                     event_send.event = notify->window;
                     event_send.window = notify->window;
                     event_send.parent = reply_qt->parent;
@@ -1616,9 +1624,9 @@ winInitWM(void **ppWMInfo,
           pthread_mutex_t * ppmServerStarted,
           int dwScreen, HWND hwndScreen, Bool compositeWM)
 {
-    WMProcArgPtr pArg = malloc(sizeof(WMProcArgRec));
-    WMInfoPtr pWMInfo = malloc(sizeof(WMInfoRec));
-    XMsgProcArgPtr pXMsgArg = malloc(sizeof(XMsgProcArgRec));
+    WMProcArgPtr pArg = calloc(1, sizeof(WMProcArgRec));
+    WMInfoPtr pWMInfo = calloc(1, sizeof(WMInfoRec));
+    XMsgProcArgPtr pXMsgArg = calloc(1, sizeof(XMsgProcArgRec));
 
     /* Bail if the input parameters are bad */
     if (pArg == NULL || pWMInfo == NULL || pXMsgArg == NULL) {
@@ -1629,11 +1637,6 @@ winInitWM(void **ppWMInfo,
         return FALSE;
     }
 
-    /* Zero the allocated memory */
-    ZeroMemory(pArg, sizeof(WMProcArgRec));
-    ZeroMemory(pWMInfo, sizeof(WMInfoRec));
-    ZeroMemory(pXMsgArg, sizeof(XMsgProcArgRec));
-
     /* Set a return pointer to the Window Manager info structure */
     *ppWMInfo = pWMInfo;
     pWMInfo->fCompositeWM = compositeWM;
@@ -1643,7 +1646,7 @@ winInitWM(void **ppWMInfo,
     pArg->pWMInfo = pWMInfo;
     pArg->ppmServerStarted = ppmServerStarted;
 
-    /* Intialize the message queue */
+    /* Initialize the message queue */
     if (!InitQueue(&pWMInfo->wmMsgQueue)) {
         ErrorF("winInitWM - InitQueue () failed.\n");
         return FALSE;
@@ -1824,7 +1827,7 @@ winInitMultiWindowWM(WMInfoPtr pWMInfo, WMProcArgPtr pProcArg)
 
     /*
       Set the root window cursor to left_ptr (this controls the cursor an
-      application gets over it's windows when it doesn't set one)
+      application gets over its windows when it doesn't set one)
     */
     {
 #define XC_left_ptr 68

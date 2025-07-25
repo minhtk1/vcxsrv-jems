@@ -1,5 +1,5 @@
 /*
- * Xephyr - A kdrive X server thats runs in a host X window.
+ * Xephyr - A kdrive X server that runs in a host X window.
  *          Authored by Matthew Allum <mallum@o-hand.com>
  *
  * Copyright © 2004 Nokia
@@ -150,7 +150,8 @@ void *hostx_screen_init(KdScreenInfo *screen,
 
 void
 hostx_paint_rect(KdScreenInfo *screen,
-                 int sx, int sy, int dx, int dy, int width, int height);
+                 int sx, int sy, int dx, int dy, int width, int height,
+                 Bool sync);
 
 Bool
 hostx_load_keymap(KeySymsPtr keySyms, CARD8 *modmap, XkbControlsPtr controls);

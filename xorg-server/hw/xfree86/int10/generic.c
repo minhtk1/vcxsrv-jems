@@ -7,6 +7,7 @@
 #include <xorg-config.h>
 #endif
 
+#include <errno.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -14,7 +15,7 @@
 #include "xf86_OSproc.h"
 #include "compiler.h"
 #define _INT10_PRIVATE
-#include "xf86int10.h"
+#include "xf86int10_priv.h"
 #include "int10Defines.h"
 #include "Pci.h"
 
@@ -92,12 +93,11 @@ int10MemRec genericMem = {
 static void MapVRam(xf86Int10InfoPtr pInt);
 static void UnmapVRam(xf86Int10InfoPtr pInt);
 
+static void *sysMem = NULL;
+
 #ifdef _PC
 #define GET_HIGH_BASE(x) (((V_BIOS + (x) + getpagesize() - 1)/getpagesize()) \
                               * getpagesize())
-#endif
-
-static void *sysMem = NULL;
 
 static Bool
 readIntVec(struct pci_device *dev, unsigned char *buf, int len)
@@ -112,6 +112,7 @@ readIntVec(struct pci_device *dev, unsigned char *buf, int len)
 
     return TRUE;
 }
+#endif /* _PC */
 
 xf86Int10InfoPtr
 xf86ExtendedInitInt10(int entityIndex, int Flags)
@@ -132,15 +133,15 @@ xf86ExtendedInitInt10(int entityIndex, int Flags)
         return NULL;
     }
 
-    pInt = (xf86Int10InfoPtr) xnfcalloc(1, sizeof(xf86Int10InfoRec));
+    pInt = (xf86Int10InfoPtr) XNFcallocarray(1, sizeof(xf86Int10InfoRec));
     pInt->entityIndex = entityIndex;
     if (!xf86Int10ExecSetup(pInt))
         goto error0;
     pInt->mem = &genericMem;
-    pInt->private = (void *) xnfcalloc(1, sizeof(genericInt10Priv));
-    INTPriv(pInt)->alloc = (void *) xnfcalloc(1, ALLOC_ENTRIES(getpagesize()));
+    pInt->private = (void *) XNFcallocarray(1, sizeof(genericInt10Priv));
+    INTPriv(pInt)->alloc = (void *) XNFcallocarray(1, ALLOC_ENTRIES(getpagesize()));
     pInt->pScrn = pScrn;
-    base = INTPriv(pInt)->base = xnfalloc(SYS_BIOS);
+    base = INTPriv(pInt)->base = XNFalloc(SYS_BIOS);
 
     /* FIXME: Shouldn't this be a failure case?  Leaving dev as NULL seems like
      * FIXME: an error
@@ -216,14 +217,14 @@ xf86ExtendedInitInt10(int entityIndex, int Flags)
     }
 #else
     if (!sysMem) {
-        sysMem = xnfalloc(BIOS_SIZE);
+        sysMem = XNFalloc(BIOS_SIZE);
         setup_system_bios(sysMem);
     }
     INTPriv(pInt)->sysMem = sysMem;
     setup_int_vect(pInt);
     set_return_trap(pInt);
 
-    /* Retrieve the entire legacy video BIOS segment.  This can be upto
+    /* Retrieve the entire legacy video BIOS segment.  This can be up to
      * 128KiB.
      */
     vbiosMem = (char *) base + V_BIOS;
@@ -389,14 +390,14 @@ xf86Int10FreePages(xf86Int10InfoPtr pInt, void *pbase, int num)
 
 #define VRAM(addr) ((addr >= V_RAM) && (addr < (V_RAM + VRAM_SIZE)))
 #define V_ADDR_RB(addr) \
-	(VRAM(addr)) ? MMIO_IN8((uint8_t*)VRAM_BASE,VRAM_ADDR(addr)) \
-	   : *(uint8_t*) V_ADDR(addr)
+	((VRAM(addr)) ? MMIO_IN8((uint8_t*)VRAM_BASE,VRAM_ADDR(addr)) \
+	   : *(uint8_t*) V_ADDR(addr))
 #define V_ADDR_RW(addr) \
-	(VRAM(addr)) ? MMIO_IN16((uint16_t*)VRAM_BASE,VRAM_ADDR(addr)) \
-	   : ldw_u((void *)V_ADDR(addr))
+	((VRAM(addr)) ? MMIO_IN16((uint16_t*)VRAM_BASE,VRAM_ADDR(addr)) \
+	   : ldw_u((void *)V_ADDR(addr)))
 #define V_ADDR_RL(addr) \
-	(VRAM(addr)) ? MMIO_IN32((uint32_t*)VRAM_BASE,VRAM_ADDR(addr)) \
-	   : ldl_u((void *)V_ADDR(addr))
+	((VRAM(addr)) ? MMIO_IN32((uint32_t*)VRAM_BASE,VRAM_ADDR(addr)) \
+	   : ldl_u((void *)V_ADDR(addr)))
 
 #define V_ADDR_WB(addr,val) \
 	if(VRAM(addr)) \

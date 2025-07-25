@@ -7,7 +7,7 @@
 #include "os.h"
 #include "xf86.h"
 #include "xf86Priv.h"
-#define XF86_OS_PRIVS
+#include "xf86_os_support.h"
 #include "xf86_OSproc.h"
 
 #ifdef HAVE_ACPI
@@ -138,13 +138,14 @@ xf86OSPMOpen(void)
 #ifdef HAVE_ACPI
     /* Favour ACPI over APM, but only when enabled */
 
-    if (!xf86acpiDisableFlag)
+    if (!xf86acpiDisableFlag) {
         ret = lnxACPIOpen();
-
-    if (!ret)
+        if (ret)
+            return ret;
+    }
 #endif
 #ifdef HAVE_APM
-        ret = lnxAPMOpen();
+    ret = lnxAPMOpen();
 #endif
 
     return ret;
@@ -164,7 +165,7 @@ lnxAPMOpen(void)
     DebugF("APM: Opening device\n");
     if ((fd = open(APM_DEVICE, O_RDWR)) > -1) {
         if (access(APM_PROC, R_OK) || ((pfd = open(APM_PROC, O_RDONLY)) == -1)) {
-            xf86MsgVerb(X_WARNING, 3, "Cannot open APM (%s) (%s)\n",
+            LogMessageVerb(X_WARNING, 3, "Cannot open APM (%s) (%s)\n",
                         APM_PROC, strerror(errno));
             close(fd);
             return NULL;
@@ -174,7 +175,7 @@ lnxAPMOpen(void)
         xf86PMGetEventFromOs = lnxPMGetEventFromOs;
         xf86PMConfirmEventToOs = lnxPMConfirmEventToOs;
         APMihPtr = xf86AddGeneralHandler(fd, xf86HandlePMEvents, NULL);
-        xf86MsgVerb(X_INFO, 3, "Open APM successful\n");
+        LogMessageVerb(X_INFO, 3, "Open APM successful\n");
         return lnxCloseAPM;
     }
     return NULL;

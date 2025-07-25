@@ -38,12 +38,15 @@
 #include <X11/Xproto.h>
 #include <X11/extensions/dri2proto.h>
 #include <X11/extensions/xfixeswire.h>
+
+#include "dix/dix_priv.h"
+
 #include "dixstruct.h"
 #include "scrnintstr.h"
 #include "pixmapstr.h"
 #include "extnsionst.h"
 #include "xfixes.h"
-#include "dri2.h"
+#include "dri2_priv.h"
 #include "dri2int.h"
 #include "protocol-versions.h"
 
@@ -72,7 +75,6 @@ validDrawable(ClientPtr client, XID drawable, Mask access_mode,
 static int
 ProcDRI2QueryVersion(ClientPtr client)
 {
-    REQUEST(xDRI2QueryVersionReq);
     xDRI2QueryVersionReply rep = {
         .type = X_Reply,
         .sequenceNumber = client->sequence,
@@ -80,9 +82,6 @@ ProcDRI2QueryVersion(ClientPtr client)
         .majorVersion = dri2_major,
         .minorVersion = dri2_minor
     };
-
-    if (client->swapped)
-        swaps(&stuff->length);
 
     REQUEST_SIZE_MATCH(xDRI2QueryVersionReq);
 
@@ -344,7 +343,7 @@ ProcDRI2CopyRegion(ClientPtr client)
     /* CopyRegion needs to be a round trip to make sure the X server
      * queues the swap buffer rendering commands before the DRI client
      * continues rendering.  The reply has a bitmask to signal the
-     * presense of optional return values as well, but we're not using
+     * presence of optional return values as well, but we're not using
      * that yet.
      */
 
@@ -648,7 +647,6 @@ SProcDRI2Connect(ClientPtr client)
 
     /* If the client is swapped, it's not local.  Talk to the hand. */
 
-    swaps(&stuff->length);
     if (sizeof(*stuff) / 4 != client->req_len)
         return BadLength;
 
@@ -683,10 +681,10 @@ DRI2ExtensionInit(void)
 {
     ExtensionEntry *dri2Extension;
 
-#ifdef PANORAMIX
+#ifdef XINERAMA
     if (!noPanoramiXExtension)
         return;
-#endif
+#endif /* XINERAMA */
 
     dri2Extension = AddExtension(DRI2_NAME,
                                  DRI2NumberEvents,

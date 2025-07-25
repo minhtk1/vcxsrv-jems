@@ -344,7 +344,7 @@ fbConfigsDump(unsigned int n, __GLXconfig * c, PixelFormatRejectStats *rejects)
         if (c->renderType & GLX_RGBA_UNSIGNED_FLOAT_BIT_EXT) float_col = "u";
 
         ErrorF("%3d %3x %3x "
-               "%-11s"
+               "%11s"
                " %3d %3d   %s   %s  %s %s  %s  "
                "%2d %2d %2d %2d  "
                "%2d %2d  "
@@ -857,7 +857,7 @@ glxWinCopyWindow(WindowPtr pWindow, DDXPointRec ptOldOrg, RegionPtr prgnSrc)
        Discard any CopyWindow requests if a GL drawing context is pointing at the window
 
        For regions which are being drawn by GL, the shadow framebuffer doesn't have the
-       correct bits, so we wish to avoid shadow framebuffer damage occuring, which will
+       correct bits, so we wish to avoid shadow framebuffer damage occurring, which will
        cause those incorrect bits to be transferred to the display....
      */
     if (pGlxDraw && pGlxDraw->drawContext) {
@@ -1268,7 +1268,7 @@ glxWinReleaseTexImage(__GLXcontext * baseContext,
  *
  * WGL contexts are created for a specific HDC, so we cannot create the WGL
  * context in glxWinCreateContext(), we must defer creation until the context
- * is actually used on a specifc drawable which is connected to a native window,
+ * is actually used on a specific drawable which is connected to a native window,
  * pbuffer or DIB
  *
  * The WGL context may be used on other, compatible HDCs, so we don't need to
@@ -1590,7 +1590,7 @@ glxWinContextMakeCurrent(__GLXcontext * base)
     if (gc->ctx == NULL) {
         glxWinDeferredCreateContext(gc, drawPriv);
     }
-    _glapi_set_dispatch(gc->Dispatch);
+    _mesa_glapi_set_dispatch(gc->Dispatch);
 
     if (gc->ctx == NULL) {
         ErrorF("glxWinContextMakeCurrent: Native context is NULL\n");
@@ -1678,7 +1678,7 @@ glxWinContextLoseCurrent(__GLXcontext * base)
     }
 
     base->currentClient=NULL;  /* It looks like glx is not doing this */
-    _glapi_set_dispatch(NULL);
+    _mesa_glapi_set_dispatch(NULL);
 
     return ret;
 }
@@ -1735,7 +1735,7 @@ glxWinContextDestroy(__GLXcontext * base)
 
         free(gc->Dispatch);
         free(gc);
-        _glapi_set_dispatch(NULL);
+        _mesa_glapi_set_dispatch(NULL);
     }
 }
 
@@ -1766,7 +1766,7 @@ glxWinCreateContext(__GLXscreen * screen,
     context->shareContext = shareContext;
 
     context->Dispatch=calloc(sizeof(void*), (sizeof(struct _glapi_table) / sizeof(void *) + MAX_EXTENSION_FUNCS));
-    _glapi_set_dispatch(context->Dispatch);
+    _mesa_glapi_set_dispatch(context->Dispatch);
 
     glWinSetupDispatchTable();
 
@@ -2104,7 +2104,7 @@ glxWinCreateConfigs(HDC hdc, glxWinScreen * screen)
             continue;
         }
         else {
-            // PFD_GENERIC_ACCELERATED is not considered, so this may be MCD or ICD acclerated...
+            // PFD_GENERIC_ACCELERATED is not considered, so this may be MCD or ICD accelerated...
             c->base.visualRating = GLX_NONE_EXT;
         }
 
@@ -2310,6 +2310,8 @@ glxWinCreateConfigsExt(HDC hdc, glxWinScreen * screen, PixelFormatRejectStats * 
     ADD_ATTR(WGL_STENCIL_BITS_ARB);
     ADD_ATTR(WGL_AUX_BUFFERS_ARB);
     ADD_ATTR(WGL_SWAP_METHOD_ARB);
+    ADD_ATTR(WGL_TRANSPARENT_BLUE_VALUE_ARB);
+    ADD_ATTR(WGL_TRANSPARENT_INDEX_VALUE_ARB);
 
     if (screen->has_WGL_ARB_multisample) {
         // we may not query these attrs if WGL_ARB_multisample is not offered
@@ -2454,7 +2456,7 @@ glxWinCreateConfigsExt(HDC hdc, glxWinScreen * screen, PixelFormatRejectStats * 
                 ATTR_VALUE(WGL_NUMBER_OVERLAYS_ARB,
                            0) + ATTR_VALUE(WGL_NUMBER_UNDERLAYS_ARB, 0);
 
-            if (layers > 0) {
+            if (layers > 1) {
                 ErrorF
                     ("pixelFormat %d: has %d overlay, %d underlays which aren't currently handled\n",
                      i, ATTR_VALUE(WGL_NUMBER_OVERLAYS_ARB, 0),

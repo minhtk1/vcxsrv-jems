@@ -11,16 +11,17 @@ the suitability of this software for any purpose.  It is provided "as
 is" without express or implied warranty.
 
 */
-
-#ifdef HAVE_XNEST_CONFIG_H
-#include <xnest-config.h>
-#endif
+#include <dix-config.h>
 
 #include <string.h>
 #include <errno.h>
 
 #include <X11/X.h>
 #include <X11/Xproto.h>
+
+#include "os/client_priv.h"
+#include "os/osdep.h"
+
 #include "screenint.h"
 #include "input.h"
 #include "misc.h"
@@ -41,7 +42,7 @@ XVisualInfo *xnestVisuals;
 int xnestNumVisuals;
 int xnestDefaultVisualIndex;
 Colormap *xnestDefaultColormaps;
-static int xnestNumDefaultColormaps;
+static uint16_t xnestNumDefaultColormaps;
 int *xnestDepths;
 int xnestNumDepths;
 XPixmapFormatValues *xnestPixmapFormats;
@@ -53,11 +54,6 @@ Pixmap xnestIconBitmap;
 Pixmap xnestScreenSaverPixmap;
 XlibGC xnestBitmapGC;
 unsigned long xnestEventMask;
-
-#ifdef __SUNPRO_C
-/* prevent "Function has no return statement" error for x_io_error_handler */
-#pragma does_not_return(exit)
-#endif
 
 static int _X_NORETURN
 x_io_error_handler(Display * dpy)
@@ -88,7 +84,7 @@ xnestOpenDisplay(int argc, char *argv[])
                    XDisplayName(xnestDisplayName));
 
     if (xnestSynchronize)
-        XSynchronize(xnestDisplay, True);
+        XSynchronize(xnestDisplay, TRUE);
 
     mask = VisualScreenMask;
     vi.screen = DefaultScreen(xnestDisplay);

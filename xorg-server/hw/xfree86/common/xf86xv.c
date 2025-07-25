@@ -32,12 +32,16 @@
 #include <xorg-config.h>
 #endif
 
+#include <X11/X.h>
+#include <X11/Xproto.h>
+#include <X11/extensions/Xv.h>
+#include <X11/extensions/Xvproto.h>
+
+#include "Xext/xvdix_priv.h"
+
 #include "misc.h"
 #include "xf86.h"
 #include "xf86_OSproc.h"
-
-#include <X11/X.h>
-#include <X11/Xproto.h>
 #include "scrnintstr.h"
 #include "regionstr.h"
 #include "windowstr.h"
@@ -47,11 +51,7 @@
 #include "resource.h"
 #include "gcstruct.h"
 #include "dixstruct.h"
-
-#include <X11/extensions/Xv.h>
-#include <X11/extensions/Xvproto.h>
 #include "xvdix.h"
-
 #include "xf86xvpriv.h"
 
 /* XvAdaptorRec fields */
@@ -544,7 +544,7 @@ xf86XVInitAdaptors(ScreenPtr pScreen, XF86VideoAdaptorPtr * infoPtr, int number)
    client clip from the GC when the video is initialized.  We then
    use xf86XVUpdateCompositeClip to calculate the new composite clip
    when we need it.  This is different from what DEC did.  They saved
-   the GC and used it's clip list when they needed to reclip the window,
+   the GC and used its clip list when they needed to reclip the window,
    even if the client clip was different from the one the video was
    initialized with.  If the original GC was destroyed, they had to stop
    the video.  I like the new method better (MArk).

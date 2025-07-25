@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include <glx/glheader.h>
+#undef _WINDOWS_
 #include <glx/glapi.h>
 #include <glx/glapitable.h>
 
@@ -3150,7 +3151,7 @@ static __DRIcontext *driCreateNewContext(__DRIscreen *psp, const __DRIconfig *co
   pcp->driReadablePriv = NULL;
 
   pcp->Dispatch=calloc(sizeof(void*), (sizeof(struct _glapi_table) / sizeof(void *) + MAX_EXTENSION_FUNCS));
-  _glapi_set_dispatch(pcp->Dispatch);
+  _mesa_glapi_set_dispatch(pcp->Dispatch);
 
   glWinSetupDispatchTable();
 
@@ -3248,7 +3249,7 @@ static int driBindContext(__DRIcontext *pcp, __DRIdrawable *pdp, __DRIdrawable *
       wglResolveExtensionProcs();
     }
     current_pcp=pcp;
-    _glapi_set_dispatch(pcp->Dispatch);
+    _mesa_glapi_set_dispatch(pcp->Dispatch);
   }
 
   return GL_TRUE;
@@ -3306,7 +3307,7 @@ static int driUnbindContext(__DRIcontext *pcp)
 
   pcp->driDrawablePriv = NULL;
   pcp->driReadablePriv = NULL;
-  _glapi_set_dispatch(NULL);
+  _mesa_glapi_set_dispatch(NULL);
 
   return GL_TRUE;
 }

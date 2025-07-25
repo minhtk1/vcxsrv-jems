@@ -68,7 +68,7 @@
 *
 * By inspection, one gets:  cc = ab +  r'(a + b)
 *
-* That represents alot of operations, but NO CHOICE....
+* That represents a lot of operations, but NO CHOICE....
 *
 * Borrow Chain Calculation.
 *
@@ -2050,7 +2050,7 @@ test_byte(u8 d, u8 s)
     CONDITIONAL_SET_FLAG(res & 0x80, F_SF);
     CONDITIONAL_SET_FLAG(res == 0, F_ZF);
     CONDITIONAL_SET_FLAG(PARITY(res & 0xff), F_PF);
-    /* AF == dont care */
+    /* AF == don't care */
     CLEAR_FLAG(F_CF);
 }
 
@@ -2069,7 +2069,7 @@ test_word(u16 d, u16 s)
     CONDITIONAL_SET_FLAG(res & 0x8000, F_SF);
     CONDITIONAL_SET_FLAG(res == 0, F_ZF);
     CONDITIONAL_SET_FLAG(PARITY(res & 0xff), F_PF);
-    /* AF == dont care */
+    /* AF == don't care */
     CLEAR_FLAG(F_CF);
 }
 
@@ -2088,7 +2088,7 @@ test_long(u32 d, u32 s)
     CONDITIONAL_SET_FLAG(res & 0x80000000, F_SF);
     CONDITIONAL_SET_FLAG(res == 0, F_ZF);
     CONDITIONAL_SET_FLAG(PARITY(res & 0xff), F_PF);
-    /* AF == dont care */
+    /* AF == don't care */
     CLEAR_FLAG(F_CF);
 }
 
@@ -2475,7 +2475,7 @@ div_byte(u8 s)
     }
     div = dvd / (u8) s;
     mod = dvd % (u8) s;
-    if (abs(div) > 0xff) {
+    if (div > 0xff) {
         x86emu_intr_raise(0);
         return;
     }
@@ -2499,7 +2499,7 @@ div_word(u16 s)
     }
     div = dvd / (u16) s;
     mod = dvd % (u16) s;
-    if (abs(div) > 0xffff) {
+    if (div > 0xffff) {
         x86emu_intr_raise(0);
         return;
     }
@@ -2597,7 +2597,7 @@ ins(int size)
         inc = -size;
     }
     if (M.x86.mode & (SYSMODE_PREFIX_REPE | SYSMODE_PREFIX_REPNE)) {
-        /* dont care whether REPE or REPNE */
+        /* don't care whether REPE or REPNE */
         /* in until CX is ZERO. */
         u32 count = ((M.x86.mode & SYSMODE_PREFIX_DATA) ?
                      M.x86.R_ECX : M.x86.R_CX);
@@ -2622,8 +2622,8 @@ ins(int size)
                 store_data_long_abs(M.x86.R_ES, M.x86.R_DI,
                                     (*sys_inl) (M.x86.R_DX));
                 M.x86.R_DI += inc;
-                break;
             }
+            break;
         }
         M.x86.R_CX = 0;
         if (M.x86.mode & SYSMODE_PREFIX_DATA) {
@@ -2663,7 +2663,7 @@ outs(int size)
         inc = -size;
     }
     if (M.x86.mode & (SYSMODE_PREFIX_REPE | SYSMODE_PREFIX_REPNE)) {
-        /* dont care whether REPE or REPNE */
+        /* don't care whether REPE or REPNE */
         /* out until CX is ZERO. */
         u32 count = ((M.x86.mode & SYSMODE_PREFIX_DATA) ?
                      M.x86.R_ECX : M.x86.R_CX);
@@ -2688,8 +2688,8 @@ outs(int size)
                 (*sys_outl) (M.x86.R_DX,
                              fetch_data_long_abs(M.x86.R_ES, M.x86.R_SI));
                 M.x86.R_SI += inc;
-                break;
             }
+            break;
         }
         M.x86.R_CX = 0;
         if (M.x86.mode & SYSMODE_PREFIX_DATA) {
@@ -2818,7 +2818,7 @@ cpuid(void)
     switch (feature) {
     case 0:
         /* Regardless if we have real data from the hardware, the emulator
-         * will only support upto feature 1, which we set in register EAX.
+         * will only support up to feature 1, which we set in register EAX.
          * Registers EBX:EDX:ECX contain a string identifying the CPU.
          */
         M.x86.R_EAX = 1;

@@ -31,7 +31,11 @@
 
 #include <X11/X.h>
 #include <X11/Xmd.h>
-#include "input.h"
+#include <X11/extensions/XIproto.h>
+
+#include "dix/input_priv.h"
+#include "mi/mipointer_priv.h"
+
 #include "cursor.h"
 #include "mipointer.h"
 #include "scrnintstr.h"
@@ -41,11 +45,11 @@
 #include "xf86Priv.h"
 #include "xf86_OSproc.h"
 
-#include <X11/extensions/XIproto.h>
 #include "xf86Xinput.h"
 
 #ifdef XFreeXDGA
 #include "dgaproc.h"
+#include "dgaproc_priv.h"
 #endif
 
 typedef struct _xf86EdgeRec {
@@ -137,8 +141,8 @@ xf86PointerMoved(ScrnInfoPtr pScr, int x, int y)
     Bool frameChanged = FALSE;
 
     /*
-     * check wether (x,y) belongs to the visual part of the screen
-     * if not, change the base of the displayed frame accoring
+     * check whether (x,y) belongs to the visual part of the screen
+     * if not, change the base of the displayed frame occurring
      */
     if (pScr->frameX0 > x) {
         pScr->frameX0 = x;
@@ -584,9 +588,9 @@ xf86InitOrigins(void)
             if (screen->refscreen != NULL &&
                 screen->refscreen->screennum >= xf86NumScreens) {
                 screensLeft &= ~(1 << i);
-                xf86Msg(X_WARNING,
-                        "Not including screen \"%s\" in origins calculation.\n",
-                        screen->screen->id);
+                LogMessageVerb(X_WARNING, 1,
+                               "Not including screen \"%s\" in origins calculation.\n",
+                               screen->screen->id);
                 continue;
             }
 

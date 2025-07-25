@@ -33,15 +33,20 @@
 #include "fb.h"
 #include "pixmapstr.h"
 
+#ifdef XWL_HAS_GLAMOR
+#include "xwayland-glamor.h"
+#endif
 #include "xwayland-types.h"
 #include "xwayland-pixmap.h"
+#include "xwayland-screen.h"
+#include "xwayland-shm.h"
 #include "xwayland-window-buffers.h"
 
 static DevPrivateKeyRec xwl_pixmap_private_key;
 static DevPrivateKeyRec xwl_pixmap_cb_private_key;
 
 struct xwl_pixmap_buffer_release_callback {
-    xwl_pixmap_cb callback;
+    xwl_buffer_release_cb callback;
     void *data;
 };
 
@@ -57,9 +62,22 @@ xwl_pixmap_get(PixmapPtr pixmap)
     return dixLookupPrivate(&pixmap->devPrivates, &xwl_pixmap_private_key);
 }
 
+struct wl_buffer *
+xwl_pixmap_get_wl_buffer(PixmapPtr pixmap)
+{
+#ifdef XWL_HAS_GLAMOR
+    struct xwl_screen *xwl_screen = xwl_screen_get(pixmap->drawable.pScreen);
+
+    if (xwl_screen->glamor)
+        return xwl_glamor_pixmap_get_wl_buffer(pixmap);
+    else
+#endif
+        return xwl_shm_pixmap_get_wl_buffer(pixmap);
+}
+
 Bool
 xwl_pixmap_set_buffer_release_cb(PixmapPtr pixmap,
-                                 xwl_pixmap_cb func, void *data)
+                                 xwl_buffer_release_cb func, void *data)
 {
     struct xwl_pixmap_buffer_release_callback *xwl_pixmap_buffer_release_callback;
 
@@ -107,7 +125,7 @@ xwl_pixmap_buffer_release_cb(void *data, struct wl_buffer *wl_buffer)
                                                           &xwl_pixmap_cb_private_key);
     if (xwl_pixmap_buffer_release_callback)
         (*xwl_pixmap_buffer_release_callback->callback)
-            (pixmap, xwl_pixmap_buffer_release_callback->data);
+            (xwl_pixmap_buffer_release_callback->data);
 }
 
 Bool

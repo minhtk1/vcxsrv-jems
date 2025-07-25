@@ -31,11 +31,8 @@
 
 #include "sanitizedCarbon.h"
 
-#ifdef HAVE_DIX_CONFIG_H
 #include <dix-config.h>
-#endif
 
-#include "quartzCommon.h"
 #include "quartzRandR.h"
 #include "inputstr.h"
 #include "quartz.h"
@@ -72,25 +69,30 @@
 #include <rootlessCommon.h>
 #include <Xplugin.h>
 
-/* Work around a bug on Leopard's headers */
-#if defined (__LP64__) && MAC_OS_X_VERSION_MAX_ALLOWED >= 1050 && MAC_OS_X_VERSION_MAX_ALLOWED < 1060
-extern OSErr UpdateSystemActivity(UInt8 activity);
-#define OverallAct 0
-#endif
+// These are vended by the Objective-C runtime, but they are unfortunately
+// not available as API in the macOS SDK.  We are following suit with swift
+// and clang in declaring them inline here.  They canot be removed or changed
+// in the OS without major bincompat ramifications.
+//
+// These were added in macOS 10.7.
+void * _Nonnull objc_autoreleasePoolPush(void);
+void objc_autoreleasePoolPop(void * _Nonnull context);
 
 DevPrivateKeyRec quartzScreenKeyRec;
 int aquaMenuBarHeight = 0;
 QuartzModeProcsPtr quartzProcs = NULL;
 const char             *quartzOpenGLBundle = NULL;
 
-Bool XQuartzFullscreenDisableHotkeys = TRUE;
-Bool XQuartzOptionSendsAlt = FALSE;
-Bool XQuartzEnableKeyEquivalents = TRUE;
+/* These are initialized by X11Application with default values set in NSUserDefaults+XQuartzDefaults */
+Bool XQuartzFullscreenDisableHotkeys;
+Bool XQuartzOptionSendsAlt;
+Bool XQuartzEnableKeyEquivalents;
+Bool XQuartzFullscreenMenu;
+Bool XQuartzRootlessDefault;
+
 Bool XQuartzFullscreenVisible = FALSE;
-Bool XQuartzRootlessDefault = TRUE;
 Bool XQuartzIsRootless = TRUE;
 Bool XQuartzServerVisible = FALSE;
-Bool XQuartzFullscreenMenu = FALSE;
 
 int32_t XQuartzShieldingWindowLevel = 0;
 
@@ -113,7 +115,7 @@ QuartzAddScreen(int index,
     // The clang static analyzer thinks we leak displayInfo here
 #ifndef __clang_analyzer__
     // allocate space for private per screen Quartz specific storage
-    QuartzScreenPtr displayInfo = calloc(sizeof(QuartzScreenRec), 1);
+    QuartzScreenPtr displayInfo = calloc(1, sizeof(QuartzScreenRec));
 
     // QUARTZ_PRIV(pScreen) = displayInfo;
     dixSetPrivate(&pScreen->devPrivates, quartzScreenKey, displayInfo);
@@ -147,6 +149,30 @@ QuartzSetupScreen(int index,
 #endif
 
     return TRUE;
+}
+
+/*
+ * QuartzBlockHandler
+ *  Clean out any autoreleased objects.
+ */
+static void
+QuartzBlockHandler(void *blockData, void *pTimeout)
+{
+    static void *poolToken = NULL;
+
+    if (poolToken) {
+        objc_autoreleasePoolPop(poolToken);
+    }
+    poolToken = objc_autoreleasePoolPush();
+}
+
+/*
+ * QuartzWakeupHandler
+ */
+static void
+QuartzWakeupHandler(void *blockData, int result)
+{
+    /* nothing here */
 }
 
 /*

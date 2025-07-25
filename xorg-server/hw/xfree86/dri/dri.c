@@ -37,16 +37,19 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <xorg-config.h>
 #endif
 
-#include "xf86.h"
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/ioctl.h>
 #include <sys/time.h>
 #include <unistd.h>
-#include <string.h>
-#include <stdio.h>
-#include <sys/ioctl.h>
-#include <errno.h>
-
 #include <X11/X.h>
+#include <X11/Xfuncproto.h>
 #include <X11/Xproto.h>
+
+#include "dix/dix_priv.h"
+
+#include "xf86.h"
 #include "xf86drm.h"
 #include "misc.h"
 #include "dixstruct.h"
@@ -61,11 +64,12 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <X11/dri/xf86driproto.h>
 #include "swaprep.h"
 #include "xf86str.h"
-#include "dri.h"
+#include "dri_priv.h"
 #include "sarea.h"
 #include "dristruct.h"
 #include "mi.h"
 #include "mipointer.h"
+#include "xf86_os_support.h"
 #include "xf86_OSproc.h"
 #include "inputstr.h"
 #include "xf86VGAarbiter.h"
@@ -255,7 +259,7 @@ DRIOpenDRMMaster(ScrnInfoPtr pScrn,
     tmp.resOwner = NULL;
 
     if (!pDRIEntPriv)
-        pDRIEntPriv = xnfcalloc(sizeof(*pDRIEntPriv), 1);
+        pDRIEntPriv = XNFcallocarray(1, sizeof(*pDRIEntPriv));
 
     if (!pDRIEntPriv) {
         DRIDrvMsg(-1, X_INFO, "[drm] Failed to allocate memory for "
@@ -378,7 +382,7 @@ DRIScreenInit(ScreenPtr pScreen, DRIInfoPtr pDRIInfo, int *pDRMFD)
         return FALSE;
     }
 
-#ifdef PANORAMIX
+#ifdef XINERAMA
     /*
      * If Xinerama is on, don't allow DRI to initialise.  It won't be usable
      * anyway.
@@ -388,7 +392,7 @@ DRIScreenInit(ScreenPtr pScreen, DRIInfoPtr pDRIInfo, int *pDRMFD)
                   "Direct rendering is not supported when Xinerama is enabled\n");
         return FALSE;
     }
-#endif
+#endif /* XINERAMA */
     if (drm_server_inited == FALSE) {
         drmSetServerInfo(&DRIDRMServerInfo);
         drm_server_inited = TRUE;
@@ -629,6 +633,8 @@ DRIScreenInit(ScreenPtr pScreen, DRIInfoPtr pDRIInfo, int *pDRMFD)
 
     return TRUE;
 }
+
+static Bool DRIDestroyWindow(WindowPtr pWin);
 
 Bool
 DRIFinishScreenInit(ScreenPtr pScreen)
@@ -1206,7 +1212,7 @@ DRIDriverClipNotify(ScreenPtr pScreen)
     DRIScreenPrivPtr pDRIPriv = DRI_SCREEN_PRIV(pScreen);
 
     if (pDRIPriv->pDriverInfo->ClipNotify) {
-        WindowPtr *pDRIWindows = calloc(sizeof(WindowPtr), pDRIPriv->nrWindows);
+        WindowPtr *pDRIWindows = calloc(pDRIPriv->nrWindows, sizeof(WindowPtr));
         DRIInfoPtr pDRIInfo = pDRIPriv->pDriverInfo;
 
         if (pDRIPriv->nrWindows > 0) {
@@ -1736,7 +1742,7 @@ DRISwapContext(int drmFD, void *oldctx, void *newctx)
         return;
     }
 
-    /* usefull for debugging, just print out after n context switches */
+    /* useful for debugging, just print out after n context switches */
     if (!count || !(count % 1)) {
         DRIDrvMsg(pScreen->myNum, X_INFO,
                   "[DRI] Context switch %5d from %p/0x%08x (%d)\n",
@@ -1916,7 +1922,7 @@ DRITreeTraversal(WindowPtr pWin, void *data)
     return WT_WALKCHILDREN;
 }
 
-Bool
+static Bool
 DRIDestroyWindow(WindowPtr pWin)
 {
     ScreenPtr pScreen = pWin->drawable.pScreen;

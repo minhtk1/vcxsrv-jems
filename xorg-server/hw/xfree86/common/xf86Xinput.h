@@ -51,12 +51,13 @@
 #ifndef _xf86Xinput_h
 #define _xf86Xinput_h
 
+#include <X11/Xfuncproto.h>
+
 #include "xf86.h"
 #include "xf86str.h"
 #include "inputstr.h"
 #include <X11/extensions/XI.h>
 #include <X11/extensions/XIproto.h>
-#include "XIstubs.h"
 
 /* Input device flags */
 #define XI86_ALWAYS_CORE	0x04    /* device always controls the pointer */
@@ -113,9 +114,6 @@ struct _InputInfoRec {
     InputAttributes *attrs;
 };
 
-/* xf86Globals.c */
-extern InputInfoPtr xf86InputDevs;
-
 /* xf86Xinput.c */
 extern _X_EXPORT void xf86PostMotionEvent(DeviceIntPtr device, int is_absolute,
                                           int first_valuator, int num_valuators,
@@ -158,6 +156,20 @@ extern _X_EXPORT void xf86PostKeyboardEvent(DeviceIntPtr device,
 extern _X_EXPORT void xf86PostTouchEvent(DeviceIntPtr dev, uint32_t touchid,
                                          uint16_t type, uint32_t flags,
                                          const ValuatorMask *mask);
+extern _X_EXPORT void xf86PostGesturePinchEvent(DeviceIntPtr dev, uint16_t type,
+                                                uint16_t num_touches,
+                                                uint32_t flags,
+                                                double delta_x, double delta_y,
+                                                double delta_unaccel_x,
+                                                double delta_unaccel_y,
+                                                double scale, double delta_angle);
+extern _X_EXPORT void xf86PostGestureSwipeEvent(DeviceIntPtr dev, uint16_t type,
+                                                uint16_t num_touches,
+                                                uint32_t flags,
+                                                double delta_x, double delta_y,
+                                                double delta_unaccel_x,
+                                                double delta_unaccel_y);
+
 extern _X_EXPORT InputInfoPtr xf86FirstLocalDevice(void);
 extern _X_EXPORT int xf86ScaleAxis(int Cx, int to_max, int to_min, int from_max,
                                    int from_min);
@@ -174,10 +186,6 @@ extern _X_EXPORT void xf86RemoveEnabledDevice(InputInfoPtr pInfo);
 extern _X_EXPORT void xf86DisableDevice(DeviceIntPtr dev, Bool panic);
 extern _X_EXPORT void xf86EnableDevice(DeviceIntPtr dev);
 extern _X_EXPORT void xf86InputEnableVTProbe(void);
-
-/* not exported */
-int xf86NewInputDevice(InputInfoPtr pInfo, DeviceIntPtr *pdev, BOOL is_auto);
-InputInfoPtr xf86AllocateInput(void);
 
 /* xf86Helper.c */
 extern _X_EXPORT void xf86AddInputDriver(InputDriverPtr driver, void *module,
@@ -198,6 +206,11 @@ extern _X_EXPORT void
 xf86VIDrvMsgVerb(InputInfoPtr dev,
                  MessageType type, int verb, const char *format, va_list args)
 _X_ATTRIBUTE_PRINTF(4, 0);
+
+extern _X_EXPORT void xf86AddInputEventDrainCallback(CallbackProcPtr callback,
+                                                     void *param);
+extern _X_EXPORT void xf86RemoveInputEventDrainCallback(CallbackProcPtr callback,
+                                                        void *param);
 
 /* xf86Option.c */
 extern _X_EXPORT void

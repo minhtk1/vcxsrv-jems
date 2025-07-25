@@ -79,6 +79,14 @@ extern _X_EXPORT Bool xf86DRI2Enabled(void);
 
 #define XF86SCRNINFO(p) xf86ScreenToScrn(p)
 
+#define XF86FLIP_PIXELS() \
+	do { \
+	    if (xf86GetFlipPixels()) { \
+		pScreen->whitePixel = (pScreen->whitePixel) ? 0 : 1; \
+		pScreen->blackPixel = (pScreen->blackPixel) ? 0 : 1; \
+	   } \
+	while (0)
+
 #define BOOLTOSTRING(b) ((b) ? "TRUE" : "FALSE")
 
 /* Compatibility functions for pre-input-thread drivers */
@@ -118,13 +126,7 @@ extern _X_EXPORT ScrnInfoPtr xf86ConfigPciEntity(ScrnInfoPtr pScrn,
                                                  EntityProc leave,
                                                  void *private);
 #else
-#define xf86VGAarbiterInit() do {} while (0)
-#define xf86VGAarbiterFini() do {} while (0)
-#define xf86VGAarbiterLock(x) do {} while (0)
-#define xf86VGAarbiterUnlock(x) do {} while (0)
-#define xf86VGAarbiterScrnInit(x) do {} while (0)
 #define xf86VGAarbiterDeviceDecodes() do {} while (0)
-#define xf86VGAarbiterWrapFunctions() do {} while (0)
 #endif
 
 /* xf86Bus.c */
@@ -246,12 +248,6 @@ extern _X_EXPORT void
 xf86DrvMsg(int scrnIndex, MessageType type, const char *format, ...)
 _X_ATTRIBUTE_PRINTF(3, 4);
 extern _X_EXPORT void
-xf86MsgVerb(MessageType type, int verb, const char *format, ...)
-_X_ATTRIBUTE_PRINTF(3, 4);
-extern _X_EXPORT void
-xf86Msg(MessageType type, const char *format, ...)
-_X_ATTRIBUTE_PRINTF(2, 3);
-extern _X_EXPORT void
 xf86ErrorFVerb(int verb, const char *format, ...)
 _X_ATTRIBUTE_PRINTF(2, 3);
 extern _X_EXPORT void
@@ -277,6 +273,8 @@ extern _X_EXPORT rgb
 xf86GetWeight(void);
 extern _X_EXPORT Gamma
 xf86GetGamma(void);
+extern _X_EXPORT Bool
+xf86GetFlipPixels(void);
 extern _X_EXPORT Bool
 xf86ServerIsExiting(void);
 extern _X_EXPORT Bool
@@ -395,5 +393,9 @@ extern _X_EXPORT ScreenPtr xf86ScrnToScreen(ScrnInfoPtr pScrn);
 /* Update the internal total dimensions of all ScreenRecs together */
 extern _X_EXPORT void
 xf86UpdateDesktopDimensions(void);
+
+/* only for backwards (source) compatibility */
+#define xf86MsgVerb LogMessageVerb
+#define xf86Msg(type, ...) LogMessageVerb(type, 1, __VA_ARGS__)
 
 #endif                          /* _XF86_H */

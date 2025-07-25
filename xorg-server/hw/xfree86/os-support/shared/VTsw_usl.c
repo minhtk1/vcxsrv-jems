@@ -27,13 +27,17 @@
 
 #include <X11/X.h>
 
+#include "os/osdep.h"
+
 #include "xf86.h"
 #include "xf86Priv.h"
+#include "xf86_os_support.h"
 #include "xf86_OSlib.h"
 
 /*
  * Handle the VT-switching interface for OSs that use USL-style ioctl()s
- * (the sysv, sco, and linux subdirs).
+ * (this used to include the sysv, sco, and linux subdirs, but only linux
+ *  remains now).
  */
 
 /*

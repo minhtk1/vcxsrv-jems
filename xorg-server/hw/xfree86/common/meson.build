@@ -26,7 +26,6 @@ srcs_xorg_common = [
 
 xorg_sdk_headers = [
     'compiler.h',
-    'fourcc.h',
     'xf86.h',
     'xf86Module.h',
     'xf86Opt.h',
@@ -43,7 +42,6 @@ xorg_sdk_headers = [
     'xf86VGAarbiter.h',
     'xf86Optionstr.h',
     'xf86platformBus.h',
-    'xf86MatchDrivers.h',
     'xaarop.h',
 ]
 
@@ -72,6 +70,10 @@ endif
 
 if get_option('pciaccess')
     srcs_xorg_common += ['xf86pciBus.c', 'xf86VGAarbiter.c']
+
+    if host_machine.cpu() == 'sparc' or host_machine.cpu() == 'sparc64'
+        srcs_xorg_common += 'xf86sbusBus.c'
+    endif
 endif
 
 srcs_xorg_common += custom_target(

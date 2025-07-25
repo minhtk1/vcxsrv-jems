@@ -29,15 +29,16 @@
 
 #include <errno.h>
 #include <string.h>
-
+#include <sys/mman.h>
 #include <X11/X.h>
+
 #include "input.h"
 #include "scrnintstr.h"
 
 #include "xf86.h"
+#include "xf86_os_support.h"
 #include "xf86Priv.h"
 #include "xf86_OSlib.h"
-#include "xf86OSpriv.h"
 
 static Bool ExtendedEnabled = FALSE;
 
@@ -119,7 +120,7 @@ hwEnableIO(void)
     short i;
     size_t n=0;
     int begin, end;
-    char *buf=NULL, target[4];
+    char *buf=NULL, target[5];
     FILE *fp;
 
     if (ioperm(0, 1024, 1)) {
@@ -129,6 +130,8 @@ hwEnableIO(void)
     }
 
 #if !defined(__alpha__)
+    target[4] = '\0';
+
     /* trap access to the keyboard controller(s) and timer chip(s) */
     fp = fopen("/proc/ioports", "r");
     while (getline(&buf, &n, fp) != -1) {

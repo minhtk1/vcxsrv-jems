@@ -36,6 +36,7 @@
 
 #include <stdlib.h>
 #include <errno.h>
+#include <sys/stat.h>
 
 #undef HAS_UTSNAME
 #if !defined(WIN32)
@@ -47,26 +48,34 @@
 #include <X11/Xmd.h>
 #include <X11/Xproto.h>
 #include <X11/Xatom.h>
-#include "input.h"
+#include <X11/extensions/XI.h>
+#include <X11/extensions/XIproto.h>
+
+#include "config/dbus-core.h"
+#include "config/hotplug_priv.h"
+#include "dix/input_priv.h"
+#include "dix/screenint_priv.h"
+#include "mi/mi_priv.h"
+#include "os/cmdline.h"
+#include "os/ddx_priv.h"
+#include "os/osdep.h"
+
 #include "servermd.h"
 #include "windowstr.h"
 #include "scrnintstr.h"
-#include "mi.h"
-#include "dbus-core.h"
 #include "systemd-logind.h"
-
+#include "xf86VGAarbiter_priv.h"
 #include "loaderProcs.h"
 
-#define XF86_OS_PRIVS
+#include "xf86Module_priv.h"
 #include "xf86.h"
 #include "xf86Priv.h"
 #include "xf86Config.h"
+#include "xf86_os_support.h"
 #include "xf86_OSlib.h"
 #include "xf86cmap.h"
 #include "xorgVersion.h"
 #include "mipointer.h"
-#include <X11/extensions/XI.h>
-#include <X11/extensions/XIproto.h>
 #include "xf86Extensions.h"
 #include "xf86DDC.h"
 #include "xf86Xinput.h"
@@ -85,7 +94,11 @@
 #include <X11/extensions/dpmsconst.h>
 #include "dpmsproc.h"
 #endif
-#include <hotplug.h>
+
+#ifdef __linux__
+#include <linux/major.h>
+#include <sys/sysmacros.h>
+#endif
 
 void (*xf86OSPMClose) (void) = NULL;
 static Bool xorgHWOpenConsole = FALSE;
@@ -105,23 +118,10 @@ static PixmapFormatRec formats[MAXFORMATS] = {
 static int numFormats = 7;
 static Bool formatsDone = FALSE;
 
-#ifndef PRE_RELEASE
-#define PRE_RELEASE XORG_VERSION_SNAP
-#endif
 
 static void
 xf86PrintBanner(void)
 {
-#if PRE_RELEASE
-    xf86ErrorFVerb(0, "\n"
-                   "This is a pre-release version of the X server from "
-                   XVENDORNAME ".\n" "It is not supported in any way.\n"
-                   "Bugs may be filed in the bugzilla at http://bugs.freedesktop.org/.\n"
-                   "Select the \"xorg\" product for bugs you find in this release.\n"
-                   "Before reporting bugs in pre-release versions please check the\n"
-                   "latest version in the X.Org Foundation git repository.\n"
-                   "See http://wiki.x.org/wiki/GitPage for git access instructions.\n");
-#endif
     xf86ErrorFVerb(0, "\nX.Org X Server %d.%d.%d",
                    XORG_VERSION_MAJOR, XORG_VERSION_MINOR, XORG_VERSION_PATCH);
 #if XORG_VERSION_SNAP > 0
@@ -196,9 +196,14 @@ xf86PrintBanner(void)
 }
 
 Bool
-xf86PrivsElevated(void)
+xf86HasTTYs(void)
 {
-    return PrivsElevated();
+#ifdef __linux__
+    struct stat tty0devAttributes;
+    return (stat("/dev/tty0", &tty0devAttributes) == 0 && major(tty0devAttributes.st_rdev) == TTY_MAJOR);
+#else
+    return TRUE;
+#endif
 }
 
 static void
@@ -209,9 +214,11 @@ xf86AutoConfigOutputDevices(void)
     if (!xf86Info.autoBindGPU)
         return;
 
-    for (i = 0; i < xf86NumGPUScreens; i++)
+    for (i = 0; i < xf86NumGPUScreens; i++) {
+        int scrnum = xf86GPUScreens[i]->confScreen->screennum;
         RRProviderAutoConfigGpuScreen(xf86ScrnToScreen(xf86GPUScreens[i]),
-                                      xf86ScrnToScreen(xf86Screens[0]));
+                                      xf86ScrnToScreen(xf86Screens[scrnum]));
+    }
 }
 
 static void
@@ -302,7 +309,7 @@ InitOutput(ScreenInfo * pScreenInfo, int argc, char **argv)
 
             t = time(NULL);
             ct = ctime(&t);
-            xf86MsgVerb(xf86LogFileFrom, 0, "Log file: \"%s\", Time: %s",
+            LogMessageVerb(xf86LogFileFrom, 0, "Log file: \"%s\", Time: %s",
                         xf86LogFile, ct);
         }
 
@@ -312,7 +319,7 @@ InitOutput(ScreenInfo * pScreenInfo, int argc, char **argv)
             case CONFIG_OK:
                 break;
             case CONFIG_PARSE_ERROR:
-                xf86Msg(X_ERROR, "Error parsing the config file\n");
+                LogMessageVerb(X_ERROR, 1, "Error parsing the config file\n");
                 return;
             case CONFIG_NOFILE:
                 autoconfig = TRUE;
@@ -344,7 +351,7 @@ InitOutput(ScreenInfo * pScreenInfo, int argc, char **argv)
 
         if (autoconfig) {
             if (!xf86AutoConfig()) {
-                xf86Msg(X_ERROR, "Auto configuration failed\n");
+                LogMessageVerb(X_ERROR, 1, "Auto configuration failed\n");
                 return;
             }
         }
@@ -367,7 +374,7 @@ InitOutput(ScreenInfo * pScreenInfo, int argc, char **argv)
         configured_device = xf86ConfigLayout.screens->screen->device;
         if ((!configured_device) || (!configured_device->driver)) {
             if (!autoConfigDevice(configured_device)) {
-                xf86Msg(X_ERROR, "Automatic driver configuration failed\n");
+                LogMessageVerb(X_ERROR, 1, "Automatic driver configuration failed\n");
                 return;
             }
         }
@@ -397,7 +404,7 @@ InitOutput(ScreenInfo * pScreenInfo, int argc, char **argv)
          */
 
         if (xf86NumDrivers == 0) {
-            xf86Msg(X_ERROR, "No drivers available.\n");
+            LogMessageVerb(X_ERROR, 1, "No drivers available.\n");
             return;
         }
 
@@ -423,7 +430,7 @@ InitOutput(ScreenInfo * pScreenInfo, int argc, char **argv)
                 want_hw_access = TRUE;
 
             /* Non-seat0 X servers should not open console */
-            if (!(flags & HW_SKIP_CONSOLE) && !ServerIsNotSeat0())
+            if (!(flags & HW_SKIP_CONSOLE) && !ServerIsNotSeat0() && xf86HasTTYs())
                 xorgHWOpenConsole = TRUE;
         }
 
@@ -495,8 +502,8 @@ InitOutput(ScreenInfo * pScreenInfo, int argc, char **argv)
          */
 
         if (xf86NumScreens == 0) {
-            xf86Msg(X_ERROR,
-                    "Screen(s) found, but none have a usable configuration.\n");
+            LogMessageVerb(X_ERROR, 1,
+                           "Screen(s) found, but none have a usable configuration.\n");
             return;
         }
 
@@ -573,7 +580,7 @@ InitOutput(ScreenInfo * pScreenInfo, int argc, char **argv)
         if (xf86OSPMClose)
             xf86OSPMClose();
         if ((xf86OSPMClose = xf86OSPMOpen()) != NULL)
-            xf86MsgVerb(X_INFO, 3, "APM registered successfully\n");
+            LogMessageVerb(X_INFO, 3, "APM registered successfully\n");
 
         /* Make sure full I/O access is enabled */
         if (xorgHWAccess)
@@ -689,8 +696,10 @@ InitOutput(ScreenInfo * pScreenInfo, int argc, char **argv)
         }
     }
 
-    for (i = 0; i < xf86NumGPUScreens; i++)
-        AttachUnboundGPU(xf86Screens[0]->pScreen, xf86GPUScreens[i]->pScreen);
+    for (i = 0; i < xf86NumGPUScreens; i++) {
+        int scrnum = xf86GPUScreens[i]->confScreen->screennum;
+        AttachUnboundGPU(xf86Screens[scrnum]->pScreen, xf86GPUScreens[i]->pScreen);
+    }
 
     xf86AutoConfigOutputDevices();
 
@@ -791,7 +800,7 @@ OsVendorInit(void)
 /*
  * ddxGiveUp --
  *      Device dependent cleanup. Called by by dix before normal server death.
- *      For SYSV386 we must switch the terminal back to normal mode. No error-
+ *      On some OSes we must switch the terminal back to normal mode. No error-
  *      checking here, since there should be restored as much as possible.
  */
 
@@ -849,37 +858,26 @@ ddxGiveUp(enum ExitCode error)
 void
 OsVendorFatalError(const char *f, va_list args)
 {
-#ifdef VENDORSUPPORT
-    ErrorFSigSafe("\nPlease refer to your Operating System Vendor support "
-                 "pages\nat %s for support on this crash.\n", VENDORSUPPORT);
-#else
-    ErrorFSigSafe("\nPlease consult the " XVENDORNAME " support \n\t at "
-                 __VENDORDWEBSUPPORT__ "\n for help. \n");
-#endif
+    ErrorF("\nPlease consult the " XVENDORNAME " support \n\t at "
+           __VENDORDWEBSUPPORT__ "\n for help. \n");
     if (xf86LogFile && xf86LogFileWasOpened)
-        ErrorFSigSafe("Please also check the log file at \"%s\" for additional "
-                     "information.\n", xf86LogFile);
-    ErrorFSigSafe("\n");
+        ErrorF("Please also check the log file at \"%s\" for additional "
+               "information.\n", xf86LogFile);
+    ErrorF("\n");
 }
 
-int
+void
 xf86SetVerbosity(int verb)
 {
-    int save = xf86Verbose;
-
     xf86Verbose = verb;
     LogSetParameter(XLOG_VERBOSITY, verb);
-    return save;
 }
 
-int
+void
 xf86SetLogVerbosity(int verb)
 {
-    int save = xf86LogVerbose;
-
     xf86LogVerbose = verb;
     LogSetParameter(XLOG_FILE_VERBOSITY, verb);
-    return save;
 }
 
 static void
@@ -919,7 +917,7 @@ ddxProcessArgument(int argc, char **argv, int i)
     /* First the options that are not allowed with elevated privileges */
     if (!strcmp(argv[i], "-modulepath")) {
         CHECK_FOR_REQUIRED_ARGUMENTS(1);
-        if (xf86PrivsElevated())
+        if (PrivsElevated())
               FatalError("\nInvalid argument -modulepath "
                 "with elevated privileges\n");
         xf86ModulePath = argv[i + 1];
@@ -928,7 +926,7 @@ ddxProcessArgument(int argc, char **argv, int i)
     }
     if (!strcmp(argv[i], "-logfile")) {
         CHECK_FOR_REQUIRED_ARGUMENTS(1);
-        if (xf86PrivsElevated())
+        if (PrivsElevated())
               FatalError("\nInvalid argument -logfile "
                 "with elevated privileges\n");
         xf86LogFile = argv[i + 1];
@@ -946,6 +944,10 @@ ddxProcessArgument(int argc, char **argv, int i)
         xf86CheckPrivs(argv[i], argv[i + 1]);
         xf86ConfigDir = argv[i + 1];
         return 2;
+    }
+    if (!strcmp(argv[i], "-flipPixels")) {
+        xf86FlipPixels = TRUE;
+        return 1;
     }
 #ifdef XF86VIDMODE
     if (!strcmp(argv[i], "-disableVidMode")) {
@@ -1226,6 +1228,7 @@ ddxUseMsg(void)
     ErrorF
         ("-pointer name          specify the core pointer InputDevice name\n");
     ErrorF("-nosilk                disable Silken Mouse\n");
+    ErrorF("-flipPixels            swap default black/white Pixel values\n");
 #ifdef XF86VIDMODE
     ErrorF("-disableVidMode        disable mode adjustments with xvidtune\n");
     ErrorF

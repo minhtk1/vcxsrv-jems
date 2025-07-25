@@ -1,40 +1,22 @@
 #!/usr/bin/python3 -i
 #
-# Copyright (c) 2013-2014 The Khronos Group Inc.
-#
-# Permission is hereby granted, free of charge, to any person obtaining a
-# copy of this software and/or associated documentation files (the
-# "Materials"), to deal in the Materials without restriction, including
-# without limitation the rights to use, copy, modify, merge, publish,
-# distribute, sublicense, and/or sell copies of the Materials, and to
-# permit persons to whom the Materials are furnished to do so, subject to
-# the following conditions:
-#
-# The above copyright notice and this permission notice shall be included
-# in all copies or substantial portions of the Materials.
-#
-# THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-# IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-# CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-# TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-# MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
+# Copyright 2013-2020 The Khronos Group Inc.
+# SPDX-License-Identifier: Apache-2.0
 
 import io,os,re,string,sys
 from lxml import etree
 
-def write( *args, **kwargs ):
-    file = kwargs.pop('file',sys.stdout)
-    end = kwargs.pop( 'end','\n')
-    file.write( ' '.join([str(arg) for arg in args]) )
-    file.write( end )
+def write(*args, **kwargs):
+    file = kwargs.pop('file', sys.stdout)
+    end = kwargs.pop('end', '\n')
+    file.write(' '.join([str(arg) for arg in args]))
+    file.write(end)
 
 # noneStr - returns string argument, or "" if argument is None.
 # Used in converting lxml Elements into text.
 #   str - string to convert
 def noneStr(str):
-    if str is not None:
+    if (str):
         return str
     else:
         return ""
@@ -275,8 +257,10 @@ class GeneratorOptions:
 #     generated around a feature interface in the header file.
 #   genFuncPointers - True if function pointer typedefs should be
 #     generated
-#   protectProto - True if #ifdef..#endif protection should be
-#     generated around prototype declarations
+#   protectProto - Controls cpp protection around prototypes:
+#     False - no protection
+#     'nonzero' - protectProtoStr must be defined to a nonzero value
+#     True - protectProtoStr must be defined
 #   protectProtoStr - #ifdef symbol to use around prototype
 #     declarations, if protected
 #   apicall - string to use for the function declaration prefix,
@@ -506,7 +490,7 @@ class COutputGenerator(OutputGenerator):
                     paramdecl += ', '
         else:
             paramdecl += 'void'
-        paramdecl += ");\n";
+        paramdecl += ');\n';
         return [ pdecl + paramdecl, tdecl + paramdecl ]
     #
     def newline(self):
@@ -518,7 +502,7 @@ class COutputGenerator(OutputGenerator):
         #
         # Multiple inclusion protection & C++ wrappers.
         if (genOpts.protectFile and self.genOpts.filename):
-            headerSym = '__' + re.sub('\.h', '_h_', os.path.basename(self.genOpts.filename))
+            headerSym = '__' + self.genOpts.apiname + '_' + re.sub('\.h', '_h_', os.path.basename(self.genOpts.filename))
             write('#ifndef', headerSym, file=self.outFile)
             write('#define', headerSym, '1', file=self.outFile)
             self.newline()
@@ -588,11 +572,24 @@ class COutputGenerator(OutputGenerator):
             if (self.genOpts.genFuncPointers and self.cmdPointerBody != ''):
                 write(self.cmdPointerBody, end='', file=self.outFile)
             if (self.cmdBody != ''):
-                if (self.genOpts.protectProto):
-                    write('#ifdef', self.genOpts.protectProtoStr, file=self.outFile)
-                write(self.cmdBody, end='', file=self.outFile)
-                if (self.genOpts.protectProto):
-                    write('#endif', file=self.outFile)
+                if (self.genOpts.protectProto == True):
+                    prefix = '#ifdef ' + self.genOpts.protectProtoStr + '\n'
+                    suffix = '#endif\n'
+                elif (self.genOpts.protectProto == 'nonzero'):
+                    prefix = '#if ' + self.genOpts.protectProtoStr + '\n'
+                    suffix = '#endif\n'
+                elif (self.genOpts.protectProto == False):
+                    prefix = ''
+                    suffix = ''
+                else:
+                    self.gen.logMsg('warn',
+                                    '*** Unrecognized value for protectProto:',
+                                    self.genOpts.protectProto,
+                                    'not generating prototype wrappers')
+                    prefix = ''
+                    suffix = ''
+
+                write(prefix + self.cmdBody + suffix, end='', file=self.outFile)
             if (self.featureExtraProtect != None):
                 write('#endif /*', self.featureExtraProtect, '*/', file=self.outFile)
             if (self.genOpts.protectFeature):
@@ -615,7 +612,7 @@ class COutputGenerator(OutputGenerator):
             else:
                 s += noneStr(elem.text) + noneStr(elem.tail)
         if (len(s) > 0):
-            self.typeBody += s + "\n"
+            self.typeBody += s + '\n'
     #
     # Enumerant generation
     def genEnum(self, enuminfo, name):
@@ -628,7 +625,7 @@ class COutputGenerator(OutputGenerator):
         t = enuminfo.elem.get('type')
         if (t != '' and t != 'i'):
             self.enumBody += enuminfo.type
-        self.enumBody += "\n"
+        self.enumBody += '\n'
     #
     # Command generation
     def genCmd(self, cmdinfo, name):
@@ -706,7 +703,7 @@ class Registry:
     #   infoName - 'type' / 'group' / 'enum' / 'command' / 'feature' / 'extension'
     #   dictionary - self.{type|group|enum|cmd|api|ext}dict
     # If the Element has an 'api' attribute, the dictionary key is the
-    # tuple (name,api). If not, the key is the name. 'name' is an 
+    # tuple (name,api). If not, the key is the name. 'name' is an
     # attribute of the Element
     def addElementInfo(self, elem, info, infoName, dictionary):
         if ('api' in elem.attrib):

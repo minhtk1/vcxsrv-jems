@@ -41,6 +41,10 @@
 #undef GC
 
 #include "win.h"
+
+#include "dix/dix_priv.h"
+#include "mi/mipointer_priv.h"
+
 #include "dixevents.h"
 #include "winmultiwindowclass.h"
 #include "winprefs.h"
@@ -348,7 +352,12 @@ typedef struct _ACCENTPOLICY
     ULONG AnimationId;
 } ACCENTPOLICY;
 
+#define ACCENT_DISABLED 0
+#define ACCENT_ENABLE_GRADIENT 1
+#define ACCENT_ENABLE_TRANSPARENTGRADIENT 2
 #define ACCENT_ENABLE_BLURBEHIND 3
+#define ACCENT_ENABLE_ACRYLICBLURBEHIND 4
+#define ACCENT_INVALID_STATE 5
 
 typedef struct _WINCOMPATTR
 {
@@ -378,7 +387,8 @@ CheckForAlpha(HWND hWnd, WindowPtr pWin, winScreenInfo *pScreenInfo)
             /* SetWindowCompositionAttribute() exists on Windows 7 and later,
                but doesn't work for this purpose, so first check for Windows 10
                or later */
-            if (osvi.dwMajorVersion >= 10)
+            if (osvi.dwMajorVersion >= 10 ||
+                (osvi.dwMajorVersion == 6) && (osvi.dwMinorVersion == 2))
                 {
                     HMODULE hUser32 = GetModuleHandle("user32");
 
@@ -423,7 +433,7 @@ CheckForAlpha(HWND hWnd, WindowPtr pWin, winScreenInfo *pScreenInfo)
     else if (useDwmEnableBlurBehindWindow)
         {
             HRESULT rc;
-            WINBOOL enabled;
+            BOOL enabled;
 
             rc = DwmIsCompositionEnabled(&enabled);
             if ((rc == S_OK) && enabled)
@@ -481,12 +491,13 @@ winAdjustXWindowState(winPrivScreenPtr s_pScreenPriv, winWMMessageRec *wmMsg)
 /*
  * winTopLevelWindowProc - Window procedure for all top-level Windows windows.
  */
+int sizeChanged;
+unsigned lastTime;
 
 LRESULT CALLBACK
 winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     POINT ptMouse;
-    PAINTSTRUCT ps;
     WindowPtr pWin = NULL;
     winPrivWinPtr pWinPriv = NULL;
     ScreenPtr s_pScreen = NULL;
@@ -611,6 +622,8 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
          * since we repaint the entire region anyhow
          * This avoids some flickering when resizing.
          */
+        if (GetWindowLongPtr(hwnd, WND_IDX_ENTEREDSIZEMOVE))
+            DispatchQueuedEvents(0);
         return TRUE;
 
     case WM_PAINT:
@@ -620,6 +633,7 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
 #ifdef XWIN_GLX_WINDOWS
         if (pWinPriv->fWglUsed) {
+            PAINTSTRUCT ps;
             /*
                For regions which are being drawn by GL, the shadow framebuffer doesn't have the
                correct bits, so don't bitblt from the shadow framebuffer
@@ -671,13 +685,11 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
         /* Are we tracking yet? */
         if (!s_fTracking) {
-            TRACKMOUSEEVENT tme;
-
-            /* Setup data structure */
-            ZeroMemory(&tme, sizeof(tme));
-            tme.cbSize = sizeof(tme);
-            tme.dwFlags = TME_LEAVE;
-            tme.hwndTrack = hwnd;
+            TRACKMOUSEEVENT tme = (TRACKMOUSEEVENT) {
+                .cbSize = sizeof(TRACKMOUSEEVENT),
+                .dwFlags = TME_LEAVE,
+                .hwndTrack = hwnd,
+            };
 
             /* Call the tracking function */
             if (!TrackMouseEvent(&tme))
@@ -858,6 +870,16 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         /* Add the keyboard hook if possible */
         if (g_fKeyboardHookLL)
             g_fKeyboardHookLL = winInstallKeyboardHookLL();
+
+        /* Tell our Window Manager thread to activate the window */
+        if (pWin)
+            {
+                wmMsg.msg = WM_WM_ACTIVATE;
+                /* don't focus override redirect windows (e.g. menus) */
+                if (!pWin->overrideRedirect)
+                    winSendMessageToWM(s_pScreenPriv->pWMInfo, &wmMsg);
+            }
+
         return 0;
 
     case WM_KILLFOCUS:
@@ -867,9 +889,13 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         /* Remove our keyboard hook if it is installed */
         winRemoveKeyboardHookLL();
 
-        /* Revert the X focus as well, but only if the Windows focus is going to another window */
-        if (!wParam && pWin)
-            DeleteWindowFromAnyEvents(pWin, FALSE);
+        /* Revert the X focus as well */
+        if (pWin)
+            {
+                wmMsg.msg = WM_WM_ACTIVATE;
+                wmMsg.iWindow = 0;
+                winSendMessageToWM(s_pScreenPriv->pWMInfo, &wmMsg);
+            }
 
         return 0;
 
@@ -953,21 +979,9 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         /* Pass the message to the root window */
         SendMessage(hwndScreen, message, wParam, lParam);
 
-        if (LOWORD(wParam) != WA_INACTIVE) {
-            /* Raise the window to the top in Z order if needed */
-            raiseWinIfNeeded(pWin, GetNextWindow(hwnd, GW_HWNDPREV));
+        /* Allow DefWindowProc to SetFocus() as needed */
+        break;
 
-            /* Tell our Window Manager thread to activate the window */
-            wmMsg.msg = WM_WM_ACTIVATE;
-            if (pWin &&
-                pWin->realized && !pWin->overrideRedirect /* for OOo menus */)
-                    winSendMessageToWM(s_pScreenPriv->pWMInfo, &wmMsg);
-        }
-        /* Prevent the mouse wheel from stalling when another window is minimized */
-        if (HIWORD(wParam) == 0 && LOWORD(wParam) == WA_ACTIVE &&
-            (HWND) lParam != NULL && (HWND) lParam != GetParent(hwnd))
-            SetFocus(hwnd);
-        return 0;
 
     case WM_ACTIVATEAPP:
         /*
@@ -1114,50 +1128,67 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_WINDOWPOSCHANGED:
     {
-        LPWINDOWPOS pWinPos = (LPWINDOWPOS) lParam;
+        if (0 == GetWindowLongPtr(hwnd, WND_IDX_ENTEREDSIZEMOVE))
+        {
+            LPWINDOWPOS pWinPos = (LPWINDOWPOS)lParam;
 
-        if (!(pWinPos->flags & SWP_NOZORDER)) {
-#if CYGWINDOWING_DEBUG
-            winDebug("\twindow z order was changed\n");
+            if (!(pWinPos->flags & SWP_NOZORDER)) {
+#if ENABLE_DEBUG
+                winDebug("\twindow z order was changed\n");
 #endif
-            if (pWinPos->hwndInsertAfter == HWND_TOP
-                || pWinPos->hwndInsertAfter == HWND_TOPMOST
-                || pWinPos->hwndInsertAfter == HWND_NOTOPMOST) {
-#if CYGWINDOWING_DEBUG
-                winDebug("\traise to top\n");
+                if (pWinPos->hwndInsertAfter == HWND_TOP
+                    || pWinPos->hwndInsertAfter == HWND_TOPMOST
+                    || pWinPos->hwndInsertAfter == HWND_NOTOPMOST) {
+#if ENABLE_DEBUG
+                    winDebug("\traise to top\n");
 #endif
-                /* Raise the window to the top in Z order */
-                winRaiseWindow(pWin);
+                    /* Raise the window to the top in Z order */
+                    winRaiseWindow(pWin);
+                }
+                else if (pWinPos->hwndInsertAfter == HWND_BOTTOM) {
+                }
+                else {
+                    raiseWinIfNeeded(pWin, pWinPos->hwndInsertAfter);
+                }
             }
-            else if (pWinPos->hwndInsertAfter == HWND_BOTTOM) {
-            }
-            else {
-                raiseWinIfNeeded(pWin, pWinPos->hwndInsertAfter);
-            }
+            //if (GetWindowLongPtr(hwnd, WND_IDX_ENTEREDSIZEMOVE))
+            //    DispatchQueuedEvents(0);
+            /*
+             * Pass the message to DefWindowProc to let the function
+             * break down WM_WINDOWPOSCHANGED to WM_MOVE and WM_SIZE.
+             */
         }
     }
-        /*
-         * Pass the message to DefWindowProc to let the function
-         * break down WM_WINDOWPOSCHANGED to WM_MOVE and WM_SIZE.
-         */
-        break;
+    break;
 
     case WM_ENTERSIZEMOVE:
         SetWindowLongPtr(hwnd, WND_IDX_ENTEREDSIZEMOVE, TRUE);
         SetTimer(hwnd, UPDATETIMER, 10, NULL);
+        DispatchQueuedEvents(0);
         return 0;
 
     case WM_TIMER:
-        DispatchQueuedEvents(0);
+        if (sizeChanged && (GetTimeInMillis()-lastTime > 200))
+        {
+          sizeChanged=0;
+          winAdjustXWindow(pWin, hwnd);
+          winAdjustXWindowState(s_pScreenPriv, &wmMsg);
+          InvalidateRect(hwnd, NULL, FALSE);
+        }
+        if (GetWindowLongPtr(hwnd, WND_IDX_ENTEREDSIZEMOVE))
+            DispatchQueuedEvents(0);
         return 0;
 
     case WM_EXITSIZEMOVE:
         /* Adjust the X Window to the moved Windows window */
         SetWindowLongPtr(hwnd, WND_IDX_ENTEREDSIZEMOVE, FALSE);
-        winAdjustXWindow(pWin, hwnd);
         KillTimer(hwnd, UPDATETIMER);
         if (pWin)
+        {
+            winAdjustXWindow(pWin, hwnd);
             winAdjustXWindowState(s_pScreenPriv, &wmMsg);
+            InvalidateRect(hwnd, NULL, FALSE);
+        }
         return 0;
 
     case WM_SIZE:
@@ -1184,14 +1215,18 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
     }
 #endif
         /* Adjust the X Window to the moved Windows window */
-        winAdjustXWindow (pWin, hwnd);
         if (pWin)
+        {
+          sizeChanged++;
+          lastTime=GetTimeInMillis();
+            winAdjustXWindow(pWin, hwnd);
             winAdjustXWindowState(s_pScreenPriv, &wmMsg);
+            InvalidateRect(hwnd, NULL, FALSE);
+//            if (GetWindowLongPtr(hwnd, WND_IDX_ENTEREDSIZEMOVE))
+//                DispatchQueuedEvents(0);
+        }
         if (wParam == SIZE_MINIMIZED)
             winReorderWindowsMultiWindow();
-        if (GetWindowLongPtr(hwnd, WND_IDX_ENTEREDSIZEMOVE))
-            DispatchQueuedEvents(0);
-    /* else: wait for WM_EXITSIZEMOVE */
     return 0; /* end of WM_SIZE handler */
 
     case WM_STYLECHANGED:
@@ -1205,7 +1240,9 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         winPositionWindowMultiWindow(pWin, x, y);
         s_pScreen->PositionWindow = saved;
     }
-        return 0;
+    if (GetWindowLongPtr(hwnd, WND_IDX_ENTEREDSIZEMOVE))
+        DispatchQueuedEvents(0);
+    return 0;
 
     case WM_MOUSEACTIVATE:
 
@@ -1232,6 +1269,8 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         /* This message is only sent on Vista/W7 */
         CheckForAlpha(hwnd, pWin, s_pScreenInfo);
 
+        if (GetWindowLongPtr(hwnd, WND_IDX_ENTEREDSIZEMOVE))
+            DispatchQueuedEvents(0);
         return 0;
     default:
         break;

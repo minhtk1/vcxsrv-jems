@@ -66,6 +66,7 @@
 #include <X11/Xdefs.h>
 #include <X11/Xfuncproto.h>
 #include <limits.h>
+#include "xf86Parser_priv.h"
 
 #if !defined(MAXHOSTNAMELEN)
 #define MAXHOSTNAMELEN 32
@@ -332,18 +333,18 @@ xf86getToken(const xf86ConfigSymTabRec * tab)
             }
             while ((c != '\n') && (c != '\r') && (c != '\0'));
             configRBuf[i] = '\0';
-            /* XXX no private copy.
+            /* XXX private copy.
              * Use xf86addComment when setting a comment.
              */
-            xf86_lex_val.str = configRBuf;
+            xf86_lex_val.str = strdup(configRBuf);
             return COMMENT;
         }
 
         /* GJA -- handle '-' and ','  * Be careful: "-hsync" is a keyword. */
-        else if ((c == ',') && !isalpha(configBuf[configPos])) {
+        else if ((c == ',') && !isalpha((unsigned char)configBuf[configPos])) {
             return COMMA;
         }
-        else if ((c == '-') && !isalpha(configBuf[configPos])) {
+        else if ((c == '-') && !isalpha((unsigned char)configBuf[configPos])) {
             return DASH;
         }
 
@@ -448,8 +449,11 @@ xf86getSubToken(char **comment)
     for (;;) {
         token = xf86getToken(NULL);
         if (token == COMMENT) {
-            if (comment)
+            if (comment) {
                 *comment = xf86addComment(*comment, xf86_lex_val.str);
+                free(xf86_lex_val.str);
+                xf86_lex_val.str = NULL;
+            }
         }
         else
             return token;
@@ -464,8 +468,11 @@ xf86getSubTokenWithTab(char **comment, const xf86ConfigSymTabRec * tab)
     for (;;) {
         token = xf86getToken(tab);
         if (token == COMMENT) {
-            if (comment)
+            if (comment) {
                 *comment = xf86addComment(*comment, xf86_lex_val.str);
+                free(xf86_lex_val.str);
+                xf86_lex_val.str = NULL;
+            }
         }
         else
             return token;
@@ -968,7 +975,7 @@ xf86parseError(const char *format, ...)
     ErrorF("Parse error on line %d of section %s in file %s\n\t",
            configLineNo, configSection, filename);
     va_start(ap, format);
-    VErrorF(format, ap);
+    LogVMessageVerb(X_NONE, -1, format, ap);
     va_end(ap);
 
     ErrorF("\n");
@@ -983,7 +990,7 @@ xf86validationError(const char *format, ...)
 
     ErrorF("Data incomplete in file %s\n\t", filename);
     va_start(ap, format);
-    VErrorF(format, ap);
+    LogVMessageVerb(X_NONE, -1, format, ap);
     va_end(ap);
 
     ErrorF("\n");
@@ -1028,8 +1035,8 @@ xf86nameCompare(const char *s1, const char *s2)
         s1++;
     while (*s2 == '_' || *s2 == ' ' || *s2 == '\t')
         s2++;
-    c1 = (isupper(*s1) ? tolower(*s1) : *s1);
-    c2 = (isupper(*s2) ? tolower(*s2) : *s2);
+    c1 = (isupper((unsigned char)*s1) ? tolower((unsigned char)*s1) : *s1);
+    c2 = (isupper((unsigned char)*s2) ? tolower((unsigned char)*s2) : *s2);
     while (c1 == c2) {
         if (c1 == '\0')
             return 0;
@@ -1039,8 +1046,8 @@ xf86nameCompare(const char *s1, const char *s2)
             s1++;
         while (*s2 == '_' || *s2 == ' ' || *s2 == '\t')
             s2++;
-        c1 = (isupper(*s1) ? tolower(*s1) : *s1);
-        c2 = (isupper(*s2) ? tolower(*s2) : *s2);
+        c1 = (isupper((unsigned char)*s1) ? tolower((unsigned char)*s1) : *s1);
+        c2 = (isupper((unsigned char)*s2) ? tolower((unsigned char)*s2) : *s2);
     }
     return c1 - c2;
 }

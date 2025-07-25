@@ -30,11 +30,13 @@
 
 #include "sanitizedCarbon.h"
 
-#ifdef HAVE_DIX_CONFIG_H
 #include <dix-config.h>
-#endif
 
-#include "quartzCommon.h"
+#include <errno.h>
+
+#include "dix/property_priv.h"
+
+#include "quartz.h"
 
 #include "misc.h"
 #include "dixstruct.h"
@@ -269,7 +271,7 @@ ProcAppleWMSelectInput(register ClientPtr client)
             pHead = (WMEventPtr *)malloc(sizeof(WMEventPtr));
             if (!pHead ||
                 !AddResource(eventResource, EventType, (void *)pHead)) {
-                FreeResource(clientResource, RT_NONE);
+                FreeResource(clientResource, X11_RESTYPE_NONE);
                 return BadAlloc;
             }
             *pHead = 0;
@@ -385,7 +387,7 @@ ProcAppleWMSetWindowMenu(register ClientPtr client)
         return BadAlloc;
     }
 
-    max_len = (stuff->length << 2) - sizeof(xAppleWMSetWindowMenuReq);
+    max_len = (client->req_len << 2) - sizeof(xAppleWMSetWindowMenuReq);
     bytes = (char *)&stuff[1];
 
     for (i = j = 0; i < max_len && j < nitems;) {
@@ -599,7 +601,7 @@ ProcAppleWMFrameDraw(register ClientPtr client)
     or = make_box(stuff->ox, stuff->oy, stuff->ow, stuff->oh);
 
     title_length = stuff->title_length;
-    title_max = (stuff->length << 2) - sizeof(xAppleWMFrameDrawReq);
+    title_max = (client->req_len << 2) - sizeof(xAppleWMFrameDrawReq);
 
     if (title_max < title_length)
         return BadValue;
@@ -690,7 +692,6 @@ static int
 SProcAppleWMQueryVersion(register ClientPtr client)
 {
     REQUEST(xAppleWMQueryVersionReq);
-    swaps(&stuff->length);
     return ProcAppleWMQueryVersion(client);
 }
 

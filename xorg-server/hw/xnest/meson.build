@@ -16,6 +16,7 @@ srcs = [
     'Visual.c',
     'Window.c',
     '../../mi/miinitext.c',
+    '../../mi/miinitext.h',
 ]
 
 executable(
@@ -32,7 +33,7 @@ executable(
         libxserver_xi_stubs,
         libxserver_xkb_stubs,
     ],
-    c_args: '-DHAVE_XNEST_CONFIG_H',
+    c_args: [ '-DHAVE_XNEST_CONFIG_H', '-DDISABLE_EXT_COMPOSITE', '-DDISABLE_EXT_DPMS', '-DISABLE_EXT_MITSHM' ],
     install: true,
 )
 

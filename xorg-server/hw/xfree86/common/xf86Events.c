@@ -53,28 +53,32 @@
 #include <xorg-config.h>
 #endif
 
+#include <errno.h>
 #include <X11/X.h>
 #include <X11/Xproto.h>
 #include <X11/Xatom.h>
+#include <X11/extensions/XI.h>
+#include <X11/extensions/XIproto.h>
+#include <X11/keysym.h>
+
+#include "dix/dix_priv.h"
+#include "dix/input_priv.h"
+#include "mi/mi_priv.h"
+
 #include "misc.h"
 #include "xf86.h"
 #include "xf86Priv.h"
-#define XF86_OS_PRIVS
+#include "xf86_os_support.h"
 #include "xf86_OSlib.h"
-#include <X11/keysym.h>
 
 #ifdef XFreeXDGA
 #include "dgaproc.h"
+#include "dgaproc_priv.h"
 #endif
 
-#include <X11/extensions/XI.h>
-#include <X11/extensions/XIproto.h>
 #include "inputstr.h"
-#include "xf86Xinput.h"
-
-#include "mi.h"
+#include "xf86Xinput_priv.h"
 #include "mipointer.h"
-
 #include "xkbsrv.h"
 #include "xkbstr.h"
 
@@ -159,7 +163,7 @@ xf86ProcessActionEvent(ActionEvent action, void *arg)
     switch (action) {
     case ACTION_TERMINATE:
         if (!xf86Info.dontZap) {
-            xf86Msg(X_INFO, "Server zapped. Shutting down.\n");
+            LogMessageVerb(X_INFO, 1, "Server zapped. Shutting down.\n");
             GiveUp(0);
         }
         break;
@@ -280,12 +284,12 @@ xf86ReleaseKeys(DeviceIntPtr pDev)
     /*
      * Hmm... here is the biggest hack of every time !
      * It may be possible that a switch-vt procedure has finished BEFORE
-     * you released all keys neccessary to do this. That peculiar behavior
+     * you released all keys necessary to do this. That peculiar behavior
      * can fool the X-server pretty much, cause it assumes that some keys
-     * were not released. TWM may stuck alsmost completly....
+     * were not released. TWM may stuck almost completely....
      * OK, what we are doing here is after returning from the vt-switch
-     * exeplicitely unrelease all keyboard keys before the input-devices
-     * are reenabled.
+     * explicitly unrelease all keyboard keys before the input-devices
+     * are re-enabled.
      */
 
     for (i = keyc->xkbInfo->desc->min_key_code;
@@ -381,6 +385,10 @@ xf86VTLeave(void)
         xf86Screens[i]->LeaveVT(xf86Screens[i]);
     for (i = 0; i < xf86NumGPUScreens; i++)
         xf86GPUScreens[i]->LeaveVT(xf86GPUScreens[i]);
+
+    if (systemd_logind_controls_session()) {
+        systemd_logind_drop_master();
+    }
 
     if (!xf86VTSwitchAway())
         goto switch_failed;
@@ -535,7 +543,7 @@ addInputHandler(int fd, InputHandlerProc proc, void *data)
     if (fd < 0 || !proc)
         return NULL;
 
-    ih = calloc(sizeof(*ih), 1);
+    ih = calloc(1, sizeof(*ih));
     if (!ih)
         return NULL;
 

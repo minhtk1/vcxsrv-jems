@@ -56,16 +56,13 @@ winAllocatePrivates(ScreenPtr pScreen)
     }
 
     /* Allocate memory for the screen private structure */
-    pScreenPriv = malloc(sizeof(winPrivScreenRec));
+    pScreenPriv = calloc(1, sizeof(winPrivScreenRec));
     if (!pScreenPriv) {
         ErrorF("winAllocateScreenPrivates - malloc () failed\n");
         return FALSE;
     }
 
-    /* Initialize the memory of the private structure */
-    ZeroMemory(pScreenPriv, sizeof(winPrivScreenRec));
-
-    /* Intialize private structure members */
+    /* Initialize private structure members */
     pScreenPriv->fActive = TRUE;
 
     /* Register our screen private */
@@ -137,14 +134,11 @@ winAllocateCmapPrivates(ColormapPtr pCmap)
     }
 
     /* Allocate memory for our private structure */
-    pCmapPriv = malloc(sizeof(winPrivCmapRec));
+    pCmapPriv = calloc(1, sizeof(winPrivCmapRec));
     if (!pCmapPriv) {
         ErrorF("winAllocateCmapPrivates - malloc () failed\n");
         return FALSE;
     }
-
-    /* Initialize the memory of the private structure */
-    ZeroMemory(pCmapPriv, sizeof(winPrivCmapRec));
 
     /* Register our colourmap private */
     if (!dixRegisterPrivateKey(g_iCmapPrivateKey, PRIVATE_COLORMAP, 0)) {

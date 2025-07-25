@@ -29,16 +29,29 @@
 
 #include <X11/X.h>
 
-#include "compiler.h"
+#include "os/cmdline.h"
 
+#include "compiler.h"
 #include "xf86.h"
 #include "xf86Priv.h"
+#include "xf86_os_support.h"
 #include "xf86_OSlib.h"
+#include "xf86_OSproc.h"
 
 #include <sys/utsname.h>
 #include <sys/ioctl.h>
 #include <stdlib.h>
 #include <errno.h>
+
+#include "os/osdep.h"
+
+#ifndef CONSOLE_X_MODE_ON
+#define CONSOLE_X_MODE_ON _IO('t',121)
+#endif
+
+#ifndef CONSOLE_X_MODE_OFF
+#define CONSOLE_X_MODE_OFF _IO('t',122)
+#endif
 
 static Bool KeepTty = FALSE;
 
@@ -86,7 +99,7 @@ static int initialVT = -1;
 #define CHECK_DRIVER_MSG \
   "Check your kernel's console driver configuration and /dev entries"
 
-static char *supported_drivers[] = {
+static const char *supported_drivers[] = {
 #ifdef PCCONS_SUPPORT
     "pccons (with X support)",
 #endif
@@ -102,9 +115,9 @@ static char *supported_drivers[] = {
 };
 
 /*
- * Functions to probe for the existance of a supported console driver.
+ * Functions to probe for the existence of a supported console driver.
  * Any function returns either a valid file descriptor (driver probed
- * succesfully), -1 (driver not found), or uses FatalError() if the
+ * successfully), -1 (driver not found), or uses FatalError() if the
  * driver was found but proved to not support the required mode to run
  * an X server.
  */
@@ -131,7 +144,7 @@ static int xf86OpenWScons(void);
  * The sequence of the driver probes is important; start with the
  * driver that is best distinguishable, and end with the most generic
  * driver.  (Otherwise, pcvt would also probe as syscons, and either
- * pcvt or syscons might succesfully probe as pccons.)
+ * pcvt or syscons might successfully probe as pccons.)
  */
 static xf86ConsOpen_t xf86ConsTab[] = {
 #ifdef PCVT_SUPPORT
@@ -150,7 +163,7 @@ static xf86ConsOpen_t xf86ConsTab[] = {
 };
 
 void
-xf86OpenConsole()
+xf86OpenConsole(void)
 {
     int i, fd = -1;
     xf86ConsOpen_t *driver;
@@ -217,9 +230,9 @@ xf86OpenConsole()
              * /dev/console
              */
             if ((devConsoleFd = open("/dev/console", O_WRONLY, 0)) < 0) {
-                xf86Msg(X_WARNING,
-                        "xf86OpenConsole: couldn't open /dev/console (%s)\n",
-                        strerror(errno));
+                LogMessageVerb(X_WARNING, 1,
+                               "xf86OpenConsole: couldn't open /dev/console (%s)\n",
+                               strerror(errno));
             }
             break;
 #endif
@@ -246,12 +259,14 @@ xf86OpenConsole()
             if (initialVT != 1) {
 
                 if (ioctl(xf86Info.consoleFd, VT_ACTIVATE, 1) != 0) {
-                    xf86Msg(X_WARNING, "xf86OpenConsole: VT_ACTIVATE failed\n");
+                    LogMessageVerb(X_WARNING, 1, "xf86OpenConsole: VT_ACTIVATE failed\n");
                 }
                 sleep(1);
             }
 #endif
+#if defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
  acquire_vt:
+#endif
             if (!xf86Info.ShareVTs) {
                 /*
                  * now get the VT
@@ -259,14 +274,14 @@ xf86OpenConsole()
                 SYSCALL(result =
                         ioctl(xf86Info.consoleFd, VT_ACTIVATE, xf86Info.vtno));
                 if (result != 0) {
-                    xf86Msg(X_WARNING, "xf86OpenConsole: VT_ACTIVATE failed\n");
+                    LogMessageVerb(X_WARNING, 1, "xf86OpenConsole: VT_ACTIVATE failed\n");
                 }
                 SYSCALL(result =
                         ioctl(xf86Info.consoleFd, VT_WAITACTIVE,
                               xf86Info.vtno));
                 if (result != 0) {
-                    xf86Msg(X_WARNING,
-                            "xf86OpenConsole: VT_WAITACTIVE failed\n");
+                    LogMessageVerb(X_WARNING, 1,
+                                   "xf86OpenConsole: VT_WAITACTIVE failed\n");
                 }
 
                 OsSignal(SIGUSR1, xf86VTRequest);
@@ -303,10 +318,10 @@ xf86OpenConsole()
     else {
         /* serverGeneration != 1 */
 #if defined (SYSCONS_SUPPORT) || defined (PCVT_SUPPORT)
-        if (!xf86Info.ShareVTs &&
+        if (!xf86Info.ShareVTs && xf86Info.autoVTSwitch &&
             (xf86Info.consType == SYSCONS || xf86Info.consType == PCVT)) {
             if (ioctl(xf86Info.consoleFd, VT_ACTIVATE, xf86Info.vtno) != 0) {
-                xf86Msg(X_WARNING, "xf86OpenConsole: VT_ACTIVATE failed\n");
+                LogMessageVerb(X_WARNING, 1, "xf86OpenConsole: VT_ACTIVATE failed\n");
             }
         }
 #endif                          /* SYSCONS_SUPPORT || PCVT_SUPPORT */
@@ -317,7 +332,7 @@ xf86OpenConsole()
 #ifdef PCCONS_SUPPORT
 
 static int
-xf86OpenPccons()
+xf86OpenPccons(void)
 {
     int fd = -1;
 
@@ -332,7 +347,7 @@ xf86OpenPccons()
                        CHECK_DRIVER_MSG);
         }
         xf86Info.consType = PCCONS;
-        xf86Msg(X_PROBED, "Using pccons driver with X support\n");
+        LogMessageVerb(X_PROBED, 1, "Using pccons driver with X support\n");
     }
     return fd;
 }
@@ -342,7 +357,7 @@ xf86OpenPccons()
 #ifdef SYSCONS_SUPPORT
 
 static int
-xf86OpenSyscons()
+xf86OpenSyscons(void)
 {
     int fd = -1;
     vtmode_t vtmode;
@@ -424,7 +439,7 @@ xf86OpenSyscons()
                 FatalError("xf86OpenSyscons: VT_GETMODE failed");
             }
             xf86Info.consType = SYSCONS;
-            xf86Msg(X_PROBED, "Using syscons driver with X support");
+            LogMessageVerb(X_PROBED, 1, "Using syscons driver with X support");
             if (syscons_version >= 0x100) {
                 xf86ErrorF(" (version %ld.%ld)\n", syscons_version >> 8,
                            syscons_version & 0xFF);
@@ -432,7 +447,7 @@ xf86OpenSyscons()
             else {
                 xf86ErrorF(" (version 0.x)\n");
             }
-            xf86Msg(from, "using VT number %d\n\n", xf86Info.vtno);
+            LogMessageVerb(from, 1, "using VT number %d\n\n", xf86Info.vtno);
         }
         else {
             /* VT_GETMODE failed, probably not syscons */
@@ -448,13 +463,16 @@ xf86OpenSyscons()
 #ifdef PCVT_SUPPORT
 
 static int
-xf86OpenPcvt()
+xf86OpenPcvt(void)
 {
     /* This looks much like syscons, since pcvt is API compatible */
     int fd = -1;
     vtmode_t vtmode;
-    char vtname[12], *vtprefix;
+    char vtname[12];
+    const char *vtprefix;
+#ifdef __NetBSD__
     struct pcvtid pcvt_version;
+#endif
 
 #ifndef __OpenBSD__
     vtprefix = "/dev/ttyv";
@@ -470,7 +488,9 @@ xf86OpenPcvt()
     }
 #endif
     if (fd >= 0) {
+#ifdef __NetBSD__
         if (ioctl(fd, VGAPCVTID, &pcvt_version) >= 0) {
+#endif
             if (ioctl(fd, VT_GETMODE, &vtmode) < 0) {
                 FatalError("%s: VT_GETMODE failed\n%s%s\n%s",
                            "xf86OpenPcvt",
@@ -521,20 +541,32 @@ xf86OpenPcvt()
             }
             xf86Info.consType = PCVT;
 #ifdef WSCONS_SUPPORT
-            xf86Msg(X_PROBED,
-                    "Using wscons driver on %s in pcvt compatibility mode "
-                    "(version %d.%d)\n", vtname,
-                    pcvt_version.rmajor, pcvt_version.rminor);
+#ifdef __NetBSD__
+            LogMessageVerb(X_PROBED, 1,
+                           "Using wscons driver on %s in pcvt compatibility mode "
+                           "(version %d.%d)\n", vtname,
+                           pcvt_version.rmajor, pcvt_version.rminor);
 #else
-            xf86Msg(X_PROBED, "Using pcvt driver (version %d.%d)\n",
-                    pcvt_version.rmajor, pcvt_version.rminor);
+            LogMessageVerb(X_PROBED, 1,
+                           "Using wscons driver on %s in pcvt compatibility mode ",
+                           vtname);
 #endif
+#else
+# ifdef __NetBSD__
+            LogMessageVerb(X_PROBED, 1, "Using pcvt driver (version %d.%d)\n",
+                           pcvt_version.rmajor, pcvt_version.rminor);
+# else
+            LogMessageVerb(X_PROBED, 1, "Using pcvt driver\n");
+# endif
+#endif
+#ifdef __NetBSD__
         }
         else {
             /* Not pcvt */
             close(fd);
             fd = -1;
         }
+#endif
     }
     return fd;
 }
@@ -544,7 +576,7 @@ xf86OpenPcvt()
 #ifdef WSCONS_SUPPORT
 
 static int
-xf86OpenWScons()
+xf86OpenWScons(void)
 {
     int fd = -1;
     int mode = WSDISPLAYIO_MODE_MAPPED;
@@ -567,7 +599,7 @@ xf86OpenWScons()
                        "xf86OpenConsole", strerror(errno), CHECK_DRIVER_MSG);
         }
         xf86Info.consType = WSCONS;
-        xf86Msg(X_PROBED, "Using wscons driver\n");
+        LogMessageVerb(X_PROBED, 1, "Using wscons driver\n");
     }
     return fd;
 }
@@ -575,7 +607,7 @@ xf86OpenWScons()
 #endif                          /* WSCONS_SUPPORT */
 
 void
-xf86CloseConsole()
+xf86CloseConsole(void)
 {
 #if defined(SYSCONS_SUPPORT) || defined(PCVT_SUPPORT)
     struct vt_mode VT;
@@ -604,7 +636,7 @@ xf86CloseConsole()
                            strerror(errno));
         }
 #endif
-        if (initialVT != -1)
+        if (xf86Info.autoVTSwitch && initialVT != -1)
             ioctl(xf86Info.consoleFd, VT_ACTIVATE, initialVT);
         break;
 #endif                          /* SYSCONS_SUPPORT || PCVT_SUPPORT */
@@ -652,7 +684,7 @@ xf86ProcessArgument(int argc, char *argv[], int i)
 }
 
 void
-xf86UseMsg()
+xf86UseMsg(void)
 {
 #if defined (SYSCONS_SUPPORT) || defined (PCVT_SUPPORT)
     ErrorF("vtXX                   use the specified VT number (1-12)\n");

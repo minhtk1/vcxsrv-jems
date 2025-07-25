@@ -11,17 +11,15 @@ the suitability of this software for any purpose.  It is provided "as
 is" without express or implied warranty.
 
 */
-
-#ifdef HAVE_XNEST_CONFIG_H
-#include <xnest-config.h>
-#endif
+#include <dix-config.h>
 
 #include <X11/X.h>
+#include <X11/Xdefs.h>
 #include <X11/Xproto.h>
+
 #include "screenint.h"
 #include "input.h"
 #include "misc.h"
-#include "cursor.h"
 #include "cursorstr.h"
 #include "scrnintstr.h"
 #include "servermd.h"
@@ -98,7 +96,7 @@ xnestRealizeCursor(DeviceIntPtr pDev, ScreenPtr pScreen, CursorPtr pCursor)
     bg_color.green = pCursor->backGreen;
     bg_color.blue = pCursor->backBlue;
 
-    xnestSetCursorPriv(pCursor, pScreen, malloc(sizeof(xnestPrivCursor)));
+    xnestSetCursorPriv(pCursor, pScreen, calloc(1, sizeof(xnestPrivCursor)));
     xnestCursor(pCursor, pScreen) =
         XCreatePixmapCursor(xnestDisplay, source, mask, &fg_color, &bg_color,
                             pCursor->bits->xhot, pCursor->bits->yhot);
@@ -106,7 +104,7 @@ xnestRealizeCursor(DeviceIntPtr pDev, ScreenPtr pScreen, CursorPtr pCursor)
     XFreePixmap(xnestDisplay, source);
     XFreePixmap(xnestDisplay, mask);
 
-    return True;
+    return TRUE;
 }
 
 Bool
@@ -114,7 +112,7 @@ xnestUnrealizeCursor(DeviceIntPtr pDev, ScreenPtr pScreen, CursorPtr pCursor)
 {
     XFreeCursor(xnestDisplay, xnestCursor(pCursor, pScreen));
     free(xnestGetCursorPriv(pCursor, pScreen));
-    return True;
+    return TRUE;
 }
 
 void
@@ -156,7 +154,7 @@ xnestDeviceCursorInitialize(DeviceIntPtr pDev, ScreenPtr pScreen)
     xnestCursorFuncPtr pScreenPriv;
 
     pScreenPriv = (xnestCursorFuncPtr)
-        dixLookupPrivate(&pScreen->devPrivates, xnestCursorScreenKey);
+        dixLookupPrivate(&pScreen->devPrivates, &xnestScreenCursorFuncKeyRec);
 
     return pScreenPriv->spriteFuncs->DeviceCursorInitialize(pDev, pScreen);
 }
@@ -167,7 +165,7 @@ xnestDeviceCursorCleanup(DeviceIntPtr pDev, ScreenPtr pScreen)
     xnestCursorFuncPtr pScreenPriv;
 
     pScreenPriv = (xnestCursorFuncPtr)
-        dixLookupPrivate(&pScreen->devPrivates, xnestCursorScreenKey);
+        dixLookupPrivate(&pScreen->devPrivates, &xnestScreenCursorFuncKeyRec);
 
     pScreenPriv->spriteFuncs->DeviceCursorCleanup(pDev, pScreen);
 }

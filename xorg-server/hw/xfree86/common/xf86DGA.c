@@ -41,13 +41,22 @@
 #include <xorg-config.h>
 #endif
 
+#include <string.h>
 #include <X11/X.h>
 #include <X11/Xproto.h>
+#include <X11/extensions/xf86dgaproto.h>
+
+#include "dix/colormap_priv.h"
+#include "dix/dix_priv.h"
+#include "dix/eventconvert.h"
+#include "dix/exevents_priv.h"
+#include "mi/mi_priv.h"
+
 #include "xf86.h"
 #include "xf86str.h"
 #include "xf86Priv.h"
 #include "dgaproc.h"
-#include <X11/extensions/xf86dgaproto.h>
+#include "dgaproc_priv.h"
 #include "colormapst.h"
 #include "pixmapstr.h"
 #include "inputstr.h"
@@ -57,13 +66,8 @@
 #include "xkbsrv.h"
 #include "xf86Xinput.h"
 #include "exglobals.h"
-#include "exevents.h"
 #include "eventstr.h"
-#include "eventconvert.h"
 #include "xf86Extensions.h"
-
-#include "mi.h"
-
 #include "misc.h"
 #include "dixstruct.h"
 #include "dixevents.h"
@@ -73,8 +77,6 @@
 #include "swaprep.h"
 #include "dgaproc.h"
 #include "protocol-versions.h"
-
-#include <string.h>
 
 #define DGA_PROTOCOL_OLD_SUPPORT 1
 
@@ -174,11 +176,11 @@ DGAInit(ScreenPtr pScreen, DGAFunctionPtr funcs, DGAModePtr modes, int num)
     for (i = 0; i < num; i++)
         modes[i].num = i + 1;
 
-#ifdef PANORAMIX
+#ifdef XINERAMA
     if (!noPanoramiXExtension)
         for (i = 0; i < num; i++)
             modes[i].flags &= ~DGA_PIXMAP_AVAILABLE;
-#endif
+#endif /* XINERAMA */
 
     return TRUE;
 }
@@ -223,11 +225,11 @@ DGAReInitModes(ScreenPtr pScreen, DGAModePtr modes, int num)
     for (i = 0; i < num; i++)
         modes[i].num = i + 1;
 
-#ifdef PANORAMIX
+#ifdef XINERAMA
     if (!noPanoramiXExtension)
         for (i = 0; i < num; i++)
             modes[i].flags &= ~DGA_PIXMAP_AVAILABLE;
-#endif
+#endif /* XINERAMA */
 
     return TRUE;
 }
@@ -366,9 +368,9 @@ xf86SetDGAMode(ScrnInfoPtr pScrn, int num, DGADevicePtr devRet)
 
             if (oldPix) {
                 if (oldPix->drawable.id)
-                    FreeResource(oldPix->drawable.id, RT_NONE);
+                    FreeResource(oldPix->drawable.id, X11_RESTYPE_NONE);
                 else
-                    (*pScreen->DestroyPixmap) (oldPix);
+                    dixDestroyPixmap(oldPix, 0);
             }
             free(pScreenPriv->current);
             pScreenPriv->current = NULL;
@@ -428,9 +430,9 @@ xf86SetDGAMode(ScrnInfoPtr pScrn, int num, DGADevicePtr devRet)
 
         if (oldPix) {
             if (oldPix->drawable.id)
-                FreeResource(oldPix->drawable.id, RT_NONE);
+                FreeResource(oldPix->drawable.id, X11_RESTYPE_NONE);
             else
-                (*pScreen->DestroyPixmap) (oldPix);
+                dixDestroyPixmap(oldPix, 0);
         }
         free(pScreenPriv->current);
         pScreenPriv->current = NULL;
@@ -1456,7 +1458,7 @@ ProcXDGASetMode(ClientPtr client)
     DGA_SETCLIENT(stuff->screen, client);
 
     if (pPix) {
-        if (AddResource(stuff->pid, RT_PIXMAP, (void *) (pPix))) {
+        if (AddResource(stuff->pid, X11_RESTYPE_PIXMAP, (void *) (pPix))) {
             pPix->drawable.id = (int) stuff->pid;
             rep.flags = DGA_PIXMAP_AVAILABLE;
         }
@@ -1534,7 +1536,7 @@ ProcXDGAInstallColormap(ClientPtr client)
     if (DGA_GETCLIENT(stuff->screen) != client)
         return DGAErrorBase + XF86DGADirectNotActivated;
 
-    rc = dixLookupResourceByType((void **) &cmap, stuff->cmap, RT_COLORMAP,
+    rc = dixLookupResourceByType((void **) &cmap, stuff->cmap, X11_RESTYPE_COLORMAP,
                                  client, DixInstallAccess);
     if (rc != Success)
         return rc;
@@ -1970,7 +1972,7 @@ ProcXF86DGAInstallColormap(ClientPtr client)
     if (!DGAActive(stuff->screen))
         return DGAErrorBase + XF86DGADirectNotActivated;
 
-    rc = dixLookupResourceByType((void **) &pcmp, stuff->id, RT_COLORMAP,
+    rc = dixLookupResourceByType((void **) &pcmp, stuff->id, X11_RESTYPE_COLORMAP,
                                  client, DixInstallAccess);
     if (rc == Success) {
         DGAInstallCmap(pcmp);

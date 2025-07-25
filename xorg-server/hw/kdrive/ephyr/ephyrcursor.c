@@ -24,15 +24,17 @@
  *      Adam Jackson <ajax@redhat.com>
  */
 
-#ifdef HAVE_DIX_CONFIG_H
 #include <dix-config.h>
-#endif
+
+#include <xcb/render.h>
+#include <xcb/xcb_renderutil.h>
+
+#include "mi/mipointer_priv.h"
+
 #include "ephyr.h"
 #include "ephyrlog.h"
 #include "hostx.h"
 #include "cursorstr.h"
-#include <xcb/render.h>
-#include <xcb/xcb_renderutil.h>
 
 static DevPrivateKeyRec ephyrCursorPrivateKey;
 
@@ -246,7 +248,7 @@ miPointerSpriteFuncRec EphyrPointerSpriteFuncs = {
 Bool
 ephyrCursorInit(ScreenPtr screen)
 {
-    if (!dixRegisterPrivateKey(&ephyrCursorPrivateKey, PRIVATE_CURSOR_BITS,
+    if (!dixRegisterPrivateKey(&ephyrCursorPrivateKey, PRIVATE_CURSOR,
                                sizeof(ephyrCursorRec)))
         return FALSE;
 

@@ -32,7 +32,7 @@
 #include "xf86.h"
 #include "xf86_OSproc.h"
 #define _PARSE_EDID_
-#include "xf86DDC.h"
+#include "xf86DDC_priv.h"
 #include <string.h>
 
 static void get_vendor_section(Uchar *, struct vendor *);
@@ -89,8 +89,8 @@ handle_edid_quirks(xf86MonPtr m)
 
         xf86ForEachDetailedBlock(m, find_max_detailed_clock, &clock);
         if (clock && (ranges->max_clock * 1e6 < clock)) {
-            xf86Msg(X_WARNING, "EDID timing clock %.2f exceeds claimed max "
-                    "%dMHz, fixing\n", clock / 1.0e6, ranges->max_clock);
+            LogMessageVerb(X_WARNING, 1, "EDID timing clock %.2f exceeds claimed max "
+                           "%dMHz, fixing\n", clock / 1.0e6, ranges->max_clock);
             ranges->max_clock = (clock + 999999) / 1e6;
         }
     }
@@ -159,8 +159,8 @@ encode_aspect_ratio(xf86MonPtr m)
             m->features.vsize = (p.real_vsize + 5) / 10;
         }
 
-        xf86Msg(X_INFO, "Quirked EDID physical size to %dx%d cm\n",
-                m->features.hsize, m->features.vsize);
+        LogMessageVerb(X_INFO, 1, "Quirked EDID physical size to %dx%d cm\n",
+                       m->features.hsize, m->features.vsize);
     }
 }
 
@@ -171,7 +171,7 @@ xf86InterpretEDID(int scrnIndex, Uchar * block)
 
     if (!block)
         return NULL;
-    if (!(m = xnfcalloc(sizeof(xf86Monitor), 1)))
+    if (!(m = XNFcallocarray(1, sizeof(xf86Monitor))))
         return NULL;
     m->scrnIndex = scrnIndex;
     m->rawData = block;
@@ -672,6 +672,9 @@ get_monitor_ranges(Uchar * c, struct monitor_ranges *r)
     r->max_clock = 0;
     if (MAX_CLOCK != 0xff)      /* is specified? */
         r->max_clock = MAX_CLOCK * 10 + 5;
+
+    r->display_range_timing_flags = c[10];
+
     if (HAVE_2ND_GTF) {
         r->gtf_2nd_f = F_2ND_GTF;
         r->gtf_2nd_c = C_2ND_GTF;
@@ -749,6 +752,30 @@ validate_version(int scrnIndex, struct edid_version *r)
                    r->revision, MAX_EDID_MINOR);
 
     return TRUE;
+}
+
+Bool
+gtf_supported(xf86MonPtr mon)
+{
+    int i;
+
+    if (!mon)
+        return FALSE;
+
+    if ((mon->ver.version == 1) && (mon->ver.revision < 4)) {
+        if (mon->features.msc & 0x1)
+	    return TRUE;
+    } else {
+        for (i = 0; i < DET_TIMINGS; i++) {
+            struct detailed_monitor_section *det_timing_des = &(mon->det_mon[i]);
+            if (det_timing_des && (det_timing_des->type == DS_RANGES) && (mon->features.msc & 0x1) &&
+                (det_timing_des->section.ranges.display_range_timing_flags == DR_DEFAULT_GTF
+		|| det_timing_des->section.ranges.display_range_timing_flags == DR_SECONDARY_GTF))
+		    return TRUE;
+	}
+    }
+
+    return FALSE;
 }
 
 /*

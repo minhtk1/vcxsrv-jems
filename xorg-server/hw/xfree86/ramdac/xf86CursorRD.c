@@ -3,6 +3,9 @@
 #include <xorg-config.h>
 #endif
 
+#include "dix/cursor_priv.h"
+#include "mi/mipointer_priv.h"
+
 #include "xf86.h"
 #include "xf86CursorPriv.h"
 #include "colormapst.h"
@@ -18,6 +21,7 @@
 #include "inputstr.h"
 
 DevPrivateKeyRec xf86CursorScreenKeyRec;
+DevScreenPrivateKeyRec xf86ScreenCursorBitsKeyRec;
 
 /* sprite functions */
 
@@ -66,6 +70,10 @@ xf86InitCursor(ScreenPtr pScreen, xf86CursorInfoPtr infoPtr)
 
     ScreenPriv = calloc(1, sizeof(xf86CursorScreenRec));
     if (!ScreenPriv)
+        return FALSE;
+
+    if (!dixRegisterScreenPrivateKey(&xf86ScreenCursorBitsKeyRec, pScreen,
+                                     PRIVATE_CURSOR, 0))
         return FALSE;
 
     dixSetPrivate(&pScreen->devPrivates, xf86CursorScreenKey, ScreenPriv);
@@ -212,7 +220,7 @@ xf86CursorEnableDisableFBAccess(ScrnInfoPtr pScrn, Bool enable)
                                                xf86CursorScreenKey);
 
     if (!enable && ScreenPriv->CurrentCursor != NullCursor) {
-        CursorPtr currentCursor = ScreenPriv->CurrentCursor;
+        CursorPtr currentCursor = RefCursor(ScreenPriv->CurrentCursor);
 
         xf86CursorSetCursor(pDev, pScreen, NullCursor, ScreenPriv->x,
                             ScreenPriv->y);
@@ -231,6 +239,7 @@ xf86CursorEnableDisableFBAccess(ScrnInfoPtr pScrn, Bool enable)
          */
         xf86CursorSetCursor(pDev, pScreen, ScreenPriv->SavedCursor,
                             ScreenPriv->x, ScreenPriv->y);
+        UnrefCursor(ScreenPriv->SavedCursor);
         ScreenPriv->SavedCursor = NULL;
     }
 }
@@ -272,8 +281,8 @@ xf86CursorRealizeCursor(DeviceIntPtr pDev, ScreenPtr pScreen, CursorPtr pCurs)
                                                xf86CursorScreenKey);
 
     if (CursorRefCount(pCurs) <= 1)
-        dixSetScreenPrivate(&pCurs->devPrivates, CursorScreenKey, pScreen,
-                            NULL);
+        dixSetScreenPrivate(&pCurs->devPrivates, &xf86ScreenCursorBitsKeyRec,
+                            pScreen, NULL);
 
     return (*ScreenPriv->spriteFuncs->RealizeCursor) (pDev, pScreen, pCurs);
 }
@@ -287,9 +296,9 @@ xf86CursorUnrealizeCursor(DeviceIntPtr pDev, ScreenPtr pScreen, CursorPtr pCurs)
 
     if (CursorRefCount(pCurs) <= 1) {
         free(dixLookupScreenPrivate
-             (&pCurs->devPrivates, CursorScreenKey, pScreen));
-        dixSetScreenPrivate(&pCurs->devPrivates, CursorScreenKey, pScreen,
-                            NULL);
+             (&pCurs->devPrivates, &xf86ScreenCursorBitsKeyRec, pScreen));
+        dixSetScreenPrivate(&pCurs->devPrivates, &xf86ScreenCursorBitsKeyRec,
+                            pScreen, NULL);
     }
 
     return (*ScreenPriv->spriteFuncs->UnrealizeCursor) (pDev, pScreen, pCurs);
@@ -333,6 +342,9 @@ xf86CursorSetCursor(DeviceIntPtr pDev, ScreenPtr pScreen, CursorPtr pCurs,
         ScreenPriv->HotY = cursor->bits->yhot;
 
         if (!infoPtr->pScrn->vtSema) {
+            cursor = RefCursor(cursor);
+            if (ScreenPriv->SavedCursor)
+                FreeCursor(ScreenPriv->SavedCursor, None);
             ScreenPriv->SavedCursor = cursor;
             return;
         }
@@ -460,8 +472,8 @@ xf86CurrentCursor(ScreenPtr pScreen)
 {
     xf86CursorScreenPtr ScreenPriv;
 
-    if (pScreen->is_output_slave)
-        pScreen = pScreen->current_master;
+    if (pScreen->is_output_secondary)
+        pScreen = pScreen->current_primary;
 
     ScreenPriv = dixLookupPrivate(&pScreen->devPrivates, xf86CursorScreenKey);
     return ScreenPriv->CurrentCursor;

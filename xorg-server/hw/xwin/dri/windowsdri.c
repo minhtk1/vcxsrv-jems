@@ -21,9 +21,7 @@
  * IN THE SOFTWARE.
  */
 
-#ifdef HAVE_DIX_CONFIG_H
 #include <dix-config.h>
-#endif
 
 #include <X11/X.h>
 #include <X11/Xproto.h>
@@ -191,7 +189,6 @@ static int
 SProcWindowsDRIQueryVersion(ClientPtr client)
 {
     REQUEST(xWindowsDRIQueryVersionReq);
-    swaps(&stuff->length);
     return ProcWindowsDRIQueryVersion(client);
 }
 
@@ -199,7 +196,6 @@ static int
 SProcWindowsDRIQueryDirectRenderingCapable(ClientPtr client)
 {
     REQUEST(xWindowsDRIQueryDirectRenderingCapableReq);
-    swaps(&stuff->length);
     swapl(&stuff->screen);
     return ProcWindowsDRIQueryDirectRenderingCapable(client);
 }
@@ -208,7 +204,6 @@ static int
 SProcWindowsDRIQueryDrawable(ClientPtr client)
 {
     REQUEST(xWindowsDRIQueryDrawableReq);
-    swaps(&stuff->length);
     swapl(&stuff->screen);
     swapl(&stuff->drawable);
     return ProcWindowsDRIQueryDrawable(client);
@@ -218,7 +213,6 @@ static int
 SProcWindowsDRIFBConfigToPixelFormat(ClientPtr client)
 {
     REQUEST(xWindowsDRIFBConfigToPixelFormatReq);
-    swaps(&stuff->length);
     swapl(&stuff->screen);
     swapl(&stuff->fbConfigID);
     return ProcWindowsDRIFBConfigToPixelFormat(client);

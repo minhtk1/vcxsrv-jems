@@ -11,13 +11,12 @@ the suitability of this software for any purpose.  It is provided "as
 is" without express or implied warranty.
 
 */
-
-#ifdef HAVE_XNEST_CONFIG_H
-#include <xnest-config.h>
-#endif
+#include <dix-config.h>
 
 #include <X11/X.h>
+#include <X11/Xdefs.h>
 #include <X11/Xproto.h>
+
 #include "gcstruct.h"
 #include "windowstr.h"
 #include "pixmapstr.h"
@@ -82,7 +81,7 @@ xnestCreateGC(GCPtr pGC)
                                      xnestDefaultDrawables[pGC->depth],
                                      0L, NULL);
 
-    return True;
+    return TRUE;
 }
 
 void
@@ -225,7 +224,7 @@ xnestChangeClip(GCPtr pGC, int type, void *pValue, int nRects)
          * current pixmap contents.
          */
         pGC->clientClip = (*pGC->pScreen->BitmapToRegion) ((PixmapPtr) pValue);
-        (*pGC->pScreen->DestroyPixmap) ((PixmapPtr) pValue);
+        dixDestroyPixmap((PixmapPtr) pValue, 0);
         pValue = pGC->clientClip;
         break;
 

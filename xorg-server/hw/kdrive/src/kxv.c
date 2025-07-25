@@ -35,11 +35,14 @@ of the copyright holder.
 
 */
 
-#ifdef HAVE_DIX_CONFIG_H
 #include <dix-config.h>
-#endif
-#include "kdrive.h"
 
+#include <X11/extensions/Xv.h>
+#include <X11/extensions/Xvproto.h>
+
+#include "Xext/xvdix_priv.h"
+
+#include "kdrive.h"
 #include "scrnintstr.h"
 #include "regionstr.h"
 #include "windowstr.h"
@@ -49,10 +52,6 @@ of the copyright holder.
 #include "resource.h"
 #include "gcstruct.h"
 #include "dixstruct.h"
-
-#include <X11/extensions/Xv.h>
-#include <X11/extensions/Xvproto.h>
-
 #include "kxv.h"
 #include "fourcc.h"
 
@@ -423,7 +422,7 @@ KdXVInitAdaptors(ScreenPtr pScreen, KdVideoAdaptorPtr infoPtr, int number)
    client clip from the GC when the video is initialized.  We then
    use KdXVUpdateCompositeClip to calculate the new composite clip
    when we need it.  This is different from what DEC did.  They saved
-   the GC and used it's clip list when they needed to reclip the window,
+   the GC and used its clip list when they needed to reclip the window,
    even if the client clip was different from the one the video was
    initialized with.  If the original GC was destroyed, they had to stop
    the video.  I like the new method better (MArk).

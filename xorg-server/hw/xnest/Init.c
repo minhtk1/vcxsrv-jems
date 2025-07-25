@@ -11,23 +11,28 @@ the suitability of this software for any purpose.  It is provided "as
 is" without express or implied warranty.
 
 */
+#include <dix-config.h>
 
-#ifdef HAVE_XNEST_CONFIG_H
-#include <xnest-config.h>
-#endif
-
+#include <stddef.h>
 #include <X11/X.h>
+#include <X11/Xdefs.h>
 #include <X11/Xproto.h>
+#include <X11/fonts/fontstruct.h>
+#include <X11/fonts/libxfont2.h>
+
+#include "dix/screenint_priv.h"
+#include "mi/mi_priv.h"
+#include "os/ddx_priv.h"
+#include "os/osdep.h"
+
 #include "screenint.h"
 #include "input.h"
 #include "misc.h"
 #include "scrnintstr.h"
 #include "windowstr.h"
 #include "servermd.h"
-#include "mi.h"
-#include <X11/fonts/fontstruct.h>
 #include "dixfontstr.h"
-
+#include "extinit_priv.h"
 #include "Xnest.h"
 
 #include "Display.h"
@@ -45,13 +50,17 @@ is" without express or implied warranty.
 #include "dpmsproc.h"
 #endif
 
-Bool xnestDoFullGeneration = True;
+Bool xnestDoFullGeneration = TRUE;
 
+/* Xnest doesn't support GLX yet, so we don't link it, but still have
+   satisfy DIX's symbol requirements */
 #ifdef GLXEXT
 void
 GlxExtensionInit(void)
 {
 }
+
+Bool noGlxExtension = FALSE;
 #endif
 
 void
@@ -129,7 +138,7 @@ CloseInput(void)
 void
 ddxGiveUp(enum ExitCode error)
 {
-    xnestDoFullGeneration = True;
+    xnestDoFullGeneration = TRUE;
     xnestCloseDisplay();
 }
 

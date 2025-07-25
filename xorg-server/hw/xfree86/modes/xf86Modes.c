@@ -29,6 +29,7 @@
 #include <xorg-config.h>
 #endif
 
+#include <libxcvt/libxcvt.h>
 #include "xf86Modes.h"
 #include "xf86Priv.h"
 
@@ -211,7 +212,7 @@ xf86DuplicateMode(const DisplayModeRec * pMode)
 {
     DisplayModePtr pNew;
 
-    pNew = xnfalloc(sizeof(DisplayModeRec));
+    pNew = XNFalloc(sizeof(DisplayModeRec));
     *pNew = *pMode;
     pNew->next = NULL;
     pNew->prev = NULL;
@@ -219,7 +220,7 @@ xf86DuplicateMode(const DisplayModeRec * pMode)
     if (pMode->name == NULL)
         xf86SetModeDefaultName(pNew);
     else
-        pNew->name = xnfstrdup(pMode->name);
+        pNew->name = XNFstrdup(pMode->name);
 
     return pNew;
 }
@@ -287,7 +288,7 @@ xf86ModesEqual(const DisplayModeRec * pMode1, const DisplayModeRec * pMode2)
 static void
 add(char **p, const char *new)
 {
-    *p = xnfrealloc(*p, strlen(*p) + strlen(new) + 2);
+    *p = XNFrealloc(*p, strlen(*p) + strlen(new) + 2);
     strcat(*p, " ");
     strcat(*p, new);
 }
@@ -321,7 +322,7 @@ void
 xf86PrintModeline(int scrnIndex, DisplayModePtr mode)
 {
     char tmp[256];
-    char *flags = xnfcalloc(1, 1);
+    char *flags = XNFcallocarray(1, 1);
 
 #define TBITS 6
     const char tchar[TBITS + 1] = "UezdPb";
@@ -680,7 +681,7 @@ xf86GetConfigModes(XF86ConfModeLinePtr conf_mode)
         mode = calloc(1, sizeof(DisplayModeRec));
         if (!mode)
             continue;
-        mode->name = xstrdup(conf_mode->ml_identifier);
+        mode->name = Xstrdup(conf_mode->ml_identifier);
         if (!mode->name) {
             free(mode);
             continue;
@@ -791,4 +792,38 @@ xf86PruneDuplicateModes(DisplayModePtr modes)
     }
 
     return modes;
+}
+
+/*
+ * Generate a CVT standard mode from HDisplay, VDisplay and VRefresh.
+ */
+DisplayModePtr
+xf86CVTMode(int HDisplay, int VDisplay, float VRefresh, Bool Reduced,
+            Bool Interlaced)
+{
+    struct libxcvt_mode_info *libxcvt_mode_info;
+    DisplayModeRec *Mode = XNFcallocarray(1, sizeof(DisplayModeRec));
+    char *tmp;
+
+    libxcvt_mode_info =
+        libxcvt_gen_mode_info(HDisplay, VDisplay, VRefresh, Reduced, Interlaced);
+
+    XNFasprintf(&tmp, "%dx%d", HDisplay, VDisplay);
+    Mode->name = tmp;
+    
+    Mode->VDisplay   = libxcvt_mode_info->vdisplay;
+    Mode->HDisplay   = libxcvt_mode_info->hdisplay;
+    Mode->Clock      = libxcvt_mode_info->dot_clock;
+    Mode->HSyncStart = libxcvt_mode_info->hsync_start;
+    Mode->HSyncEnd   = libxcvt_mode_info->hsync_end;
+    Mode->HTotal     = libxcvt_mode_info->htotal;
+    Mode->VSyncStart = libxcvt_mode_info->vsync_start;
+    Mode->VSyncEnd   = libxcvt_mode_info->vsync_end;
+    Mode->VTotal     = libxcvt_mode_info->vtotal;
+    Mode->VRefresh   = libxcvt_mode_info->vrefresh;
+    Mode->Flags      = libxcvt_mode_info->mode_flags;
+
+    free(libxcvt_mode_info);
+
+    return Mode;
 }

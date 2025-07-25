@@ -25,25 +25,45 @@
 
 #include <xwayland-config.h>
 
+#if !defined(WIN32)
+#include <sys/resource.h>
+#endif
+
 #include <stdio.h>
+#include <errno.h>
 
 #include <X11/Xatom.h>
+#include <X11/Xfuncproto.h>
+
+#include "dix/dix_priv.h"
+#include "dix/screenint_priv.h"
+#include "os/cmdline.h"
+#include "os/client_priv.h"
+#include "os/ddx_priv.h"
+#include "os/fmt.h"
+#include "os/osdep.h"
+#include "os/xserver_poll.h"
+
 #include <selection.h>
 #include <micmap.h>
 #include <misyncshm.h>
 #include <compositeext.h>
 #include <compint.h>
 #include <glx_extinit.h>
+#include <opaque.h>
 #include <os.h>
-#include <xserver_poll.h>
 #include <propertyst.h>
+#include <version-config.h>
+#include "extinit.h"
+
+#include "os/auth.h"
 
 #include "xwayland-screen.h"
 #include "xwayland-vidmode.h"
 
 #ifdef XF86VIDMODE
 #include <X11/extensions/xf86vmproto.h>
-_X_EXPORT Bool noXFree86VidModeExtension;
+Bool noXFree86VidModeExtension;
 #endif
 
 void
@@ -84,17 +104,75 @@ void
 ddxUseMsg(void)
 {
     ErrorF("-rootless              run rootless, requires wm support\n");
+    ErrorF("-fullscreen            run fullscreen when rootful\n");
+    ErrorF("-geometry WxH          set Xwayland window size when rootful\n");
+    ErrorF("-hidpi                 adjust to output scale when rootful\n");
+    ErrorF("-host-grab             disable host keyboard shortcuts when rootful\n");
+    ErrorF("-nokeymap              ignore keymap from the Wayland compositor\n");
+    ErrorF("-output                specify which output to use for fullscreen when rootful\n");
     ErrorF("-wm fd                 create X client for wm on given fd\n");
     ErrorF("-initfd fd             add given fd as a listen socket for initialization clients\n");
     ErrorF("-listenfd fd           add given fd as a listen socket\n");
     ErrorF("-listen fd             deprecated, use \"-listenfd\" instead\n");
-    ErrorF("-eglstream             use eglstream backend for nvidia GPUs\n");
+    ErrorF("-shm                   use shared memory for passing buffers\n");
+#ifdef XWL_HAS_GLAMOR
+    ErrorF("-glamor [gl|es|off]    use given API for Glamor acceleration. Incompatible with -shm option\n");
+#endif
+    ErrorF("-verbose [n]           verbose startup messages\n");
+    ErrorF("-version               show the server version and exit\n");
+    ErrorF("-noTouchPointerEmulation  disable touch pointer emulation\n");
+    ErrorF("-force-xrandr-emulation   force non-native modes to be exposed when viewporter is not exposed by the compositor\n");
+#ifdef XWL_HAS_LIBDECOR
+    ErrorF("-decorate              add decorations to Xwayland when rootful\n");
+#endif
+#ifdef XWL_HAS_EI_PORTAL
+    ErrorF("-enable-ei-portal      use the XDG portal for input emulation\n");
+#endif
 }
 
 static int init_fd = -1;
 static int wm_fd = -1;
 static int listen_fds[5] = { -1, -1, -1, -1, -1 };
 static int listen_fd_count = 0;
+static int verbosity = 0;
+
+static void
+xwl_show_version(void)
+{
+    ErrorF("%s Xwayland %s (%d)\n", VENDOR_NAME, VENDOR_MAN_VERSION, VENDOR_RELEASE);
+    ErrorF("X Protocol Version %d, Revision %d\n", X_PROTOCOL, X_PROTOCOL_REVISION);
+#if defined(BUILDERSTRING)
+    if (strlen(BUILDERSTRING))
+        ErrorF("%s\n", BUILDERSTRING);
+#endif
+}
+
+static void
+try_raising_nofile_limit(void)
+{
+#ifdef RLIMIT_NOFILE
+    struct rlimit rlim;
+
+    /* Only fiddle with the limit if not set explicitly from the command line */
+    if (limitNoFile >= 0)
+        return;
+
+    if (getrlimit(RLIMIT_NOFILE, &rlim) < 0) {
+        ErrorF("Failed to get the current nofile limit: %s\n", strerror(errno));
+        return;
+    }
+
+    rlim.rlim_cur = rlim.rlim_max;
+
+    if (setrlimit(RLIMIT_NOFILE, &rlim) < 0) {
+        ErrorF("Failed to set the current nofile limit: %s\n", strerror(errno));
+        return;
+    }
+
+    LogMessageVerb(X_INFO, 3, "Raising the file descriptors limit to %llu\n",
+                   (long long unsigned int) rlim.rlim_max);
+#endif /* RLIMIT_NOFILE */
+}
 
 static void
 xwl_add_listen_fd(int argc, char *argv[], int i)
@@ -120,8 +198,8 @@ ddxProcessArgument(int argc, char *argv[], int i)
         if (!isdigit(*argv[i + 1]))
             return 0;
 
-        LogMessage(X_WARNING, "Option \"-listen\" for file descriptors is deprecated\n"
-                              "Please use \"-listenfd\" instead.\n");
+        LogMessageVerb(X_WARNING, 0, "Option \"-listen\" for file descriptors is deprecated\n"
+                                     "Please use \"-listenfd\" instead.\n");
 
         xwl_add_listen_fd (argc, argv, i);
         return 2;
@@ -145,7 +223,63 @@ ddxProcessArgument(int argc, char *argv[], int i)
     else if (strcmp(argv[i], "-shm") == 0) {
         return 1;
     }
-    else if (strcmp(argv[i], "-eglstream") == 0) {
+#ifdef XWL_HAS_GLAMOR
+    else if (strcmp(argv[i], "-glamor") == 0) {
+        CHECK_FOR_REQUIRED_ARGUMENTS(1);
+        /* Only check here, actual work inside xwayland-screen.c */
+        return 2;
+    }
+#endif
+    else if (strcmp(argv[i], "-verbose") == 0) {
+        if (++i < argc && argv[i]) {
+            char *end;
+            long val;
+
+            val = strtol(argv[i], &end, 0);
+            if (*end == '\0') {
+                verbosity = val;
+                LogSetParameter(XLOG_VERBOSITY, verbosity);
+                return 2;
+            }
+        }
+        LogSetParameter(XLOG_VERBOSITY, ++verbosity);
+        return 1;
+    }
+    else if (strcmp(argv[i], "-version") == 0) {
+        xwl_show_version();
+        exit(0);
+    }
+    else if (strcmp(argv[i], "-noTouchPointerEmulation") == 0) {
+        touchEmulatePointer = FALSE;
+        return 1;
+    }
+    else if (strcmp(argv[i], "-force-xrandr-emulation") == 0) {
+        return 1;
+    }
+    else if (strcmp(argv[i], "-geometry") == 0) {
+        CHECK_FOR_REQUIRED_ARGUMENTS(1);
+        return 2;
+    }
+    else if (strcmp(argv[i], "-fullscreen") == 0) {
+        return 1;
+    }
+    else if (strcmp(argv[i], "-host-grab") == 0) {
+        return 1;
+    }
+    else if (strcmp(argv[i], "-decorate") == 0) {
+        return 1;
+    }
+    else if (strcmp(argv[i], "-enable-ei-portal") == 0) {
+        return 1;
+    }
+    else if (strcmp(argv[i], "-output") == 0) {
+        CHECK_FOR_REQUIRED_ARGUMENTS(1);
+        return 2;
+    }
+    else if (strcmp(argv[i], "-nokeymap") == 0) {
+        return 1;
+    }
+    else if (strcmp(argv[i], "-hidpi") == 0) {
         return 1;
     }
 
@@ -191,19 +325,110 @@ wm_selection_callback(CallbackListPtr *p, void *data, void *arg)
     DeleteCallback(&SelectionCallback, wm_selection_callback, xwl_screen);
 }
 
-_X_NORETURN
 static void _X_ATTRIBUTE_PRINTF(1, 0)
 xwl_log_handler(const char *format, va_list args)
 {
     char msg[256];
 
     vsnprintf(msg, sizeof msg, format, args);
-    FatalError("%s", msg);
+    ErrorF("XWAYLAND: %s", msg);
 }
+
+#ifdef XWL_HAS_XWAYLAND_EXTENSION
+#include <X11/extensions/xwaylandproto.h>
+
+Bool noXwaylandExtension = FALSE;
+
+static int
+ProcXwlQueryVersion(ClientPtr client)
+{
+    xXwlQueryVersionReply reply;
+    int major, minor;
+
+    REQUEST(xXwlQueryVersionReq);
+    REQUEST_SIZE_MATCH(xXwlQueryVersionReq);
+
+    if (version_compare(stuff->majorVersion, stuff->minorVersion,
+                        XWAYLAND_EXTENSION_MAJOR,
+                        XWAYLAND_EXTENSION_MINOR) < 0) {
+        major = stuff->majorVersion;
+        minor = stuff->minorVersion;
+    } else {
+        major = XWAYLAND_EXTENSION_MAJOR;
+        minor = XWAYLAND_EXTENSION_MINOR;
+    }
+
+    reply = (xXwlQueryVersionReply) {
+        .type = X_Reply,
+        .sequenceNumber = client->sequence,
+        .length = 0,
+        .majorVersion = major,
+        .minorVersion = minor,
+    };
+
+    if (client->swapped) {
+        swaps(&reply.sequenceNumber);
+        swapl(&reply.length);
+        swaps(&reply.majorVersion);
+        swaps(&reply.minorVersion);
+    }
+
+    WriteReplyToClient(client, sizeof(reply), &reply);
+    return Success;
+}
+
+static int _X_COLD
+SProcXwlQueryVersion(ClientPtr client)
+{
+    REQUEST(xXwlQueryVersionReq);
+    REQUEST_AT_LEAST_SIZE(xXwlQueryVersionReq);
+    swaps(&stuff->majorVersion);
+    swaps(&stuff->minorVersion);
+
+    return ProcXwlQueryVersion(client);
+}
+
+static int
+ProcXwaylandDispatch(ClientPtr client)
+{
+    REQUEST(xReq);
+
+    switch (stuff->data) {
+    case X_XwlQueryVersion:
+        return ProcXwlQueryVersion(client);
+    }
+    return BadRequest;
+}
+
+static int
+SProcXwaylandDispatch(ClientPtr client)
+{
+    REQUEST(xReq);
+
+    switch (stuff->data) {
+    case X_XwlQueryVersion:
+        return SProcXwlQueryVersion(client);
+    }
+    return BadRequest;
+}
+
+static void
+xwlExtensionInit(void)
+{
+    AddExtension(XWAYLAND_EXTENSION_NAME,
+                 XwlNumberEvents, XwlNumberErrors,
+                 ProcXwaylandDispatch, SProcXwaylandDispatch,
+                 NULL, StandardMinorOpcode);
+}
+
+#endif
 
 static const ExtensionModule xwayland_extensions[] = {
 #ifdef XF86VIDMODE
     { xwlVidModeExtensionInit, XF86VIDMODENAME, &noXFree86VidModeExtension },
+#endif
+#ifdef XWL_HAS_XWAYLAND_EXTENSION
+    { xwlExtensionInit, XWAYLAND_EXTENSION_NAME, &noXwaylandExtension },
 #endif
 };
 
@@ -226,14 +451,13 @@ InitOutput(ScreenInfo * screen_info, int argc, char **argv)
     screen_info->bitmapBitOrder = BITMAP_BIT_ORDER;
     screen_info->numPixmapFormats = ARRAY_SIZE(depths);
 
-    if (serverGeneration == 1)
+    if (serverGeneration == 1) {
+        try_raising_nofile_limit();
         LoadExtensionList(xwayland_extensions,
                           ARRAY_SIZE(xwayland_extensions), FALSE);
+    }
 
-    /* Cast away warning from missing printf annotation for
-     * wl_log_func_t.  Wayland 1.5 will have the annotation, so we can
-     * remove the cast and require that when it's released. */
-    wl_log_set_handler_client((void *) xwl_log_handler);
+    wl_log_set_handler_client(xwl_log_handler);
 
     if (AddScreen(xwl_screen_init, argc, argv) == -1) {
         FatalError("Couldn't add screen\n");

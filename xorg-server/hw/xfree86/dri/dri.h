@@ -195,8 +195,6 @@ extern _X_EXPORT Bool DRIScreenInit(ScreenPtr pScreen,
 
 extern _X_EXPORT void DRICloseScreen(ScreenPtr pScreen);
 
-extern Bool DRIExtensionInit(void);
-
 extern _X_EXPORT void DRIReset(void);
 
 extern _X_EXPORT Bool DRIQueryDirectRenderingCapable(ScreenPtr pScreen,
@@ -276,8 +274,6 @@ extern _X_EXPORT void DRISwapContext(int drmFD, void *oldctx, void *newctx);
 extern _X_EXPORT void *DRIGetContextStore(DRIContextPrivPtr context);
 
 extern _X_EXPORT void DRIWindowExposures(WindowPtr pWin, RegionPtr prgn);
-
-extern _X_EXPORT Bool DRIDestroyWindow(WindowPtr pWin);
 
 extern _X_EXPORT void DRICopyWindow(WindowPtr pWin,
                                     DDXPointRec ptOldOrg, RegionPtr prgnSrc);

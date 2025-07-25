@@ -28,12 +28,15 @@
  * use or other dealings in this Software without prior written authorization.
  */
 
-#ifdef HAVE_DIX_CONFIG_H
 #include <dix-config.h>
-#endif
 
+#include <sys/stat.h>
 #include <X11/X.h>
 #include <X11/Xproto.h>
+
+#include "os/ddx_priv.h"
+#include "os/osdep.h"
+
 #include "os.h"
 #include "servermd.h"
 #include "inputstr.h"
@@ -66,6 +69,9 @@
 
 #define NO_CFPLUGIN
 #include <IOKit/hidsystem/IOHIDLib.h>
+
+#include "input_priv.h"
+#include "screenint_priv.h"
 
 #ifdef MITSHM
 #include "shmint.h"
@@ -731,7 +737,7 @@ ddxProcessArgument(int argc, char *argv[], int i)
 
     if (!strcmp(argv[i], "-fakemouse2")) {
         if (i == argc - 1) {
-            FatalError("-fakemouse2 must be followed by a modifer list\n");
+            FatalError("-fakemouse2 must be followed by a modifier list\n");
         }
         if (!strcasecmp(argv[i + 1], "none") || !strcmp(argv[i + 1], ""))
             darwinFakeMouse2Mask = 0;
@@ -744,7 +750,7 @@ ddxProcessArgument(int argc, char *argv[], int i)
 
     if (!strcmp(argv[i], "-fakemouse3")) {
         if (i == argc - 1) {
-            FatalError("-fakemouse3 must be followed by a modifer list\n");
+            FatalError("-fakemouse3 must be followed by a modifier list\n");
         }
         if (!strcasecmp(argv[i + 1], "none") || !strcmp(argv[i + 1], ""))
             darwinFakeMouse3Mask = 0;

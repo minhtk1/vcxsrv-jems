@@ -26,19 +26,19 @@ from The Open Group.
 
 */
 
-#ifdef HAVE_DIX_CONFIG_H
 #include <dix-config.h>
-#endif
 
 #include <X11/X.h>
-#include "mi.h"
 #include <X11/Xproto.h>
+#include <X11/Xos.h>
+#include <X11/keysym.h>
+
+#include "mi/mi_priv.h"
+
 #include "scrnintstr.h"
 #include "inputstr.h"
-#include <X11/Xos.h>
 #include "mipointer.h"
 #include "xkbsrv.h"
-#include <X11/keysym.h>
 #include "xserver-properties.h"
 #include "exevents.h"
 #include "extinit.h"
@@ -81,7 +81,7 @@ vfbKeybdProc(DeviceIntPtr pDevice, int onoff)
 static int
 vfbMouseProc(DeviceIntPtr pDevice, int onoff)
 {
-#define NBUTTONS 3
+#define NBUTTONS 13
 #define NAXES 2
 
     BYTE map[NBUTTONS + 1];
@@ -91,13 +91,23 @@ vfbMouseProc(DeviceIntPtr pDevice, int onoff)
 
     switch (onoff) {
     case DEVICE_INIT:
-        map[1] = 1;
-        map[2] = 2;
-        map[3] = 3;
+        for (int i = 1; i <= NBUTTONS; ++i) {
+            map[i] = i;
+        }
 
         btn_labels[0] = XIGetKnownProperty(BTN_LABEL_PROP_BTN_LEFT);
         btn_labels[1] = XIGetKnownProperty(BTN_LABEL_PROP_BTN_MIDDLE);
         btn_labels[2] = XIGetKnownProperty(BTN_LABEL_PROP_BTN_RIGHT);
+        btn_labels[3] = XIGetKnownProperty(BTN_LABEL_PROP_BTN_WHEEL_UP);
+        btn_labels[4] = XIGetKnownProperty(BTN_LABEL_PROP_BTN_WHEEL_DOWN);
+        btn_labels[5] = XIGetKnownProperty(BTN_LABEL_PROP_BTN_HWHEEL_LEFT);
+        btn_labels[6] = XIGetKnownProperty(BTN_LABEL_PROP_BTN_HWHEEL_RIGHT);
+        btn_labels[7] = XIGetKnownProperty(BTN_LABEL_PROP_BTN_UNKNOWN);
+        btn_labels[8] = XIGetKnownProperty(BTN_LABEL_PROP_BTN_UNKNOWN);
+        btn_labels[9] = XIGetKnownProperty(BTN_LABEL_PROP_BTN_UNKNOWN);
+        btn_labels[10] = XIGetKnownProperty(BTN_LABEL_PROP_BTN_UNKNOWN);
+        btn_labels[11] = XIGetKnownProperty(BTN_LABEL_PROP_BTN_UNKNOWN);
+        btn_labels[12] = XIGetKnownProperty(BTN_LABEL_PROP_BTN_UNKNOWN);
 
         axes_labels[0] = XIGetKnownProperty(AXIS_LABEL_PROP_REL_X);
         axes_labels[1] = XIGetKnownProperty(AXIS_LABEL_PROP_REL_Y);

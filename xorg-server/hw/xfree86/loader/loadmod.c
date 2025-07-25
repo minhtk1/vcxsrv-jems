@@ -55,6 +55,7 @@
 #include "loaderProcs.h"
 #include "xf86Module.h"
 #include "loader.h"
+#include "xf86Module_priv.h"
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -438,14 +439,14 @@ CheckVersion(const char *module, XF86ModuleVersionInfo * data,
     vercode[1] = (ver / 100000) % 100;
     vercode[2] = (ver / 1000) % 100;
     vercode[3] = ver % 1000;
-    LogWrite(1, "\tcompiled for %d.%d.%d", vercode[0], vercode[1], vercode[2]);
+    LogMessageVerb(X_NONE, 1, "\tcompiled for %d.%d.%d", vercode[0], vercode[1], vercode[2]);
     if (vercode[3] != 0)
-        LogWrite(1, ".%d", vercode[3]);
-    LogWrite(1, ", module version = %d.%d.%d\n", data->majorversion,
-             data->minorversion, data->patchlevel);
+        LogMessageVerb(X_NONE, 1, ".%d", vercode[3]);
+    LogMessageVerb(X_NONE, 1, ", module version = %d.%d.%d\n", data->majorversion,
+                   data->minorversion, data->patchlevel);
 
     if (data->moduleclass)
-        LogWrite(2, "\tModule class: %s\n", data->moduleclass);
+        LogMessageVerb(X_NONE, 2, "\tModule class: %s\n", data->moduleclass);
 
     ver = -1;
     if (data->abiclass) {
@@ -463,8 +464,8 @@ CheckVersion(const char *module, XF86ModuleVersionInfo * data,
 
         abimaj = GET_ABI_MAJOR(data->abiversion);
         abimin = GET_ABI_MINOR(data->abiversion);
-        LogWrite(2, "\tABI class: %s, version %d.%d\n",
-                 data->abiclass, abimaj, abimin);
+        LogMessageVerb(X_NONE, 2, "\tABI class: %s, version %d.%d\n",
+                       data->abiclass, abimaj, abimin);
         if (ver != -1) {
             vermaj = GET_ABI_MAJOR(ver);
             vermin = GET_ABI_MINOR(ver);
@@ -686,20 +687,20 @@ LoadModule(const char *module, void *options, const XF86ModReqInfo *modreq,
     name = LoaderGetCanonicalName(module, patterns);
     noncanonical = (name && strcmp(module, name) != 0);
     if (noncanonical) {
-        LogWrite(3, " (%s)\n", name);
+        LogMessageVerb(X_NONE, 3, " (%s)\n", name);
         LogMessageVerb(X_WARNING, 1,
                        "LoadModule: given non-canonical module name \"%s\"\n",
                        module);
         m = name;
     }
     else {
-        LogWrite(3, "\n");
+        LogMessageVerb(X_NONE, 3, "\n");
         m = (char *) module;
     }
 
     /* Backward compatibility, vbe and int10 are merged into int10 now */
     if (!strcmp(m, "vbe"))
-        m = name = "int10";
+        m = name = strdup("int10");
 
     for (cim = compiled_in_modules; *cim; cim++)
         if (!strcmp(m, *cim)) {
@@ -733,7 +734,7 @@ LoadModule(const char *module, void *options, const XF86ModReqInfo *modreq,
      * check the elements in the path
      */
     if (PathIsAbsolute(module))
-        found = xstrdup(module);
+        found = Xstrdup(module);
     path_elem = pathlist;
     while (!found && *path_elem != NULL) {
         found = FindModule(m, *path_elem, patterns);
@@ -840,10 +841,8 @@ LoadModule(const char *module, void *options, const XF86ModReqInfo *modreq,
 }
 
 void
-UnloadModule(void *_mod)
+UnloadModule(ModuleDescPtr mod)
 {
-    ModuleDescPtr mod = _mod;
-
     if (mod == (ModuleDescPtr) 1)
         return;
 
@@ -854,9 +853,9 @@ UnloadModule(void *_mod)
         const char *name = mod->VersionInfo->modname;
 
         if (mod->parent)
-            LogMessageVerbSigSafe(X_INFO, 3, "UnloadSubModule: \"%s\"\n", name);
+            LogMessageVerb(X_INFO, 3, "UnloadSubModule: \"%s\"\n", name);
         else
-            LogMessageVerbSigSafe(X_INFO, 3, "UnloadModule: \"%s\"\n", name);
+            LogMessageVerb(X_INFO, 3, "UnloadModule: \"%s\"\n", name);
 
         if (mod->TearDownData != ModuleDuplicated) {
             if ((mod->TearDownProc) && (mod->TearDownData))
@@ -873,10 +872,8 @@ UnloadModule(void *_mod)
 }
 
 void
-UnloadSubModule(void *_mod)
+UnloadSubModule(ModuleDescPtr mod)
 {
-    ModuleDescPtr mod = (ModuleDescPtr) _mod;
-
     /* Some drivers are calling us on built-in submodules, ignore them */
     if (mod == (ModuleDescPtr) 1)
         return;

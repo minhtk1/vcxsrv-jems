@@ -35,6 +35,10 @@ from The Open Group.
 #include <sys/utsname.h>
 #endif
 
+#include "os/cmdline.h"
+#include "os/osdep.h"
+#include "os/ddx_priv.h"
+
 #include <../xfree86/common/xorgVersion.h>
 #include "win.h"
 #include "winconfig.h"
@@ -223,14 +227,6 @@ ddxProcessArgument(int argc, char *argv[], int i)
 
     /* Initialize once */
     if (!s_fBeenHere) {
-#ifdef DDXOSVERRORF
-        /*
-         * This initialises our hook into VErrorF () for catching log messages
-         * that are generated before OsInit () is called.
-         */
-        OsVendorVErrorFProc = OsVendorVErrorF;
-#endif
-
         s_fBeenHere = TRUE;
 
         /* Initialize only if option is not -help */
@@ -446,7 +442,7 @@ ddxProcessArgument(int argc, char *argv[], int i)
             g_ScreenInfo[nScreenNum].fUserGaveHeightAndWidth = FALSE;
         }
 
-        /* Flag that this screen was explicity specified by the user */
+        /* Flag that this screen was explicitly specified by the user */
         g_ScreenInfo[nScreenNum].fExplicitScreen = TRUE;
 
         /*
@@ -1044,15 +1040,6 @@ ddxProcessArgument(int argc, char *argv[], int i)
         g_iLogVerbose = atoi(argv[++i]);
         LogSetParameter(XLOG_VERBOSITY, g_iLogVerbose);
         return 2;
-    }
-
-    /*
-     * Look for the '-nounicodeclipboard' argument
-     */
-    if (IS_OPTION("-nounicodeclipboard")) {
-        g_fUnicodeClipboard = FALSE;
-        /* Indicate that we have processed the argument */
-        return 1;
     }
 
     if (IS_OPTION("-xkbrules")) {

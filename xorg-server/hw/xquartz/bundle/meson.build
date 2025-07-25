@@ -1,9 +1,7 @@
-# system-wide Xquartz server defaults file
-install_data('Xquartz.plist',
-    install_dir: join_paths(get_option('libdir'), 'X11/xserver'))
-
 # generate Info.plist
-cpp = find_program('cpp')
+# https://github.com/mesonbuild/meson/issues/8434
+#cpp = find_program('cpp')
+cpp = '/usr/bin/cpp'
 cpp_defs = [
     '-DAPPLE_APPLICATION_NAME=@0@'.format(apple_application_name),
     '-DBUNDLE_ID_PREFIX=@0@'.format(bundle_id_prefix),
@@ -12,10 +10,7 @@ cpp_defs = [
 ]
 
 if build_sparkle
-cpp_defs += [
-    '-DXQUARTZ_SPARKLE',
-    '-DXQUARTZ_SPARKLE_FEED_URL=@0@'.format(xquartz_sparkle_feed_url),
-]
+cpp_defs += sparkle_defs
 endif
 
 # bundle data
@@ -58,7 +53,6 @@ install_data('PkgInfo',
     install_mode: 'rw-r--r--')
 
 install_data('X11.sh',
-    rename: 'X11',
     install_dir: join_paths(bundle_root, 'Contents/MacOS'),
     install_mode: 'rwxr-xr-x')
 

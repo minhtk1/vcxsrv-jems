@@ -27,9 +27,7 @@
  * use or other dealings in this Software without prior written authorization.
  */
 
-#ifdef HAVE_DIX_CONFIG_H
 #include <dix-config.h>
-#endif
 
 #include "xpr.h"
 
@@ -82,7 +80,6 @@ xprSetWindowLevel(WindowPtr pWin, int level)
     return Success;
 }
 
-#if defined(XPLUGIN_VERSION) && XPLUGIN_VERSION >= 3
 static int
 xprAttachTransient(WindowPtr pWinChild, WindowPtr pWinParent)
 {
@@ -114,7 +111,6 @@ xprAttachTransient(WindowPtr pWinChild, WindowPtr pWinParent)
 
     return Success;
 }
-#endif
 
 static int
 xprFrameDraw(WindowPtr pWin,
@@ -146,16 +142,8 @@ static AppleWMProcsRec xprAppleWMProcs = {
     xp_frame_get_rect,
     xp_frame_hit_test,
     xprFrameDraw,
-#if defined(XPLUGIN_VERSION) && XPLUGIN_VERSION >= 3
     xp_set_dock_proxy,
     xprAttachTransient
-#elif defined(XPLUGIN_VERSION) && XPLUGIN_VERSION >= 2
-    xp_set_dock_proxy,
-    NULL
-#else
-    NULL,
-    NULL
-#endif
 };
 
 void
