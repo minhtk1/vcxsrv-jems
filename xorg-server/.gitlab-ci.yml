@@ -1,0 +1,87 @@
+# DEBIAN_TAG is the tag of the docker image used for the build jobs. If the
+# image doesn't exist yet, the docker-image stage generates it.
+#
+# In order to generate a new image, one should generally change the tag.
+# While removing the image from the registry would also work, that's not
+# recommended except for ephemeral images during development: Replacing an
+# image after a significant amount of time might pull in newer versions of
+# gcc/clang or other packages, which might break the build with older commits
+# using the same tag.
+#
+# After merging a change resulting in generating a new image to the main
+# repository, it's recommended to remove the image from the source repository's
+# container registry, so that the image from the main repository's registry
+# will be used there as well.  You can manage your images on your fork of:
+# https://gitlab.freedesktop.org/xorg/xserver/container_registry
+variables:
+    UPSTREAM_REPO: xorg/xserver
+    DEBIAN_VERSION: testing-slim
+    DEBIAN_EXEC: 'bash .gitlab-ci/debian-install.sh'
+
+    DEBIAN_TAG: "2020-01-06"
+    IMAGE_LOCAL: "$CI_REGISTRY_IMAGE/debian/$DEBIAN_VERSION:$DEBIAN_TAG"
+
+include:
+  - project: 'wayland/ci-templates'
+    ref: b7030c2cd0d6ccc5f6d4f8299bafa4daa9240d71
+    file: '/templates/debian.yml'
+
+stages:
+    - docker-image
+    - build-and-test
+
+.ci-run-policy:
+  # Retry jobs after runner system failures
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+  # Cancel CI run if a newer commit is pushed to the same branch
+  interruptible: true
+
+debian-testing:
+  extends:
+    - .debian@container-ifnot-exists
+    - .ci-run-policy
+  stage: docker-image
+
+.common-build-and-test:
+    extends: .ci-run-policy
+    stage: build-and-test
+    image: $IMAGE_LOCAL
+    artifacts:
+        when: on_failure
+        paths:
+            - build/test/piglit-results/
+    variables:
+        CCACHE_COMPILERCHECK: content
+        CCACHE_DIR: /cache/xserver/cache
+        LC_ALL: C.UTF-8
+    before_script:
+        - export CCACHE_BASEDIR="$PWD"
+        - export PATH="/usr/lib/ccache:$PATH"
+        - ccache --show-stats
+    after_script:
+        - ccache --show-stats
+
+autotools-build-and-test:
+    extends: .common-build-and-test
+    script:
+        - mkdir build/
+        - cd build/
+        - ../autogen.sh --prefix=/usr
+        - make -j4 distcheck
+        - PIGLIT_DIR=/root/piglit XTEST_DIR=/root/xts make -j4 check
+        - cd ..
+        - .gitlab-ci/manpages-check
+
+meson-build-and-test:
+    extends: .common-build-and-test
+    variables:
+        PIGLIT_DIR: /root/piglit
+        XTEST_DIR: /root/xts
+    script:
+        - meson -Dprefix=/usr -Dxephyr=true build/
+        - ninja -j4 -C build/ install
+        - ninja -j4 -C build/ test
+        - .gitlab-ci/manpages-check
