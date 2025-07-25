@@ -24,7 +24,7 @@
 #include "ir_builder.h"
 #include "ir_rvalue_visitor.h"
 #include "ir_optimization.h"
-#include "main/mtypes.h"
+#include "main/shader_types.h"
 
 using namespace ir_builder;
 
@@ -60,7 +60,7 @@ vector_deref_visitor::visit_enter(ir_assignment *ir)
       return ir_rvalue_enter_visitor::visit_enter(ir);
 
    ir_dereference_array *const deref = (ir_dereference_array *) ir->lhs;
-   if (!deref->array->type->is_vector())
+   if (!glsl_type_is_vector(deref->array->type))
       return ir_rvalue_enter_visitor::visit_enter(ir);
 
    /* SSBOs and shared variables are backed by memory and may be accessed by
@@ -112,18 +112,17 @@ vector_deref_visitor::visit_enter(ir_assignment *ir)
 
             if (new_lhs->ir_type != ir_type_swizzle) {
                assert(lhs_clone->as_dereference());
-               ir_assignment *cond_assign =
-                  new(mem_ctx) ir_assignment(lhs_clone->as_dereference(),
-                                             src_temp_deref,
-                                             equal(arr_index, cmp_index),
-                                             WRITEMASK_X << i);
-               factory.emit(cond_assign);
+
+               factory.emit(if_tree(equal(arr_index, cmp_index),
+                                    assign(lhs_clone->as_dereference(),
+                                           src_temp_deref,
+                                           WRITEMASK_X << i)));
             } else {
                ir_assignment *cond_assign =
                   new(mem_ctx) ir_assignment(swizzle(lhs_clone, i, 1),
-                                             src_temp_deref,
-                                             equal(arr_index, cmp_index));
-               factory.emit(cond_assign);
+                                             src_temp_deref);
+
+               factory.emit(if_tree(equal(arr_index, cmp_index), cond_assign));
             }
          }
          ir->insert_after(factory.instructions);
@@ -136,15 +135,31 @@ vector_deref_visitor::visit_enter(ir_assignment *ir)
          ir->write_mask = (1 << new_lhs->type->vector_elements) - 1;
          ir->set_lhs(new_lhs);
       }
-   } else if (new_lhs->ir_type != ir_type_swizzle) {
-      ir->set_lhs(new_lhs);
-      ir->write_mask = 1 << old_index_constant->get_uint_component(0);
    } else {
-      /* If the "new" LHS is a swizzle, use the set_lhs helper to instead
-       * swizzle the RHS.
-       */
-      unsigned component[1] = { old_index_constant->get_uint_component(0) };
-      ir->set_lhs(new(mem_ctx) ir_swizzle(new_lhs, component, 1));
+      unsigned index = old_index_constant->get_uint_component(0);
+
+      if (index >= new_lhs->type->vector_elements) {
+         /* Section 5.11 (Out-of-Bounds Accesses) of the GLSL 4.60 spec says:
+          *
+          *  In the subsections described above for array, vector, matrix and
+          *  structure accesses, any out-of-bounds access produced undefined
+          *  behavior.... Out-of-bounds writes may be discarded or overwrite
+          *  other variables of the active program.
+          */
+         ir->remove();
+         return visit_continue;
+      }
+
+      if (new_lhs->ir_type != ir_type_swizzle) {
+         ir->set_lhs(new_lhs);
+         ir->write_mask = 1 << index;
+      } else {
+         /* If the "new" LHS is a swizzle, use the set_lhs helper to instead
+          * swizzle the RHS.
+          */
+         unsigned component[1] = { index };
+         ir->set_lhs(new(mem_ctx) ir_swizzle(new_lhs, component, 1));
+      }
    }
 
    return ir_rvalue_enter_visitor::visit_enter(ir);
@@ -157,7 +172,7 @@ vector_deref_visitor::handle_rvalue(ir_rvalue **rv)
       return;
 
    ir_dereference_array *const deref = (ir_dereference_array *) *rv;
-   if (!deref->array->type->is_vector())
+   if (!glsl_type_is_vector(deref->array->type))
       return;
 
    /* Back-ends need to be able to handle derefs on vectors for SSBOs, UBOs,
@@ -178,7 +193,7 @@ vector_deref_visitor::handle_rvalue(ir_rvalue **rv)
 }
 
 bool
-lower_vector_derefs(gl_linked_shader *shader)
+lower_vector_derefs(gl_shader *shader)
 {
    vector_deref_visitor v(shader->ir, shader->Stage);
 

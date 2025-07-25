@@ -22,7 +22,9 @@
  */
 
 #include <stdlib.h>
+#include <inttypes.h>
 
+#include "util/macros.h"
 #include "util/u_math.h"
 #include "util/vma.h"
 
@@ -38,12 +40,23 @@ struct util_vma_hole {
 #define util_vma_foreach_hole_safe(_hole, _heap) \
    list_for_each_entry_safe(struct util_vma_hole, _hole, &(_heap)->holes, link)
 
+#define util_vma_foreach_hole_safe_rev(_hole, _heap) \
+   list_for_each_entry_safe_rev(struct util_vma_hole, _hole, &(_heap)->holes, link)
+
 void
 util_vma_heap_init(struct util_vma_heap *heap,
                    uint64_t start, uint64_t size)
 {
    list_inithead(&heap->holes);
-   util_vma_heap_free(heap, start, size);
+   heap->free_size = 0;
+   if (size > 0)
+      util_vma_heap_free(heap, start, size);
+
+   /* Default to using high addresses */
+   heap->alloc_high = true;
+
+   /* Default to not having a nospan alignment */
+   heap->nospan_shift = 0;
 }
 
 void
@@ -57,10 +70,13 @@ util_vma_heap_finish(struct util_vma_heap *heap)
 static void
 util_vma_heap_validate(struct util_vma_heap *heap)
 {
+   uint64_t free_size = 0;
    uint64_t prev_offset = 0;
    util_vma_foreach_hole(hole, heap) {
       assert(hole->offset > 0);
       assert(hole->size > 0);
+
+      free_size += hole->size;
 
       if (&hole->link == heap->holes.next) {
          /* This must be the top-most hole.  Assert that, if it overflows, it
@@ -79,13 +95,16 @@ util_vma_heap_validate(struct util_vma_heap *heap)
       }
       prev_offset = hole->offset;
    }
+
+   assert(free_size == heap->free_size);
 }
 #else
 #define util_vma_heap_validate(heap)
 #endif
 
 static void
-util_vma_hole_alloc(struct util_vma_hole *hole,
+util_vma_hole_alloc(struct util_vma_heap *heap,
+                    struct util_vma_hole *hole,
                     uint64_t offset, uint64_t size)
 {
    assert(hole->offset <= offset);
@@ -95,7 +114,7 @@ util_vma_hole_alloc(struct util_vma_hole *hole,
       /* Just get rid of the hole. */
       list_del(&hole->link);
       free(hole);
-      return;
+      goto done;
    }
 
    assert(offset - hole->offset <= hole->size - size);
@@ -103,14 +122,14 @@ util_vma_hole_alloc(struct util_vma_hole *hole,
    if (waste == 0) {
       /* We allocated at the top.  Shrink the hole down. */
       hole->size -= size;
-      return;
+      goto done;
    }
 
    if (offset == hole->offset) {
       /* We allocated at the bottom. Shrink the hole up. */
       hole->offset += size;
       hole->size -= size;
-      return;
+      goto done;
    }
 
    /* We allocated in the middle.  We need to split the old hole into two
@@ -129,6 +148,9 @@ util_vma_hole_alloc(struct util_vma_hole *hole,
     * from high to low.
     */
    list_addtail(&high_hole->link, &hole->link);
+
+ done:
+   heap->free_size -= size;
 }
 
 uint64_t
@@ -141,29 +163,82 @@ util_vma_heap_alloc(struct util_vma_heap *heap,
 
    util_vma_heap_validate(heap);
 
-   util_vma_foreach_hole_safe(hole, heap) {
-      if (size > hole->size)
-         continue;
+   /* The requested alignment should not be stronger than the block/nospan
+    * alignment.
+    */
+   if (heap->nospan_shift) {
+      assert(align64(BITFIELD64_BIT(heap->nospan_shift), alignment) ==
+            BITFIELD64_BIT(heap->nospan_shift));
+   }
 
-      /* Compute the offset as the highest address where a chunk of the given
-       * size can be without going over the top of the hole.
-       *
-       * This calculation is known to not overflow because we know that
-       * hole->size + hole->offset can only overflow to 0 and size > 0.
-       */
-      uint64_t offset = (hole->size - size) + hole->offset;
+   if (heap->alloc_high) {
+      util_vma_foreach_hole_safe(hole, heap) {
+         if (size > hole->size)
+            continue;
 
-      /* Align the offset.  We align down and not up because we are allocating
-       * from the top of the hole and not the bottom.
-       */
-      offset = (offset / alignment) * alignment;
+         /* Compute the offset as the highest address where a chunk of the
+          * given size can be without going over the top of the hole.
+          *
+          * This calculation is known to not overflow because we know that
+          * hole->size + hole->offset can only overflow to 0 and size > 0.
+          */
+         uint64_t offset = (hole->size - size) + hole->offset;
 
-      if (offset < hole->offset)
-         continue;
+         if (heap->nospan_shift) {
+            uint64_t end = offset + size - 1;
+            if ((end >> heap->nospan_shift) != (offset >> heap->nospan_shift)) {
+               /* can we shift the offset down and still fit in the current hole? */
+               end &= ~BITFIELD64_MASK(heap->nospan_shift);
+               assert(end >= size);
+               offset -= size;
+               if (offset < hole->offset)
+                  continue;
+            }
+         }
 
-      util_vma_hole_alloc(hole, offset, size);
-      util_vma_heap_validate(heap);
-      return offset;
+         /* Align the offset.  We align down and not up because we are
+          * allocating from the top of the hole and not the bottom.
+          */
+         offset = (offset / alignment) * alignment;
+
+         if (offset < hole->offset)
+            continue;
+
+         util_vma_hole_alloc(heap, hole, offset, size);
+         util_vma_heap_validate(heap);
+         return offset;
+      }
+   } else {
+      util_vma_foreach_hole_safe_rev(hole, heap) {
+         if (size > hole->size)
+            continue;
+
+         uint64_t offset = hole->offset;
+
+         /* Align the offset */
+         uint64_t misalign = offset % alignment;
+         if (misalign) {
+            uint64_t pad = alignment - misalign;
+            if (pad > hole->size - size)
+               continue;
+
+            offset += pad;
+         }
+
+         if (heap->nospan_shift) {
+            uint64_t end = offset + size - 1;
+            if ((end >> heap->nospan_shift) != (offset >> heap->nospan_shift)) {
+               /* can we shift the offset up and still fit in the current hole? */
+               offset = end & ~BITFIELD64_MASK(heap->nospan_shift);
+               if ((offset + size) > (hole->offset + hole->size))
+                  continue;
+            }
+         }
+
+         util_vma_hole_alloc(heap, hole, offset, size);
+         util_vma_heap_validate(heap);
+         return offset;
+      }
    }
 
    /* Failed to allocate */
@@ -200,7 +275,7 @@ util_vma_heap_alloc_addr(struct util_vma_heap *heap,
       if (hole->size < offset - hole->offset + size)
          return false;
 
-      util_vma_hole_alloc(hole, offset, size);
+      util_vma_hole_alloc(heap, hole, offset, size);
       return true;
    }
 
@@ -273,5 +348,37 @@ util_vma_heap_free(struct util_vma_heap *heap,
          list_add(&hole->link, &heap->holes);
    }
 
+   heap->free_size += size;
    util_vma_heap_validate(heap);
+}
+
+uint64_t
+util_vma_heap_get_max_free_continuous_size(struct util_vma_heap *heap)
+{
+   uint64_t max_size = 0;
+   util_vma_foreach_hole_safe(hole, heap) {
+      max_size = MAX2(max_size, hole->size);
+   }
+
+   return max_size;
+}
+
+void
+util_vma_heap_print(struct util_vma_heap *heap, FILE *fp,
+                    const char *tab, uint64_t total_size)
+{
+   fprintf(fp, "%sutil_vma_heap:\n", tab);
+
+   uint64_t total_free = 0;
+   util_vma_foreach_hole(hole, heap) {
+      fprintf(fp, "%s    hole: offset = %"PRIu64" (0x%"PRIx64"), "
+              "size = %"PRIu64" (0x%"PRIx64")\n",
+              tab, hole->offset, hole->offset, hole->size, hole->size);
+      total_free += hole->size;
+   }
+   assert(total_free <= total_size);
+   assert(total_free == heap->free_size);
+   fprintf(fp, "%s%"PRIu64"B (0x%"PRIx64") free (%.2f%% full)\n",
+           tab, total_free, total_free,
+           ((double)(total_size - total_free) / (double)total_size) * 100);
 }

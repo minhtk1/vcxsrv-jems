@@ -69,7 +69,7 @@ struct util_sparse_array {
    size_t elem_size;
    unsigned node_size_log2;
 
-   struct util_sparse_array_node *root;
+   uintptr_t root;
 };
 
 void util_sparse_array_init(struct util_sparse_array *arr,
@@ -89,7 +89,13 @@ void util_sparse_array_validate(struct util_sparse_array *arr);
  */
 struct
 #ifdef _MSC_VER
+#if _WIN64
+__declspec(align(16))
+#else
  __declspec(align(8))
+#endif
+#elif defined(__LP64__)
+ __attribute__((aligned(16)))
 #else
  __attribute__((aligned(8)))
 #endif

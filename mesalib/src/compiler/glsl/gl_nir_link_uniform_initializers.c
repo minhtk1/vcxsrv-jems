@@ -23,9 +23,8 @@
 
 #include "nir.h"
 #include "gl_nir_linker.h"
-#include "compiler/glsl/ir_uniform.h" /* for gl_uniform_storage */
-#include "main/context.h"
-#include "main/mtypes.h"
+#include "main/shader_types.h"
+#include "main/consts_exts.h"
 
 struct set_opaque_binding_closure {
    struct gl_shader_program *shader_prog;
@@ -87,7 +86,7 @@ set_opaque_binding(struct set_opaque_binding_closure *data,
                   storage->storage[i].i;
             }
          }
-      } else if (glsl_type_is_image(type)) {
+      } else if (glsl_type_is_image(storage->type)) {
          for (unsigned i = 0; i < elements; i++) {
             const unsigned index = storage->opaque[sh].index + i;
 
@@ -152,12 +151,12 @@ copy_constant_to_storage(union gl_constant_value *storage,
             break;
          case GLSL_TYPE_ARRAY:
          case GLSL_TYPE_STRUCT:
+         case GLSL_TYPE_TEXTURE:
          case GLSL_TYPE_IMAGE:
          case GLSL_TYPE_ATOMIC_UINT:
          case GLSL_TYPE_INTERFACE:
          case GLSL_TYPE_VOID:
          case GLSL_TYPE_SUBROUTINE:
-         case GLSL_TYPE_FUNCTION:
          case GLSL_TYPE_ERROR:
          case GLSL_TYPE_UINT16:
          case GLSL_TYPE_INT16:
@@ -169,6 +168,8 @@ copy_constant_to_storage(union gl_constant_value *storage,
              */
             assert(!"Should not get here.");
             break;
+         case GLSL_TYPE_COOPERATIVE_MATRIX:
+            unreachable("unsupported base type cooperative matrix");
          }
          i += dmul;
       }
@@ -254,7 +255,7 @@ set_uniform_initializer(struct set_uniform_initializer_closure *data,
 }
 
 void
-gl_nir_set_uniform_initializers(struct gl_context *ctx,
+gl_nir_set_uniform_initializers(const struct gl_constants *consts,
                                 struct gl_shader_program *prog)
 {
    for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
@@ -265,19 +266,25 @@ gl_nir_set_uniform_initializers(struct gl_context *ctx,
       nir_shader *nir = sh->Program->nir;
       assert(nir);
 
-      nir_foreach_variable(var, &nir->uniforms) {
+      nir_foreach_gl_uniform_variable(var, nir) {
          if (var->constant_initializer) {
             struct set_uniform_initializer_closure data = {
                .shader_prog = prog,
                .prog = sh->Program,
                .var = var,
                .location = var->data.location,
-               .boolean_true = ctx->Const.UniformBooleanTrue
+               .boolean_true = consts->UniformBooleanTrue
             };
             set_uniform_initializer(&data,
                                     var->type,
                                     var->constant_initializer);
          } else if (var->data.explicit_binding) {
+
+            if (nir_variable_is_in_block(var)) {
+               /* This case is handled by link_uniform_blocks */
+               continue;
+            }
+
             const struct glsl_type *without_array =
                glsl_without_array(var->type);
 

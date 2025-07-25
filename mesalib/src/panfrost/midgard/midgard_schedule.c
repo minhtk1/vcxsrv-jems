@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2018-2019 Alyssa Rosenzweig <alyssa@rosenzweig.io>
+ * Copyright (C) 2019-2020 Collabora, Ltd.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -21,10 +22,12 @@
  * SOFTWARE.
  */
 
+#include "util/half_float.h"
+#include "util/u_math.h"
+#include "util/u_memory.h"
 #include "compiler.h"
 #include "midgard_ops.h"
 #include "midgard_quirks.h"
-#include "util/u_memory.h"
 
 /* Scheduling for Midgard is complicated, to say the least. ALU instructions
  * must be grouped into VLIW bundles according to following model:
@@ -60,115 +63,159 @@
 #define BYTE_COUNT 16
 
 static void
-add_dependency(struct util_dynarray *table, unsigned index, uint16_t mask, midgard_instruction **instructions, unsigned child)
+add_dependency(struct util_dynarray *table, unsigned index, uint16_t mask,
+               midgard_instruction **instructions, unsigned child)
 {
-        for (unsigned i = 0; i < BYTE_COUNT; ++i) {
-                if (!(mask & (1 << i)))
-                        continue;
+   for (unsigned i = 0; i < BYTE_COUNT; ++i) {
+      if (!(mask & (1 << i)))
+         continue;
 
-                struct util_dynarray *parents = &table[(BYTE_COUNT * index) + i];
+      struct util_dynarray *parents = &table[(BYTE_COUNT * index) + i];
 
-                util_dynarray_foreach(parents, unsigned, parent) {
-                        BITSET_WORD *dependents = instructions[*parent]->dependents;
+      util_dynarray_foreach(parents, unsigned, parent) {
+         BITSET_WORD *dependents = instructions[*parent]->dependents;
 
-                        /* Already have the dependency */
-                        if (BITSET_TEST(dependents, child))
-                                continue;
+         /* Already have the dependency */
+         if (BITSET_TEST(dependents, child))
+            continue;
 
-                        BITSET_SET(dependents, child);
-                        instructions[child]->nr_dependencies++;
-                }
-        }
+         BITSET_SET(dependents, child);
+         instructions[child]->nr_dependencies++;
+      }
+   }
 }
 
 static void
-mark_access(struct util_dynarray *table, unsigned index, uint16_t mask, unsigned parent)
+mark_access(struct util_dynarray *table, unsigned index, uint16_t mask,
+            unsigned parent)
 {
-        for (unsigned i = 0; i < BYTE_COUNT; ++i) {
-                if (!(mask & (1 << i)))
-                        continue;
+   for (unsigned i = 0; i < BYTE_COUNT; ++i) {
+      if (!(mask & (1 << i)))
+         continue;
 
-                util_dynarray_append(&table[(BYTE_COUNT * index) + i], unsigned, parent);
-        }
+      util_dynarray_append(&table[(BYTE_COUNT * index) + i], unsigned, parent);
+   }
 }
 
 static void
-mir_create_dependency_graph(midgard_instruction **instructions, unsigned count, unsigned node_count)
+mir_create_dependency_graph(midgard_instruction **instructions, unsigned count,
+                            unsigned node_count)
 {
-        size_t sz = node_count * BYTE_COUNT;
+   size_t sz = node_count * BYTE_COUNT;
 
-        struct util_dynarray *last_read = calloc(sizeof(struct util_dynarray), sz);
-        struct util_dynarray *last_write = calloc(sizeof(struct util_dynarray), sz);
+   struct util_dynarray *last_read = calloc(sizeof(struct util_dynarray), sz);
+   struct util_dynarray *last_write = calloc(sizeof(struct util_dynarray), sz);
 
-        for (unsigned i = 0; i < sz; ++i) {
-                util_dynarray_init(&last_read[i], NULL);
-                util_dynarray_init(&last_write[i], NULL);
-        }
+   for (unsigned i = 0; i < sz; ++i) {
+      util_dynarray_init(&last_read[i], NULL);
+      util_dynarray_init(&last_write[i], NULL);
+   }
 
-        /* Initialize dependency graph */
-        for (unsigned i = 0; i < count; ++i) {
-                instructions[i]->dependents =
-                        calloc(BITSET_WORDS(count), sizeof(BITSET_WORD));
+   /* Initialize dependency graph */
+   for (unsigned i = 0; i < count; ++i) {
+      instructions[i]->dependents =
+         calloc(BITSET_WORDS(count), sizeof(BITSET_WORD));
 
-                instructions[i]->nr_dependencies = 0;
-        }
+      instructions[i]->nr_dependencies = 0;
+   }
 
-        /* Populate dependency graph */
-        for (signed i = count - 1; i >= 0; --i) {
-                if (instructions[i]->compact_branch)
-                        continue;
+   unsigned prev_ldst[3] = {~0, ~0, ~0};
 
-                unsigned dest = instructions[i]->dest;
-                unsigned mask = mir_bytemask(instructions[i]);
+   /* Populate dependency graph */
+   for (signed i = count - 1; i >= 0; --i) {
+      if (instructions[i]->compact_branch)
+         continue;
 
-                mir_foreach_src((*instructions), s) {
-                        unsigned src = instructions[i]->src[s];
+      unsigned dest = instructions[i]->dest;
+      unsigned mask = mir_bytemask(instructions[i]);
 
-                        if (src < node_count) {
-                                unsigned readmask = mir_bytemask_of_read_components(instructions[i], src);
-                                add_dependency(last_write, src, readmask, instructions, i);
-                        }
-                }
+      mir_foreach_src((*instructions), s) {
+         unsigned src = instructions[i]->src[s];
 
-                if (dest < node_count) {
-                        add_dependency(last_read, dest, mask, instructions, i);
-                        add_dependency(last_write, dest, mask, instructions, i);
-                        mark_access(last_write, dest, mask, i);
-                }
+         if (src < node_count) {
+            unsigned readmask =
+               mir_bytemask_of_read_components(instructions[i], src);
+            add_dependency(last_write, src, readmask, instructions, i);
+         }
+      }
 
-                mir_foreach_src((*instructions), s) {
-                        unsigned src = instructions[i]->src[s];
+      /* Create a list of dependencies for each type of load/store
+       * instruction to prevent reordering. */
+      if (instructions[i]->type == TAG_LOAD_STORE_4 &&
+          load_store_opcode_props[instructions[i]->op].props & LDST_ADDRESS) {
 
-                        if (src < node_count) {
-                                unsigned readmask = mir_bytemask_of_read_components(instructions[i], src);
-                                mark_access(last_read, src, readmask, i);
-                        }
-                }
-        }
+         unsigned type = instructions[i]->load_store.arg_reg |
+                         instructions[i]->load_store.arg_comp;
 
-        /* If there is a branch, all instructions depend on it, as interblock
-         * execution must be purely in-order */
+         unsigned idx;
+         switch (type) {
+         case LDST_SHARED:
+            idx = 0;
+            break;
+         case LDST_SCRATCH:
+            idx = 1;
+            break;
+         default:
+            idx = 2;
+            break;
+         }
 
-        if (instructions[count - 1]->compact_branch) {
-                BITSET_WORD *dependents = instructions[count - 1]->dependents;
+         unsigned prev = prev_ldst[idx];
 
-                for (signed i = count - 2; i >= 0; --i) {
-                        if (BITSET_TEST(dependents, i))
-                                continue;
+         if (prev != ~0) {
+            BITSET_WORD *dependents = instructions[prev]->dependents;
 
-                        BITSET_SET(dependents, i);
-                        instructions[i]->nr_dependencies++;
-                }
-        }
+            /* Already have the dependency */
+            if (BITSET_TEST(dependents, i))
+               continue;
 
-        /* Free the intermediate structures */
-        for (unsigned i = 0; i < sz; ++i) {
-                util_dynarray_fini(&last_read[i]);
-                util_dynarray_fini(&last_write[i]);
-        }
+            BITSET_SET(dependents, i);
+            instructions[i]->nr_dependencies++;
+         }
 
-        free(last_read);
-        free(last_write);
+         prev_ldst[idx] = i;
+      }
+
+      if (dest < node_count) {
+         add_dependency(last_read, dest, mask, instructions, i);
+         add_dependency(last_write, dest, mask, instructions, i);
+         mark_access(last_write, dest, mask, i);
+      }
+
+      mir_foreach_src((*instructions), s) {
+         unsigned src = instructions[i]->src[s];
+
+         if (src < node_count) {
+            unsigned readmask =
+               mir_bytemask_of_read_components(instructions[i], src);
+            mark_access(last_read, src, readmask, i);
+         }
+      }
+   }
+
+   /* If there is a branch, all instructions depend on it, as interblock
+    * execution must be purely in-order */
+
+   if (instructions[count - 1]->compact_branch) {
+      BITSET_WORD *dependents = instructions[count - 1]->dependents;
+
+      for (signed i = count - 2; i >= 0; --i) {
+         if (BITSET_TEST(dependents, i))
+            continue;
+
+         BITSET_SET(dependents, i);
+         instructions[i]->nr_dependencies++;
+      }
+   }
+
+   /* Free the intermediate structures */
+   for (unsigned i = 0; i < sz; ++i) {
+      util_dynarray_fini(&last_read[i]);
+      util_dynarray_fini(&last_write[i]);
+   }
+
+   free(last_read);
+   free(last_write);
 }
 
 /* Does the mask cover more than a scalar? */
@@ -176,14 +223,14 @@ mir_create_dependency_graph(midgard_instruction **instructions, unsigned count, 
 static bool
 is_single_component_mask(unsigned mask)
 {
-        int components = 0;
+   int components = 0;
 
-        for (int c = 0; c < 8; ++c) {
-                if (mask & (1 << c))
-                        components++;
-        }
+   for (int c = 0; c < 8; ++c) {
+      if (mask & (1 << c))
+         components++;
+   }
 
-        return components == 1;
+   return components == 1;
 }
 
 /* Helpers for scheudling */
@@ -191,36 +238,30 @@ is_single_component_mask(unsigned mask)
 static bool
 mir_is_scalar(midgard_instruction *ains)
 {
-        /* Do we try to use it as a vector op? */
-        if (!is_single_component_mask(ains->mask))
-                return false;
+   /* Do we try to use it as a vector op? */
+   if (!is_single_component_mask(ains->mask))
+      return false;
 
-        /* Otherwise, check mode hazards */
-        bool could_scalar = true;
+   /* Otherwise, check mode hazards */
+   bool could_scalar = true;
+   unsigned szd = nir_alu_type_get_type_size(ains->dest_type);
+   unsigned sz0 = nir_alu_type_get_type_size(ains->src_types[0]);
+   unsigned sz1 = nir_alu_type_get_type_size(ains->src_types[1]);
 
-        /* Only 16/32-bit can run on a scalar unit */
-        could_scalar &= ains->alu.reg_mode != midgard_reg_mode_8;
-        could_scalar &= ains->alu.reg_mode != midgard_reg_mode_64;
-        could_scalar &= ains->alu.dest_override == midgard_dest_override_none;
+   /* Only 16/32-bit can run on a scalar unit */
+   could_scalar &= (szd == 16) || (szd == 32);
 
-        if (ains->alu.reg_mode == midgard_reg_mode_16) {
-                /* If we're running in 16-bit mode, we
-                 * can't have any 8-bit sources on the
-                 * scalar unit (since the scalar unit
-                 * doesn't understand 8-bit) */
+   if (ains->src[0] != ~0)
+      could_scalar &= (sz0 == 16) || (sz0 == 32);
 
-                midgard_vector_alu_src s1 =
-                        vector_alu_from_unsigned(ains->alu.src1);
+   if (ains->src[1] != ~0)
+      could_scalar &= (sz1 == 16) || (sz1 == 32);
 
-                could_scalar &= !s1.half;
+   if (midgard_is_integer_out_op(ains->op) &&
+       ains->outmod != midgard_outmod_keeplo)
+      return false;
 
-                midgard_vector_alu_src s2 =
-                        vector_alu_from_unsigned(ains->alu.src2);
-
-                could_scalar &= !s2.half;
-        }
-
-        return could_scalar;
+   return could_scalar;
 }
 
 /* How many bytes does this ALU instruction add to the bundle? */
@@ -228,14 +269,14 @@ mir_is_scalar(midgard_instruction *ains)
 static unsigned
 bytes_for_instruction(midgard_instruction *ains)
 {
-        if (ains->unit & UNITS_ANY_VECTOR)
-                return sizeof(midgard_reg_info) + sizeof(midgard_vector_alu);
-        else if (ains->unit == ALU_ENAB_BRANCH)
-                return sizeof(midgard_branch_extended);
-        else if (ains->compact_branch)
-                return sizeof(ains->br_compact);
-        else
-                return sizeof(midgard_reg_info) + sizeof(midgard_scalar_alu);
+   if (ains->unit & UNITS_ANY_VECTOR)
+      return sizeof(midgard_reg_info) + sizeof(midgard_vector_alu);
+   else if (ains->unit == ALU_ENAB_BRANCH)
+      return sizeof(midgard_branch_extended);
+   else if (ains->compact_branch)
+      return sizeof(uint16_t);
+   else
+      return sizeof(midgard_reg_info) + sizeof(midgard_scalar_alu);
 }
 
 /* We would like to flatten the linked list of midgard_instructions in a bundle
@@ -244,32 +285,33 @@ bytes_for_instruction(midgard_instruction *ains)
 static midgard_instruction **
 flatten_mir(midgard_block *block, unsigned *len)
 {
-        *len = list_length(&block->instructions);
+   *len = list_length(&block->base.instructions);
 
-        if (!(*len))
-                return NULL;
+   if (!(*len))
+      return NULL;
 
-        midgard_instruction **instructions =
-                calloc(sizeof(midgard_instruction *), *len);
+   midgard_instruction **instructions =
+      calloc(sizeof(midgard_instruction *), *len);
 
-        unsigned i = 0;
+   unsigned i = 0;
 
-        mir_foreach_instr_in_block(block, ins)
-                instructions[i++] = ins;
+   mir_foreach_instr_in_block(block, ins)
+      instructions[i++] = ins;
 
-        return instructions;
+   return instructions;
 }
 
 /* The worklist is the set of instructions that can be scheduled now; that is,
  * the set of instructions with no remaining dependencies */
 
 static void
-mir_initialize_worklist(BITSET_WORD *worklist, midgard_instruction **instructions, unsigned count)
+mir_initialize_worklist(BITSET_WORD *worklist,
+                        midgard_instruction **instructions, unsigned count)
 {
-        for (unsigned i = 0; i < count; ++i) {
-                if (instructions[i]->nr_dependencies == 0)
-                        BITSET_SET(worklist, i);
-        }
+   for (unsigned i = 0; i < count; ++i) {
+      if (instructions[i]->nr_dependencies == 0)
+         BITSET_SET(worklist, i);
+   }
 }
 
 /* Update the worklist after an instruction terminates. Remove its edges from
@@ -277,38 +319,37 @@ mir_initialize_worklist(BITSET_WORD *worklist, midgard_instruction **instruction
  * worklist */
 
 static void
-mir_update_worklist(
-                BITSET_WORD *worklist, unsigned count,
-                midgard_instruction **instructions, midgard_instruction *done)
+mir_update_worklist(BITSET_WORD *worklist, unsigned count,
+                    midgard_instruction **instructions,
+                    midgard_instruction *done)
 {
-        /* Sanity check: if no instruction terminated, there is nothing to do.
-         * If the instruction that terminated had dependencies, that makes no
-         * sense and means we messed up the worklist. Finally, as the purpose
-         * of this routine is to update dependents, we abort early if there are
-         * no dependents defined. */
+   /* Sanity check: if no instruction terminated, there is nothing to do.
+    * If the instruction that terminated had dependencies, that makes no
+    * sense and means we messed up the worklist. Finally, as the purpose
+    * of this routine is to update dependents, we abort early if there are
+    * no dependents defined. */
 
-        if (!done)
-                return;
+   if (!done)
+      return;
 
-        assert(done->nr_dependencies == 0);
+   assert(done->nr_dependencies == 0);
 
-        if (!done->dependents)
-                return;
+   if (!done->dependents)
+      return;
 
-        /* We have an instruction with dependents. Iterate each dependent to
-         * remove one dependency (`done`), adding dependents to the worklist
-         * where possible. */
+   /* We have an instruction with dependents. Iterate each dependent to
+    * remove one dependency (`done`), adding dependents to the worklist
+    * where possible. */
 
-        unsigned i;
-        BITSET_WORD tmp;
-        BITSET_FOREACH_SET(i, tmp, done->dependents, count) {
-                assert(instructions[i]->nr_dependencies);
+   unsigned i;
+   BITSET_FOREACH_SET(i, done->dependents, count) {
+      assert(instructions[i]->nr_dependencies);
 
-                if (!(--instructions[i]->nr_dependencies))
-                        BITSET_SET(worklist, i);
-        }
+      if (!(--instructions[i]->nr_dependencies))
+         BITSET_SET(worklist, i);
+   }
 
-        free(done->dependents);
+   free(done->dependents);
 }
 
 /* While scheduling, we need to choose instructions satisfying certain
@@ -317,321 +358,535 @@ mir_update_worklist(
  * given predicate. */
 
 struct midgard_predicate {
-        /* TAG or ~0 for dont-care */
-        unsigned tag;
+   /* TAG or ~0 for dont-care */
+   unsigned tag;
 
-        /* True if we want to pop off the chosen instruction */
-        bool destructive;
+   /* True if we want to pop off the chosen instruction */
+   bool destructive;
 
-        /* For ALU, choose only this unit */
-        unsigned unit;
+   /* For ALU, choose only this unit */
+   unsigned unit;
 
-        /* State for bundle constants. constants is the actual constants
-         * for the bundle. constant_count is the number of bytes (up to
-         * 16) currently in use for constants. When picking in destructive
-         * mode, the constants array will be updated, and the instruction
-         * will be adjusted to index into the constants array */
+   /* State for bundle constants. constants is the actual constants
+    * for the bundle. constant_count is the number of bytes (up to
+    * 16) currently in use for constants. When picking in destructive
+    * mode, the constants array will be updated, and the instruction
+    * will be adjusted to index into the constants array */
 
-        uint8_t *constants;
-        unsigned constant_count;
-        bool blend_constant;
+   midgard_constants *constants;
+   unsigned constant_mask;
 
-        /* Exclude this destination (if not ~0) */
-        unsigned exclude;
+   /* Exclude this destination (if not ~0) */
+   unsigned exclude;
 
-        /* Don't schedule instructions consuming conditionals (since we already
-         * scheduled one). Excludes conditional branches and csel */
-        bool no_cond;
+   /* Don't schedule instructions consuming conditionals (since we already
+    * scheduled one). Excludes conditional branches and csel */
+   bool no_cond;
 
-        /* Require a minimal mask and (if nonzero) given destination. Used for
-         * writeout optimizations */
+   /* Require (or reject) a minimal mask and (if nonzero) given
+    * destination. Used for writeout optimizations */
 
-        unsigned mask;
-        unsigned dest;
+   unsigned mask;
+   unsigned no_mask;
+   unsigned dest;
+
+   /* Whether to not-care/only/never schedule imov/fmov instructions This
+    * allows non-move instructions to get priority on each unit */
+   unsigned move_mode;
+
+   /* For load/store: how many pipeline registers are in use? The two
+    * scheduled instructions cannot use more than the 256-bits of pipeline
+    * space available or RA will fail (as it would run out of pipeline
+    * registers and fail to spill without breaking the schedule) */
+
+   unsigned pipeline_count;
+
+   /* For load/store: is a ST_VARY.a32 instruction scheduled into the
+    * bundle? is a non-ST_VARY.a32 instruction scheduled? Potential
+    * hardware issue, unknown cause.
+    */
+   bool any_st_vary_a32, any_non_st_vary_a32;
 };
+
+static bool
+mir_adjust_constant(midgard_instruction *ins, unsigned src,
+                    unsigned *bundle_constant_mask, unsigned *comp_mapping,
+                    uint8_t *bundle_constants, bool upper)
+{
+   unsigned type_size = nir_alu_type_get_type_size(ins->src_types[src]) / 8;
+   unsigned type_shift = util_logbase2(type_size);
+   unsigned max_comp = mir_components_for_type(ins->src_types[src]);
+   unsigned comp_mask = mir_from_bytemask(
+      mir_round_bytemask_up(mir_bytemask_of_read_components_index(ins, src),
+                            type_size * 8),
+      type_size * 8);
+   unsigned type_mask = (1 << type_size) - 1;
+
+   /* Upper only makes sense for 16-bit */
+   if (type_size != 16 && upper)
+      return false;
+
+   /* For 16-bit, we need to stay on either upper or lower halves to avoid
+    * disrupting the swizzle */
+   unsigned start = upper ? 8 : 0;
+   unsigned length = (type_size == 2) ? 8 : 16;
+
+   for (unsigned comp = 0; comp < max_comp; comp++) {
+      if (!(comp_mask & (1 << comp)))
+         continue;
+
+      uint8_t *constantp = ins->constants.u8 + (type_size * comp);
+      unsigned best_reuse_bytes = 0;
+      signed best_place = -1;
+      unsigned i, j;
+
+      for (i = start; i < (start + length); i += type_size) {
+         unsigned reuse_bytes = 0;
+
+         for (j = 0; j < type_size; j++) {
+            if (!(*bundle_constant_mask & (1 << (i + j))))
+               continue;
+            if (constantp[j] != bundle_constants[i + j])
+               break;
+            if ((i + j) > (start + length))
+               break;
+
+            reuse_bytes++;
+         }
+
+         /* Select the place where existing bytes can be
+          * reused so we leave empty slots to others
+          */
+         if (j == type_size &&
+             (reuse_bytes > best_reuse_bytes || best_place < 0)) {
+            best_reuse_bytes = reuse_bytes;
+            best_place = i;
+            break;
+         }
+      }
+
+      /* This component couldn't fit in the remaining constant slot,
+       * no need check the remaining components, bail out now
+       */
+      if (best_place < 0)
+         return false;
+
+      memcpy(&bundle_constants[i], constantp, type_size);
+      *bundle_constant_mask |= type_mask << best_place;
+      comp_mapping[comp] = best_place >> type_shift;
+   }
+
+   return true;
+}
 
 /* For an instruction that can fit, adjust it to fit and update the constants
  * array, in destructive mode. Returns whether the fitting was successful. */
 
 static bool
-mir_adjust_constants(midgard_instruction *ins,
-                struct midgard_predicate *pred,
-                bool destructive)
+mir_adjust_constants(midgard_instruction *ins, struct midgard_predicate *pred,
+                     bool destructive)
 {
-        /* Blend constants dominate */
-        if (ins->has_blend_constant) {
-                if (pred->constant_count)
-                        return false;
-                else if (destructive) {
-                        pred->blend_constant = true;
-                        pred->constant_count = 16;
-                        return true;
-                }
-        }
+   /* No constant, nothing to adjust */
+   if (!ins->has_constants)
+      return true;
 
-        /* No constant, nothing to adjust */
-        if (!ins->has_constants)
-                return true;
+   unsigned r_constant = SSA_FIXED_REGISTER(REGISTER_CONSTANT);
+   unsigned bundle_constant_mask = pred->constant_mask;
+   unsigned comp_mapping[2][16] = {};
+   uint8_t bundle_constants[16];
 
-        if (ins->alu.reg_mode != midgard_reg_mode_32) {
-                /* TODO: 16-bit constant combining */
-                if (pred->constant_count)
-                        return false;
+   memcpy(bundle_constants, pred->constants, 16);
 
-                uint16_t *bundles = (uint16_t *) pred->constants;
-                uint32_t *constants = (uint32_t *) ins->constants;
+   /* Let's try to find a place for each active component of the constant
+    * register.
+    */
+   for (unsigned src = 0; src < 2; ++src) {
+      if (ins->src[src] != SSA_FIXED_REGISTER(REGISTER_CONSTANT))
+         continue;
 
-                /* Copy them wholesale */
-                for (unsigned i = 0; i < 4; ++i)
-                        bundles[i] = constants[i];
+      /* First, try lower half (or whole for !16) */
+      if (mir_adjust_constant(ins, src, &bundle_constant_mask,
+                              comp_mapping[src], bundle_constants, false))
+         continue;
 
-                pred->constant_count = 16;
-        } else {
-                /* Pack 32-bit constants */
-                uint32_t *bundles = (uint32_t *) pred->constants;
-                uint32_t *constants = (uint32_t *) ins->constants;
-                unsigned r_constant = SSA_FIXED_REGISTER(REGISTER_CONSTANT);
-                unsigned mask = mir_from_bytemask(mir_bytemask_of_read_components(ins, r_constant), midgard_reg_mode_32);
+      /* Next, try upper half */
+      if (mir_adjust_constant(ins, src, &bundle_constant_mask,
+                              comp_mapping[src], bundle_constants, true))
+         continue;
 
-                /* First, check if it fits */
-                unsigned count = DIV_ROUND_UP(pred->constant_count, sizeof(uint32_t));
-                unsigned existing_count = count;
+      /* Otherwise bail */
+      return false;
+   }
 
-                for (unsigned i = 0; i < 4; ++i) {
-                        if (!(mask & (1 << i)))
-                                continue;
+   /* If non-destructive, we're done */
+   if (!destructive)
+      return true;
 
-                        bool ok = false;
+   /* Otherwise update the constant_mask and constant values */
+   pred->constant_mask = bundle_constant_mask;
+   memcpy(pred->constants, bundle_constants, 16);
 
-                        /* Look for existing constant */
-                        for (unsigned j = 0; j < existing_count; ++j) {
-                                if (bundles[j] == constants[i]) {
-                                        ok = true;
-                                        break;
-                                }
-                        }
+   /* Use comp_mapping as a swizzle */
+   mir_foreach_src(ins, s) {
+      if (ins->src[s] == r_constant)
+         mir_compose_swizzle(ins->swizzle[s], comp_mapping[s], ins->swizzle[s]);
+   }
 
-                        if (ok)
-                                continue;
+   return true;
+}
 
-                        /* If the constant is new, check ourselves */
-                        for (unsigned j = 0; j < i; ++j) {
-                                if (constants[j] == constants[i] && (mask & (1 << j))) {
-                                        ok = true;
-                                        break;
-                                }
-                        }
+/* Conservative estimate of the pipeline registers required for load/store */
 
-                        if (ok)
-                                continue;
+static unsigned
+mir_pipeline_count(midgard_instruction *ins)
+{
+   unsigned bytecount = 0;
 
-                        /* Otherwise, this is a new constant */
-                        count++;
-                }
+   mir_foreach_src(ins, i) {
+      /* Skip empty source  */
+      if (ins->src[i] == ~0)
+         continue;
 
-                /* Check if we have space */
-                if (count > 4)
-                        return false;
+      if (i == 0) {
+         /* First source is a vector, worst-case the mask */
+         unsigned bytemask = mir_bytemask_of_read_components_index(ins, i);
+         unsigned max = util_logbase2(bytemask) + 1;
+         bytecount += max;
+      } else {
+         /* Sources 1 on are scalars */
+         bytecount += 4;
+      }
+   }
 
-                /* If non-destructive, we're done */
-                if (!destructive)
-                        return true;
+   unsigned dwords = DIV_ROUND_UP(bytecount, 16);
+   assert(dwords <= 2);
 
-                /* If destructive, let's copy in the new constants and adjust
-                 * swizzles to pack it in. */
+   return dwords;
+}
 
-                unsigned indices[16] = { 0 };
+/* Matches FADD x, x with modifiers compatible. Since x + x = x * 2, for
+ * any x including of the form f(y) for some swizzle/abs/neg function f */
 
-                /* Reset count */
-                count = existing_count;
+static bool
+mir_is_add_2(midgard_instruction *ins)
+{
+   if (ins->op != midgard_alu_op_fadd)
+      return false;
 
-                for (unsigned i = 0; i < 4; ++i) {
-                        if (!(mask & (1 << i)))
-                                continue;
+   if (ins->src[0] != ins->src[1])
+      return false;
 
-                        uint32_t cons = constants[i];
-                        bool constant_found = false;
+   if (ins->src_types[0] != ins->src_types[1])
+      return false;
 
-                        /* Search for the constant */
-                        for (unsigned j = 0; j < count; ++j) {
-                                if (bundles[j] != cons)
-                                        continue;
+   for (unsigned i = 0; i < MIR_VEC_COMPONENTS; ++i) {
+      if (ins->swizzle[0][i] != ins->swizzle[1][i])
+         return false;
+   }
 
-                                /* We found it, reuse */
-                                indices[i] = j;
-                                constant_found = true;
-                                break;
-                        }
+   if (ins->src_abs[0] != ins->src_abs[1])
+      return false;
 
-                        if (constant_found)
-                                continue;
+   if (ins->src_neg[0] != ins->src_neg[1])
+      return false;
 
-                        /* We didn't find it, so allocate it */
-                        unsigned idx = count++;
+   return true;
+}
 
-                        /* We have space, copy it in! */
-                        bundles[idx] = cons;
-                        indices[i] = idx;
-                }
+static void
+mir_adjust_unit(midgard_instruction *ins, unsigned unit)
+{
+   /* FADD x, x = FMUL x, #2 */
+   if (mir_is_add_2(ins) && (unit & (UNITS_MUL | UNIT_VLUT))) {
+      ins->op = midgard_alu_op_fmul;
 
-                pred->constant_count = count * sizeof(uint32_t);
+      ins->src[1] = ~0;
+      ins->src_abs[1] = false;
+      ins->src_neg[1] = false;
 
-                /* Use indices as a swizzle */
+      ins->has_inline_constant = true;
+      ins->inline_constant = _mesa_float_to_half(2.0);
+   }
+}
 
-                mir_foreach_src(ins, s) {
-                        if (ins->src[s] == r_constant)
-                                mir_compose_swizzle(ins->swizzle[s], indices, ins->swizzle[s]);
-                }
-        }
+static unsigned
+mir_has_unit(midgard_instruction *ins, unsigned unit)
+{
+   if (alu_opcode_props[ins->op].props & unit)
+      return true;
 
-        return true;
+   /* FADD x, x can run on any adder or any multiplier */
+   if (mir_is_add_2(ins))
+      return true;
+
+   return false;
+}
+
+/* Net change in liveness if an instruction were scheduled. Loosely based on
+ * ir3's scheduler. */
+
+static int
+mir_live_effect(uint16_t *liveness, midgard_instruction *ins, bool destructive)
+{
+   /* TODO: what if dest is used multiple times? */
+   int free_live = 0;
+
+   if (ins->dest < SSA_FIXED_MINIMUM) {
+      unsigned bytemask = mir_bytemask(ins);
+      bytemask = util_next_power_of_two(bytemask + 1) - 1;
+      free_live += util_bitcount(liveness[ins->dest] & bytemask);
+
+      if (destructive)
+         liveness[ins->dest] &= ~bytemask;
+   }
+
+   int new_live = 0;
+
+   mir_foreach_src(ins, s) {
+      unsigned S = ins->src[s];
+
+      bool dupe = false;
+
+      for (unsigned q = 0; q < s; ++q)
+         dupe |= (ins->src[q] == S);
+
+      if (dupe)
+         continue;
+
+      if (S < SSA_FIXED_MINIMUM) {
+         unsigned bytemask = mir_bytemask_of_read_components(ins, S);
+         bytemask = util_next_power_of_two(bytemask + 1) - 1;
+
+         /* Count only the new components */
+         new_live += util_bitcount(bytemask & ~(liveness[S]));
+
+         if (destructive)
+            liveness[S] |= bytemask;
+      }
+   }
+
+   return new_live - free_live;
 }
 
 static midgard_instruction *
-mir_choose_instruction(
-                midgard_instruction **instructions,
-                BITSET_WORD *worklist, unsigned count,
-                struct midgard_predicate *predicate)
+mir_choose_instruction(midgard_instruction **instructions, uint16_t *liveness,
+                       BITSET_WORD *worklist, unsigned count,
+                       struct midgard_predicate *predicate)
 {
-        /* Parse the predicate */
-        unsigned tag = predicate->tag;
-        bool alu = tag == TAG_ALU_4;
-        unsigned unit = predicate->unit;
-        bool branch = alu && (unit == ALU_ENAB_BR_COMPACT);
-        bool scalar = (unit != ~0) && (unit & UNITS_SCALAR);
-        bool no_cond = predicate->no_cond;
+   /* Parse the predicate */
+   unsigned tag = predicate->tag;
+   unsigned unit = predicate->unit;
+   bool scalar = (unit != ~0) && (unit & UNITS_SCALAR);
+   bool no_cond = predicate->no_cond;
 
-        unsigned mask = predicate->mask;
-        unsigned dest = predicate->dest;
-        bool needs_dest = mask & 0xF;
+   unsigned mask = predicate->mask;
+   unsigned dest = predicate->dest;
+   bool needs_dest = mask & 0xF;
 
-        /* Iterate to find the best instruction satisfying the predicate */
-        unsigned i;
-        BITSET_WORD tmp;
+   /* Iterate to find the best instruction satisfying the predicate */
+   unsigned i;
 
-        signed best_index = -1;
-        bool best_conditional = false;
+   signed best_index = -1;
+   signed best_effect = INT_MAX;
+   bool best_conditional = false;
 
-        /* Enforce a simple metric limiting distance to keep down register
-         * pressure. TOOD: replace with liveness tracking for much better
-         * results */
+   /* Enforce a simple metric limiting distance to keep down register
+    * pressure. TOOD: replace with liveness tracking for much better
+    * results */
 
-        unsigned max_active = 0;
-        unsigned max_distance = 6;
+   unsigned max_active = 0;
+   unsigned max_distance = 36;
 
-        BITSET_FOREACH_SET(i, tmp, worklist, count) {
-                max_active = MAX2(max_active, i);
-        }
+#ifndef NDEBUG
+   /* Force in-order scheduling */
+   if (midgard_debug & MIDGARD_DBG_INORDER)
+      max_distance = 1;
+#endif
 
-        BITSET_FOREACH_SET(i, tmp, worklist, count) {
-                if ((max_active - i) >= max_distance)
-                        continue;
+   BITSET_FOREACH_SET(i, worklist, count) {
+      max_active = MAX2(max_active, i);
+   }
 
-                if (tag != ~0 && instructions[i]->type != tag)
-                        continue;
+   BITSET_FOREACH_SET(i, worklist, count) {
+      if ((max_active - i) >= max_distance)
+         continue;
 
-                if (predicate->exclude != ~0 && instructions[i]->dest == predicate->exclude)
-                        continue;
+      if (tag != ~0 && instructions[i]->type != tag)
+         continue;
 
-                if (alu && !branch && !(alu_opcode_props[instructions[i]->alu.op].props & unit))
-                        continue;
+      bool alu = (instructions[i]->type == TAG_ALU_4);
+      bool ldst = (instructions[i]->type == TAG_LOAD_STORE_4);
 
-                if (branch && !instructions[i]->compact_branch)
-                        continue;
+      bool branch = alu && (unit == ALU_ENAB_BR_COMPACT);
+      bool is_move = alu && (instructions[i]->op == midgard_alu_op_imov ||
+                             instructions[i]->op == midgard_alu_op_fmov);
 
-                if (alu && scalar && !mir_is_scalar(instructions[i]))
-                        continue;
+      if (predicate->exclude != ~0 &&
+          instructions[i]->dest == predicate->exclude)
+         continue;
 
-                if (alu && !mir_adjust_constants(instructions[i], predicate, false))
-                        continue;
+      if (alu && !branch && unit != ~0 &&
+          !(mir_has_unit(instructions[i], unit)))
+         continue;
 
-                if (needs_dest && instructions[i]->dest != dest)
-                        continue;
+      /* 0: don't care, 1: no moves, 2: only moves */
+      if (predicate->move_mode && ((predicate->move_mode - 1) != is_move))
+         continue;
 
-                if (mask && ((~instructions[i]->mask) & mask))
-                        continue;
+      if (branch && !instructions[i]->compact_branch)
+         continue;
 
-                bool conditional = alu && !branch && OP_IS_CSEL(instructions[i]->alu.op);
-                conditional |= (branch && instructions[i]->branch.conditional);
+      if (alu && scalar && !mir_is_scalar(instructions[i]))
+         continue;
 
-                if (conditional && no_cond)
-                        continue;
+      if (alu && predicate->constants &&
+          !mir_adjust_constants(instructions[i], predicate, false))
+         continue;
 
-                /* Simulate in-order scheduling */
-                if ((signed) i < best_index)
-                        continue;
+      if (needs_dest && instructions[i]->dest != dest)
+         continue;
 
-                best_index = i;
-                best_conditional = conditional;
-        }
+      if (mask && ((~instructions[i]->mask) & mask))
+         continue;
 
+      if (instructions[i]->mask & predicate->no_mask)
+         continue;
 
-        /* Did we find anything?  */
+      if (ldst &&
+          mir_pipeline_count(instructions[i]) + predicate->pipeline_count > 2)
+         continue;
 
-        if (best_index < 0)
-                return NULL;
+      bool st_vary_a32 = (instructions[i]->op == midgard_op_st_vary_32);
 
-        /* If we found something, remove it from the worklist */
-        assert(best_index < count);
+      if (ldst && predicate->any_non_st_vary_a32 && st_vary_a32)
+         continue;
 
-        if (predicate->destructive) {
-                BITSET_CLEAR(worklist, best_index);
+      if (ldst && predicate->any_st_vary_a32 && !st_vary_a32)
+         continue;
 
-                if (alu)
-                        mir_adjust_constants(instructions[best_index], predicate, true);
+      bool conditional = alu && !branch && OP_IS_CSEL(instructions[i]->op);
+      conditional |= (branch && instructions[i]->branch.conditional);
 
-                /* Once we schedule a conditional, we can't again */
-                predicate->no_cond |= best_conditional;
-        }
+      if (conditional && no_cond)
+         continue;
 
-        return instructions[best_index];
+      int effect = mir_live_effect(liveness, instructions[i], false);
+
+      if (effect > best_effect)
+         continue;
+
+      if (effect == best_effect && (signed)i < best_index)
+         continue;
+
+      best_effect = effect;
+      best_index = i;
+      best_conditional = conditional;
+   }
+
+   /* Did we find anything?  */
+
+   if (best_index < 0)
+      return NULL;
+
+   /* If we found something, remove it from the worklist */
+   assert(best_index < count);
+   midgard_instruction *I = instructions[best_index];
+
+   if (predicate->destructive) {
+      BITSET_CLEAR(worklist, best_index);
+
+      if (I->type == TAG_ALU_4)
+         mir_adjust_constants(instructions[best_index], predicate, true);
+
+      if (I->type == TAG_LOAD_STORE_4) {
+         predicate->pipeline_count +=
+            mir_pipeline_count(instructions[best_index]);
+
+         if (instructions[best_index]->op == midgard_op_st_vary_32)
+            predicate->any_st_vary_a32 = true;
+         else
+            predicate->any_non_st_vary_a32 = true;
+      }
+
+      if (I->type == TAG_ALU_4)
+         mir_adjust_unit(instructions[best_index], unit);
+
+      /* Once we schedule a conditional, we can't again */
+      predicate->no_cond |= best_conditional;
+      mir_live_effect(liveness, instructions[best_index], true);
+   }
+
+   return I;
 }
 
 /* Still, we don't choose instructions in a vacuum. We need a way to choose the
  * best bundle type (ALU, load/store, texture). Nondestructive. */
 
 static unsigned
-mir_choose_bundle(
-                midgard_instruction **instructions,
-                BITSET_WORD *worklist, unsigned count)
+mir_choose_bundle(midgard_instruction **instructions, uint16_t *liveness,
+                  BITSET_WORD *worklist, unsigned count, unsigned num_ldst)
 {
-        /* At the moment, our algorithm is very simple - use the bundle of the
-         * best instruction, regardless of what else could be scheduled
-         * alongside it. This is not optimal but it works okay for in-order */
+   /* At the moment, our algorithm is very simple - use the bundle of the
+    * best instruction, regardless of what else could be scheduled
+    * alongside it. This is not optimal but it works okay for in-order */
 
-        struct midgard_predicate predicate = {
-                .tag = ~0,
-                .destructive = false,
-                .exclude = ~0
-        };
+   struct midgard_predicate predicate = {
+      .tag = ~0,
+      .unit = ~0,
+      .destructive = false,
+      .exclude = ~0,
+   };
 
-        midgard_instruction *chosen = mir_choose_instruction(instructions, worklist, count, &predicate);
+   midgard_instruction *chosen = mir_choose_instruction(
+      instructions, liveness, worklist, count, &predicate);
 
-        if (chosen)
-                return chosen->type;
-        else
-                return ~0;
+   if (chosen && chosen->type == TAG_LOAD_STORE_4 && !(num_ldst % 2)) {
+      /* Try to schedule load/store ops in pairs */
+
+      predicate.exclude = chosen->dest;
+      predicate.tag = TAG_LOAD_STORE_4;
+
+      chosen = mir_choose_instruction(instructions, liveness, worklist, count,
+                                      &predicate);
+      if (chosen)
+         return TAG_LOAD_STORE_4;
+
+      predicate.tag = ~0;
+
+      chosen = mir_choose_instruction(instructions, liveness, worklist, count,
+                                      &predicate);
+      assert(chosen == NULL || chosen->type != TAG_LOAD_STORE_4);
+
+      if (chosen)
+         return chosen->type;
+      else
+         return TAG_LOAD_STORE_4;
+   }
+
+   if (chosen)
+      return chosen->type;
+   else
+      return ~0;
 }
 
 /* We want to choose an ALU instruction filling a given unit */
 static void
-mir_choose_alu(midgard_instruction **slot,
-                midgard_instruction **instructions,
-                BITSET_WORD *worklist, unsigned len,
-                struct midgard_predicate *predicate,
-                unsigned unit)
+mir_choose_alu(midgard_instruction **slot, midgard_instruction **instructions,
+               uint16_t *liveness, BITSET_WORD *worklist, unsigned len,
+               struct midgard_predicate *predicate, unsigned unit)
 {
-        /* Did we already schedule to this slot? */
-        if ((*slot) != NULL)
-                return;
+   /* Did we already schedule to this slot? */
+   if ((*slot) != NULL)
+      return;
 
-        /* Try to schedule something, if not */
-        predicate->unit = unit;
-        *slot = mir_choose_instruction(instructions, worklist, len, predicate);
+   /* Try to schedule something, if not */
+   predicate->unit = unit;
+   *slot =
+      mir_choose_instruction(instructions, liveness, worklist, len, predicate);
 
-        /* Store unit upon scheduling */
-        if (*slot && !((*slot)->compact_branch))
-                (*slot)->unit = unit;
+   /* Store unit upon scheduling */
+   if (*slot && !((*slot)->compact_branch))
+      (*slot)->unit = unit;
 }
 
 /* When we are scheduling a branch/csel, we need the consumed condition in the
@@ -649,50 +904,51 @@ mir_choose_alu(midgard_instruction **slot,
  */
 
 static unsigned
-mir_comparison_mobile(
-                compiler_context *ctx,
-                midgard_instruction **instructions,
-                struct midgard_predicate *predicate,
-                unsigned count,
-                unsigned cond)
+mir_comparison_mobile(compiler_context *ctx, midgard_instruction **instructions,
+                      struct midgard_predicate *predicate, unsigned count,
+                      unsigned cond)
 {
-        if (!mir_single_use(ctx, cond))
-                return ~0;
+   if (!mir_single_use(ctx, cond))
+      return ~0;
 
-        unsigned ret = ~0;
+   unsigned ret = ~0;
 
-        for (unsigned i = 0; i < count; ++i) {
-                if (instructions[i]->dest != cond)
-                        continue;
+   for (unsigned i = 0; i < count; ++i) {
+      if (instructions[i]->dest != cond)
+         continue;
 
-                /* Must fit in an ALU bundle */
-                if (instructions[i]->type != TAG_ALU_4)
-                        return ~0;
+      /* Must fit in an ALU bundle */
+      if (instructions[i]->type != TAG_ALU_4)
+         return ~0;
 
-                /* We'll need to rewrite to .w but that doesn't work for vector
-                 * ops that don't replicate (ball/bany), so bail there */
+      /* If it would itself require a condition, that's recursive */
+      if (OP_IS_CSEL(instructions[i]->op))
+         return ~0;
 
-                if (GET_CHANNEL_COUNT(alu_opcode_props[instructions[i]->alu.op].props))
-                        return ~0;
+      /* We'll need to rewrite to .w but that doesn't work for vector
+       * ops that don't replicate (ball/bany), so bail there */
 
-                /* Ensure it will fit with constants */
+      if (GET_CHANNEL_COUNT(alu_opcode_props[instructions[i]->op].props))
+         return ~0;
 
-                if (!mir_adjust_constants(instructions[i], predicate, false))
-                        return ~0;
+      /* Ensure it will fit with constants */
 
-                /* Ensure it is written only once */
+      if (!mir_adjust_constants(instructions[i], predicate, false))
+         return ~0;
 
-                if (ret != ~0)
-                        return ~0;
-                else
-                        ret = i;
-        }
+      /* Ensure it is written only once */
 
-        /* Inject constants now that we are sure we want to */
-        if (ret != ~0)
-                mir_adjust_constants(instructions[ret], predicate, true);
+      if (ret != ~0)
+         return ~0;
+      else
+         ret = i;
+   }
 
-        return ret;
+   /* Inject constants now that we are sure we want to */
+   if (ret != ~0)
+      mir_adjust_constants(instructions[ret], predicate, true);
+
+   return ret;
 }
 
 /* Using the information about the moveable conditional itself, we either pop
@@ -700,33 +956,33 @@ mir_comparison_mobile(
  * artificially schedule instead as a fallback */
 
 static midgard_instruction *
-mir_schedule_comparison(
-                compiler_context *ctx,
-                midgard_instruction **instructions,
-                struct midgard_predicate *predicate,
-                BITSET_WORD *worklist, unsigned count,
-                unsigned cond, bool vector, unsigned *swizzle,
-                midgard_instruction *user)
+mir_schedule_comparison(compiler_context *ctx,
+                        midgard_instruction **instructions,
+                        struct midgard_predicate *predicate,
+                        BITSET_WORD *worklist, unsigned count, unsigned cond,
+                        bool vector, unsigned *swizzle,
+                        midgard_instruction *user)
 {
-        /* TODO: swizzle when scheduling */
-        unsigned comp_i =
-                (!vector && (swizzle[0] == 0)) ?
-                mir_comparison_mobile(ctx, instructions, predicate, count, cond) : ~0;
+   /* TODO: swizzle when scheduling */
+   unsigned comp_i =
+      (!vector && (swizzle[0] == 0))
+         ? mir_comparison_mobile(ctx, instructions, predicate, count, cond)
+         : ~0;
 
-        /* If we can, schedule the condition immediately */
-        if ((comp_i != ~0) && BITSET_TEST(worklist, comp_i)) {
-                assert(comp_i < count);
-                BITSET_CLEAR(worklist, comp_i);
-                return instructions[comp_i];
-        }
+   /* If we can, schedule the condition immediately */
+   if ((comp_i != ~0) && BITSET_TEST(worklist, comp_i)) {
+      assert(comp_i < count);
+      BITSET_CLEAR(worklist, comp_i);
+      return instructions[comp_i];
+   }
 
-        /* Otherwise, we insert a move */
+   /* Otherwise, we insert a move */
 
-        midgard_instruction mov = v_mov(cond, cond);
-        mov.mask = vector ? 0xF : 0x1;
-        memcpy(mov.swizzle[1], swizzle, sizeof(mov.swizzle[1]));
+   midgard_instruction mov = v_mov(cond, cond);
+   mov.mask = vector ? 0xF : 0x1;
+   memcpy(mov.swizzle[1], swizzle, sizeof(mov.swizzle[1]));
 
-        return mir_insert_instruction_before(ctx, user, mov);
+   return mir_insert_instruction_before(ctx, user, &mov);
 }
 
 /* Most generally, we need instructions writing to r31 in the appropriate
@@ -734,434 +990,635 @@ mir_schedule_comparison(
 
 static midgard_instruction *
 mir_schedule_condition(compiler_context *ctx,
-                struct midgard_predicate *predicate,
-                BITSET_WORD *worklist, unsigned count,
-                midgard_instruction **instructions,
-                midgard_instruction *last)
+                       struct midgard_predicate *predicate,
+                       BITSET_WORD *worklist, unsigned count,
+                       midgard_instruction **instructions,
+                       midgard_instruction *last)
 {
-        /* For a branch, the condition is the only argument; for csel, third */
-        bool branch = last->compact_branch;
-        unsigned condition_index = branch ? 0 : 2;
+   /* For a branch, the condition is the only argument; for csel, third */
+   bool branch = last->compact_branch;
+   unsigned condition_index = branch ? 0 : 2;
 
-        /* csel_v is vector; otherwise, conditions are scalar */
-        bool vector = !branch && OP_IS_CSEL_V(last->alu.op);
+   /* csel_v is vector; otherwise, conditions are scalar */
+   bool vector = !branch && OP_IS_CSEL_V(last->op);
 
-        /* Grab the conditional instruction */
+   /* Grab the conditional instruction */
 
-        midgard_instruction *cond = mir_schedule_comparison(
-                        ctx, instructions, predicate, worklist, count, last->src[condition_index],
-                        vector, last->swizzle[2], last);
+   midgard_instruction *cond = mir_schedule_comparison(
+      ctx, instructions, predicate, worklist, count, last->src[condition_index],
+      vector, last->swizzle[condition_index], last);
 
-        /* We have exclusive reign over this (possibly move) conditional
-         * instruction. We can rewrite into a pipeline conditional register */
+   /* We have exclusive reign over this (possibly move) conditional
+    * instruction. We can rewrite into a pipeline conditional register */
 
-        predicate->exclude = cond->dest;
-        cond->dest = SSA_FIXED_REGISTER(31);
+   predicate->exclude = cond->dest;
+   cond->dest = SSA_FIXED_REGISTER(31);
+   last->src[condition_index] = cond->dest;
 
-        if (!vector) {
-                cond->mask = (1 << COMPONENT_W);
+   if (!vector) {
+      cond->mask = (1 << COMPONENT_W);
 
-                mir_foreach_src(cond, s) {
-                        if (cond->src[s] == ~0)
-                                continue;
+      mir_foreach_src(cond, s) {
+         if (cond->src[s] == ~0)
+            continue;
 
-                        for (unsigned q = 0; q < 4; ++q)
-                                cond->swizzle[s][q + COMPONENT_W] = cond->swizzle[s][q];
-                }
-        }
+         for (unsigned q = 0; q < 4; ++q)
+            cond->swizzle[s][q + COMPONENT_W] = cond->swizzle[s][q];
+      }
 
-        /* Schedule the unit: csel is always in the latter pipeline, so a csel
-         * condition must be in the former pipeline stage (vmul/sadd),
-         * depending on scalar/vector of the instruction itself. A branch must
-         * be written from the latter pipeline stage and a branch condition is
-         * always scalar, so it is always in smul (exception: ball/bany, which
-         * will be vadd) */
+      last->swizzle[condition_index][0] = COMPONENT_W;
+   }
 
-        if (branch)
-                cond->unit = UNIT_SMUL;
-        else
-                cond->unit = vector ? UNIT_VMUL : UNIT_SADD;
+   /* Schedule the unit: csel is always in the latter pipeline, so a csel
+    * condition must be in the former pipeline stage (vmul/sadd),
+    * depending on scalar/vector of the instruction itself. A branch must
+    * be written from the latter pipeline stage and a branch condition is
+    * always scalar, so it is always in smul (exception: ball/bany, which
+    * will be vadd) */
 
-        return cond;
+   if (branch)
+      cond->unit = UNIT_SMUL;
+   else
+      cond->unit = vector ? UNIT_VMUL : UNIT_SADD;
+
+   return cond;
 }
 
 /* Schedules a single bundle of the given type */
 
 static midgard_bundle
-mir_schedule_texture(
-                midgard_instruction **instructions,
-                BITSET_WORD *worklist, unsigned len)
+mir_schedule_texture(midgard_instruction **instructions, uint16_t *liveness,
+                     BITSET_WORD *worklist, unsigned len, bool is_vertex)
 {
-        struct midgard_predicate predicate = {
-                .tag = TAG_TEXTURE_4,
-                .destructive = true,
-                .exclude = ~0
-        };
+   struct midgard_predicate predicate = {
+      .tag = TAG_TEXTURE_4,
+      .destructive = true,
+      .exclude = ~0,
+   };
 
-        midgard_instruction *ins =
-                mir_choose_instruction(instructions, worklist, len, &predicate);
+   midgard_instruction *ins =
+      mir_choose_instruction(instructions, liveness, worklist, len, &predicate);
 
-        mir_update_worklist(worklist, len, instructions, ins);
+   mir_update_worklist(worklist, len, instructions, ins);
 
-        struct midgard_bundle out = {
-                .tag = TAG_TEXTURE_4,
-                .instruction_count = 1,
-                .instructions = { ins }
-        };
+   struct midgard_bundle out = {
+      .tag = ins->op == midgard_tex_op_barrier ? TAG_TEXTURE_4_BARRIER
+             : (ins->op == midgard_tex_op_fetch) || is_vertex
+                ? TAG_TEXTURE_4_VTX
+                : TAG_TEXTURE_4,
+      .instruction_count = 1,
+      .instructions = {ins},
+   };
 
-        return out;
+   return out;
 }
 
 static midgard_bundle
-mir_schedule_ldst(
-                midgard_instruction **instructions,
-                BITSET_WORD *worklist, unsigned len)
+mir_schedule_ldst(midgard_instruction **instructions, uint16_t *liveness,
+                  BITSET_WORD *worklist, unsigned len, unsigned *num_ldst)
 {
-        struct midgard_predicate predicate = {
-                .tag = TAG_LOAD_STORE_4,
-                .destructive = true,
-                .exclude = ~0
-        };
+   struct midgard_predicate predicate = {
+      .tag = TAG_LOAD_STORE_4,
+      .destructive = true,
+      .exclude = ~0,
+   };
 
-        /* Try to pick two load/store ops. Second not gauranteed to exist */
+   /* Try to pick two load/store ops. Second not gauranteed to exist */
 
-        midgard_instruction *ins =
-                mir_choose_instruction(instructions, worklist, len, &predicate);
+   midgard_instruction *ins =
+      mir_choose_instruction(instructions, liveness, worklist, len, &predicate);
 
-        midgard_instruction *pair =
-                mir_choose_instruction(instructions, worklist, len, &predicate);
+   midgard_instruction *pair =
+      mir_choose_instruction(instructions, liveness, worklist, len, &predicate);
 
-        struct midgard_bundle out = {
-                .tag = TAG_LOAD_STORE_4,
-                .instruction_count = pair ? 2 : 1,
-                .instructions = { ins, pair }
-        };
+   assert(ins != NULL);
 
-        /* We have to update the worklist atomically, since the two
-         * instructions run concurrently (TODO: verify it's not pipelined) */
+   struct midgard_bundle out = {
+      .tag = TAG_LOAD_STORE_4,
+      .instruction_count = pair ? 2 : 1,
+      .instructions = {ins, pair},
+   };
 
-        mir_update_worklist(worklist, len, instructions, ins);
-        mir_update_worklist(worklist, len, instructions, pair);
+   *num_ldst -= out.instruction_count;
 
-        return out;
+   /* We have to update the worklist atomically, since the two
+    * instructions run concurrently (TODO: verify it's not pipelined) */
+
+   mir_update_worklist(worklist, len, instructions, ins);
+   mir_update_worklist(worklist, len, instructions, pair);
+
+   return out;
+}
+
+static void
+mir_schedule_zs_write(compiler_context *ctx,
+                      struct midgard_predicate *predicate,
+                      midgard_instruction **instructions, uint16_t *liveness,
+                      BITSET_WORD *worklist, unsigned len,
+                      midgard_instruction *branch, midgard_instruction **smul,
+                      midgard_instruction **vadd, midgard_instruction **vlut,
+                      bool stencil)
+{
+   bool success = false;
+   unsigned idx = stencil ? 3 : 2;
+   unsigned src =
+      (branch->src[0] == ~0) ? SSA_FIXED_REGISTER(1) : branch->src[idx];
+
+   predicate->dest = src;
+   predicate->mask = 0x1;
+
+   midgard_instruction **units[] = {smul, vadd, vlut};
+   unsigned unit_names[] = {UNIT_SMUL, UNIT_VADD, UNIT_VLUT};
+
+   for (unsigned i = 0; i < 3; ++i) {
+      if (*(units[i]))
+         continue;
+
+      predicate->unit = unit_names[i];
+      midgard_instruction *ins = mir_choose_instruction(
+         instructions, liveness, worklist, len, predicate);
+
+      if (ins) {
+         ins->unit = unit_names[i];
+         *(units[i]) = ins;
+         success |= true;
+         break;
+      }
+   }
+
+   predicate->dest = predicate->mask = 0;
+
+   if (success)
+      return;
+
+   midgard_instruction *mov = ralloc(ctx, midgard_instruction);
+   *mov = v_mov(src, make_compiler_temp(ctx));
+   mov->mask = 0x1;
+
+   branch->src[idx] = mov->dest;
+
+   if (stencil) {
+      unsigned swizzle = (branch->src[0] == ~0) ? COMPONENT_Y : COMPONENT_X;
+
+      for (unsigned c = 0; c < 16; ++c)
+         mov->swizzle[1][c] = swizzle;
+   }
+
+   for (unsigned i = 0; i < 3; ++i) {
+      if (!(*(units[i]))) {
+         *(units[i]) = mov;
+         mov->unit = unit_names[i];
+         return;
+      }
+   }
+
+   unreachable("Could not schedule Z/S move to any unit");
 }
 
 static midgard_bundle
-mir_schedule_alu(
-                compiler_context *ctx,
-                midgard_instruction **instructions,
-                BITSET_WORD *worklist, unsigned len)
+mir_schedule_alu(compiler_context *ctx, midgard_instruction **instructions,
+                 uint16_t *liveness, BITSET_WORD *worklist, unsigned len)
 {
-        struct midgard_bundle bundle = {};
+   struct midgard_bundle bundle = {};
 
-        unsigned bytes_emitted = sizeof(bundle.control);
+   unsigned bytes_emitted = sizeof(bundle.control);
 
-        struct midgard_predicate predicate = {
-                .tag = TAG_ALU_4,
-                .destructive = true,
-                .exclude = ~0,
-                .constants = (uint8_t *) bundle.constants
-        };
+   struct midgard_predicate predicate = {
+      .tag = TAG_ALU_4,
+      .destructive = true,
+      .exclude = ~0,
+      .constants = &bundle.constants,
+   };
 
-        midgard_instruction *vmul = NULL;
-        midgard_instruction *vadd = NULL;
-        midgard_instruction *vlut = NULL;
-        midgard_instruction *smul = NULL;
-        midgard_instruction *sadd = NULL;
-        midgard_instruction *branch = NULL;
+   midgard_instruction *vmul = NULL;
+   midgard_instruction *vadd = NULL;
+   midgard_instruction *vlut = NULL;
+   midgard_instruction *smul = NULL;
+   midgard_instruction *sadd = NULL;
+   midgard_instruction *branch = NULL;
 
-        mir_choose_alu(&branch, instructions, worklist, len, &predicate, ALU_ENAB_BR_COMPACT);
-        mir_update_worklist(worklist, len, instructions, branch);
-        bool writeout = branch && branch->writeout;
+   mir_choose_alu(&branch, instructions, liveness, worklist, len, &predicate,
+                  ALU_ENAB_BR_COMPACT);
+   mir_update_worklist(worklist, len, instructions, branch);
+   unsigned writeout = branch ? branch->writeout : 0;
 
-        if (branch && branch->branch.conditional) {
-                midgard_instruction *cond = mir_schedule_condition(ctx, &predicate, worklist, len, instructions, branch);
+   if (branch && branch->branch.conditional) {
+      midgard_instruction *cond = mir_schedule_condition(
+         ctx, &predicate, worklist, len, instructions, branch);
 
-                if (cond->unit == UNIT_VADD)
-                        vadd = cond;
-                else if (cond->unit == UNIT_SMUL)
-                        smul = cond;
-                else
-                        unreachable("Bad condition");
-        }
+      if (cond->unit == UNIT_VADD)
+         vadd = cond;
+      else if (cond->unit == UNIT_SMUL)
+         smul = cond;
+      else
+         unreachable("Bad condition");
+   }
 
-        mir_choose_alu(&smul, instructions, worklist, len, &predicate, UNIT_SMUL);
+   /* If we have a render target reference, schedule a move for it. Since
+    * this will be in sadd, we boost this to prevent scheduling csel into
+    * smul */
 
-        if (!writeout)
-                mir_choose_alu(&vlut, instructions, worklist, len, &predicate, UNIT_VLUT);
+   if (writeout && (branch->constants.u32[0] || ctx->inputs->is_blend)) {
+      sadd = ralloc(ctx, midgard_instruction);
+      *sadd = v_mov(~0, make_compiler_temp(ctx));
+      sadd->unit = UNIT_SADD;
+      sadd->mask = 0x1;
+      sadd->has_inline_constant = true;
+      sadd->inline_constant = branch->constants.u32[0];
+      branch->src[1] = sadd->dest;
+      branch->src_types[1] = sadd->dest_type;
+   }
 
-        if (writeout) {
-                /* Propagate up */
-                bundle.last_writeout = branch->last_writeout;
+   if (writeout) {
+      /* Propagate up */
+      bundle.last_writeout = branch->last_writeout;
 
-                midgard_instruction add = v_mov(~0, make_compiler_temp(ctx));
+      /* Mask off any conditionals.
+       * This prevents csel and csel_v being scheduled into smul
+       * since we might not have room for a conditional in vmul/sadd.
+       * This is important because both writeout and csel have same-bundle
+       * requirements on their dependencies. */
+      predicate.no_cond = true;
+   }
 
-                if (!ctx->is_blend) {
-                        add.alu.op = midgard_alu_op_iadd;
-                        add.src[0] = SSA_FIXED_REGISTER(31);
+   /* Set r1.w to the return address so we can return from blend shaders */
+   if (writeout) {
+      vadd = ralloc(ctx, midgard_instruction);
+      *vadd = v_mov(~0, make_compiler_temp(ctx));
 
-                        for (unsigned c = 0; c < 16; ++c)
-                                add.swizzle[0][c] = COMPONENT_X;
+      if (!ctx->inputs->is_blend) {
+         vadd->op = midgard_alu_op_iadd;
+         vadd->src[0] = SSA_FIXED_REGISTER(31);
+         vadd->src_types[0] = nir_type_uint32;
 
-                        add.has_inline_constant = true;
-                        add.inline_constant = 0;
-                } else {
-                        add.src[1] = SSA_FIXED_REGISTER(1);
+         for (unsigned c = 0; c < 16; ++c)
+            vadd->swizzle[0][c] = COMPONENT_X;
 
-                        for (unsigned c = 0; c < 16; ++c)
-                                add.swizzle[1][c] = COMPONENT_W;
-                }
+         vadd->has_inline_constant = true;
+         vadd->inline_constant = 0;
+      } else {
+         vadd->src[1] = SSA_FIXED_REGISTER(1);
+         vadd->src_types[0] = nir_type_uint32;
 
-                vadd = mem_dup(&add, sizeof(midgard_instruction));
+         for (unsigned c = 0; c < 16; ++c)
+            vadd->swizzle[1][c] = COMPONENT_W;
+      }
 
-                vadd->unit = UNIT_VADD;
-                vadd->mask = 0x1;
-                branch->src[2] = add.dest;
-        }
+      vadd->unit = UNIT_VADD;
+      vadd->mask = 0x1;
+      branch->dest = vadd->dest;
+      branch->dest_type = vadd->dest_type;
+   }
 
-        mir_choose_alu(&vadd, instructions, worklist, len, &predicate, UNIT_VADD);
-        
-        mir_update_worklist(worklist, len, instructions, vlut);
-        mir_update_worklist(worklist, len, instructions, vadd);
-        mir_update_worklist(worklist, len, instructions, smul);
+   if (writeout & PAN_WRITEOUT_Z)
+      mir_schedule_zs_write(ctx, &predicate, instructions, liveness, worklist,
+                            len, branch, &smul, &vadd, &vlut, false);
 
-        bool vadd_csel = vadd && OP_IS_CSEL(vadd->alu.op);
-        bool smul_csel = smul && OP_IS_CSEL(smul->alu.op);
+   if (writeout & PAN_WRITEOUT_S)
+      mir_schedule_zs_write(ctx, &predicate, instructions, liveness, worklist,
+                            len, branch, &smul, &vadd, &vlut, true);
 
-        if (vadd_csel || smul_csel) {
-                midgard_instruction *ins = vadd_csel ? vadd : smul;
-                midgard_instruction *cond = mir_schedule_condition(ctx, &predicate, worklist, len, instructions, ins);
+   mir_choose_alu(&smul, instructions, liveness, worklist, len, &predicate,
+                  UNIT_SMUL);
 
-                if (cond->unit == UNIT_VMUL)
-                        vmul = cond;
-                else if (cond->unit == UNIT_SADD)
-                        sadd = cond;
-                else
-                        unreachable("Bad condition");
-        }
+   for (unsigned mode = 1; mode < 3; ++mode) {
+      predicate.move_mode = mode;
+      predicate.no_mask = writeout ? (1 << 3) : 0;
+      mir_choose_alu(&vlut, instructions, liveness, worklist, len, &predicate,
+                     UNIT_VLUT);
+      predicate.no_mask = 0;
+      mir_choose_alu(&vadd, instructions, liveness, worklist, len, &predicate,
+                     UNIT_VADD);
+   }
 
-        /* If we have a render target reference, schedule a move for it */
+   /* Reset */
+   predicate.move_mode = 0;
+   predicate.exclude = ~0;
 
-        if (branch && branch->writeout && (branch->constants[0] || ctx->is_blend)) {
-                midgard_instruction mov = v_mov(~0, make_compiler_temp(ctx));
-                sadd = mem_dup(&mov, sizeof(midgard_instruction));
-                sadd->unit = UNIT_SADD;
-                sadd->mask = 0x1;
-                sadd->has_inline_constant = true;
-                sadd->inline_constant = branch->constants[0];
-                branch->src[1] = mov.dest;
-                /* TODO: Don't leak */
-        }
+   mir_update_worklist(worklist, len, instructions, vlut);
+   mir_update_worklist(worklist, len, instructions, vadd);
+   mir_update_worklist(worklist, len, instructions, smul);
 
-        /* Stage 2, let's schedule sadd before vmul for writeout */
-        mir_choose_alu(&sadd, instructions, worklist, len, &predicate, UNIT_SADD);
+   bool vadd_csel = vadd && OP_IS_CSEL(vadd->op);
+   bool smul_csel = smul && OP_IS_CSEL(smul->op);
 
-        /* Check if writeout reads its own register */
+   if (vadd_csel || smul_csel) {
+      midgard_instruction *ins = vadd_csel ? vadd : smul;
+      midgard_instruction *cond = mir_schedule_condition(
+         ctx, &predicate, worklist, len, instructions, ins);
 
-        if (branch && branch->writeout) {
-                midgard_instruction *stages[] = { sadd, vadd, smul };
-                unsigned src = (branch->src[0] == ~0) ? SSA_FIXED_REGISTER(0) : branch->src[0];
-                unsigned writeout_mask = 0x0;
-                bool bad_writeout = false;
+      if (cond->unit == UNIT_VMUL)
+         vmul = cond;
+      else if (cond->unit == UNIT_SADD)
+         sadd = cond;
+      else
+         unreachable("Bad condition");
+   }
 
-                for (unsigned i = 0; i < ARRAY_SIZE(stages); ++i) {
-                        if (!stages[i])
-                                continue;
+   /* Stage 2, let's schedule sadd before vmul for writeout */
+   mir_choose_alu(&sadd, instructions, liveness, worklist, len, &predicate,
+                  UNIT_SADD);
 
-                        if (stages[i]->dest != src)
-                                continue;
+   /* Check if writeout reads its own register */
 
-                        writeout_mask |= stages[i]->mask;
-                        bad_writeout |= mir_has_arg(stages[i], branch->src[0]);
-                }
+   if (writeout) {
+      midgard_instruction *stages[] = {sadd, vadd, smul, vlut};
+      unsigned src =
+         (branch->src[0] == ~0) ? SSA_FIXED_REGISTER(0) : branch->src[0];
+      unsigned writeout_mask = 0x0;
+      bool bad_writeout = false;
 
-                /* It's possible we'll be able to schedule something into vmul
-                 * to fill r0. Let's peak into the future, trying to schedule
-                 * vmul specially that way. */
+      for (unsigned i = 0; i < ARRAY_SIZE(stages); ++i) {
+         if (!stages[i])
+            continue;
 
-                if (!bad_writeout && writeout_mask != 0xF) {
-                        predicate.unit = UNIT_VMUL;
-                        predicate.dest = src;
-                        predicate.mask = writeout_mask ^ 0xF;
+         if (stages[i]->dest != src)
+            continue;
 
-                        struct midgard_instruction *peaked =
-                                mir_choose_instruction(instructions, worklist, len, &predicate);
+         writeout_mask |= stages[i]->mask;
+         bad_writeout |= mir_has_arg(stages[i], branch->src[0]);
+      }
 
-                        if (peaked) {
-                                vmul = peaked;
-                                vmul->unit = UNIT_VMUL;
-                                writeout_mask |= predicate.mask;
-                                assert(writeout_mask == 0xF);
-                        }
+      /* It's possible we'll be able to schedule something into vmul
+       * to fill r0. Let's peak into the future, trying to schedule
+       * vmul specially that way. */
 
-                        /* Cleanup */
-                        predicate.dest = predicate.mask = 0;
-                }
+      unsigned full_mask = 0xF;
 
-                /* Finally, add a move if necessary */
-                if (bad_writeout || writeout_mask != 0xF) {
-                        unsigned temp = (branch->src[0] == ~0) ? SSA_FIXED_REGISTER(0) : make_compiler_temp(ctx);
-                        midgard_instruction mov = v_mov(src, temp);
-                        vmul = mem_dup(&mov, sizeof(midgard_instruction));
-                        vmul->unit = UNIT_VMUL;
-                        vmul->mask = 0xF ^ writeout_mask;
-                        /* TODO: Don't leak */
+      if (!bad_writeout && writeout_mask != full_mask) {
+         predicate.unit = UNIT_VMUL;
+         predicate.dest = src;
+         predicate.mask = writeout_mask ^ full_mask;
 
-                        /* Rewrite to use our temp */
+         struct midgard_instruction *peaked = mir_choose_instruction(
+            instructions, liveness, worklist, len, &predicate);
 
-                        for (unsigned i = 0; i < ARRAY_SIZE(stages); ++i) {
-                                if (stages[i])
-                                        mir_rewrite_index_dst_single(stages[i], src, temp);
-                        }
+         if (peaked) {
+            vmul = peaked;
+            vmul->unit = UNIT_VMUL;
+            writeout_mask |= predicate.mask;
+            assert(writeout_mask == full_mask);
+         }
 
-                        mir_rewrite_index_src_single(branch, src, temp);
-                }
-        }
+         /* Cleanup */
+         predicate.dest = predicate.mask = 0;
+      }
 
-        mir_choose_alu(&vmul, instructions, worklist, len, &predicate, UNIT_VMUL);
+      /* Finally, add a move if necessary */
+      if (bad_writeout || writeout_mask != full_mask) {
+         unsigned temp = (branch->src[0] == ~0) ? SSA_FIXED_REGISTER(0)
+                                                : make_compiler_temp(ctx);
 
-        mir_update_worklist(worklist, len, instructions, vmul);
-        mir_update_worklist(worklist, len, instructions, sadd);
+         vmul = ralloc(ctx, midgard_instruction);
+         *vmul = v_mov(src, temp);
+         vmul->unit = UNIT_VMUL;
+         vmul->mask = full_mask ^ writeout_mask;
 
-        bundle.has_blend_constant = predicate.blend_constant;
-        bundle.has_embedded_constants = predicate.constant_count > 0;
+         /* Rewrite to use our temp */
 
-        unsigned padding = 0;
+         for (unsigned i = 0; i < ARRAY_SIZE(stages); ++i) {
+            if (stages[i]) {
+               mir_rewrite_index_dst_single(stages[i], src, temp);
+               mir_rewrite_index_src_single(stages[i], src, temp);
+            }
+         }
 
-        /* Now that we have finished scheduling, build up the bundle */
-        midgard_instruction *stages[] = { vmul, sadd, vadd, smul, vlut, branch };
+         mir_rewrite_index_src_single(branch, src, temp);
+      }
+   }
 
-        for (unsigned i = 0; i < ARRAY_SIZE(stages); ++i) {
-                if (stages[i]) {
-                        bundle.control |= stages[i]->unit;
-                        bytes_emitted += bytes_for_instruction(stages[i]);
-                        bundle.instructions[bundle.instruction_count++] = stages[i];
-                }
-        }
+   mir_choose_alu(&vmul, instructions, liveness, worklist, len, &predicate,
+                  UNIT_VMUL);
 
-        /* Pad ALU op to nearest word */
+   mir_update_worklist(worklist, len, instructions, vmul);
+   mir_update_worklist(worklist, len, instructions, sadd);
 
-        if (bytes_emitted & 15) {
-                padding = 16 - (bytes_emitted & 15);
-                bytes_emitted += padding;
-        }
+   bundle.has_embedded_constants = predicate.constant_mask != 0;
 
-        /* Constants must always be quadwords */
-        if (bundle.has_embedded_constants)
-                bytes_emitted += 16;
+   unsigned padding = 0;
 
-        /* Size ALU instruction for tag */
-        bundle.tag = (TAG_ALU_4) + (bytes_emitted / 16) - 1;
+   /* Now that we have finished scheduling, build up the bundle */
+   midgard_instruction *stages[] = {vmul, sadd, vadd, smul, vlut, branch};
 
-        /* MRT capable GPUs use a special writeout procedure */
-        if (writeout && !(ctx->quirks & MIDGARD_NO_UPPER_ALU))
-                bundle.tag += 4;
+   for (unsigned i = 0; i < ARRAY_SIZE(stages); ++i) {
+      if (stages[i]) {
+         bundle.control |= stages[i]->unit;
+         bytes_emitted += bytes_for_instruction(stages[i]);
+         bundle.instructions[bundle.instruction_count++] = stages[i];
 
-        bundle.padding = padding;
-        bundle.control |= bundle.tag;
+         /* If we branch, we can't spill to TLS since the store
+          * instruction will never get executed. We could try to
+          * break the bundle but this is probably easier for
+          * now. */
 
-        return bundle;
+         if (branch)
+            stages[i]->no_spill |= (1 << REG_CLASS_WORK);
+      }
+   }
+
+   /* Pad ALU op to nearest word */
+
+   if (bytes_emitted & 15) {
+      padding = 16 - (bytes_emitted & 15);
+      bytes_emitted += padding;
+   }
+
+   /* Constants must always be quadwords */
+   if (bundle.has_embedded_constants)
+      bytes_emitted += 16;
+
+   /* Size ALU instruction for tag */
+   bundle.tag = (TAG_ALU_4) + (bytes_emitted / 16) - 1;
+
+   bool tilebuf_wait = branch && branch->compact_branch &&
+                       branch->branch.target_type == TARGET_TILEBUF_WAIT;
+
+   /* MRT capable GPUs use a special writeout procedure */
+   if ((writeout || tilebuf_wait) && !(ctx->quirks & MIDGARD_NO_UPPER_ALU))
+      bundle.tag += 4;
+
+   bundle.padding = padding;
+   bundle.control |= bundle.tag;
+
+   return bundle;
 }
 
 /* Schedule a single block by iterating its instruction to create bundles.
  * While we go, tally about the bundle sizes to compute the block size. */
 
-
 static void
 schedule_block(compiler_context *ctx, midgard_block *block)
 {
-        /* Copy list to dynamic array */
-        unsigned len = 0;
-        midgard_instruction **instructions = flatten_mir(block, &len);
+   /* Copy list to dynamic array */
+   unsigned len = 0;
+   midgard_instruction **instructions = flatten_mir(block, &len);
 
-        if (!len)
-                return;
+   if (!len)
+      return;
 
-        /* Calculate dependencies and initial worklist */
-        unsigned node_count = ctx->temp_count + 1;
-        mir_create_dependency_graph(instructions, len, node_count);
+   /* Calculate dependencies and initial worklist */
+   unsigned node_count = ctx->temp_count + 1;
+   mir_create_dependency_graph(instructions, len, node_count);
 
-        /* Allocate the worklist */
-        size_t sz = BITSET_WORDS(len) * sizeof(BITSET_WORD);
-        BITSET_WORD *worklist = calloc(sz, 1);
-        mir_initialize_worklist(worklist, instructions, len);
+   /* Allocate the worklist */
+   size_t sz = BITSET_WORDS(len) * sizeof(BITSET_WORD);
+   BITSET_WORD *worklist = calloc(sz, 1);
+   uint16_t *liveness = calloc(node_count, 2);
+   mir_initialize_worklist(worklist, instructions, len);
 
-        struct util_dynarray bundles;
-        util_dynarray_init(&bundles, NULL);
+   /* Count the number of load/store instructions so we know when it's
+    * worth trying to schedule them in pairs. */
+   unsigned num_ldst = 0;
+   for (unsigned i = 0; i < len; ++i) {
+      if (instructions[i]->type == TAG_LOAD_STORE_4)
+         ++num_ldst;
+   }
 
-        block->quadword_count = 0;
-        unsigned blend_offset = 0;
+   struct util_dynarray bundles;
+   util_dynarray_init(&bundles, NULL);
 
-        for (;;) {
-                unsigned tag = mir_choose_bundle(instructions, worklist, len);
-                midgard_bundle bundle;
+   block->quadword_count = 0;
 
-                if (tag == TAG_TEXTURE_4)
-                        bundle = mir_schedule_texture(instructions, worklist, len);
-                else if (tag == TAG_LOAD_STORE_4)
-                        bundle = mir_schedule_ldst(instructions, worklist, len);
-                else if (tag == TAG_ALU_4)
-                        bundle = mir_schedule_alu(ctx, instructions, worklist, len);
-                else
-                        break;
+   for (;;) {
+      unsigned tag =
+         mir_choose_bundle(instructions, liveness, worklist, len, num_ldst);
+      midgard_bundle bundle;
 
-                util_dynarray_append(&bundles, midgard_bundle, bundle);
+      if (tag == TAG_TEXTURE_4)
+         bundle = mir_schedule_texture(instructions, liveness, worklist, len,
+                                       ctx->stage != MESA_SHADER_FRAGMENT);
+      else if (tag == TAG_LOAD_STORE_4)
+         bundle =
+            mir_schedule_ldst(instructions, liveness, worklist, len, &num_ldst);
+      else if (tag == TAG_ALU_4)
+         bundle = mir_schedule_alu(ctx, instructions, liveness, worklist, len);
+      else
+         break;
 
-                if (bundle.has_blend_constant)
-                        blend_offset = block->quadword_count;
+      for (unsigned i = 0; i < bundle.instruction_count; ++i)
+         bundle.instructions[i]->bundle_id =
+            ctx->quadword_count + block->quadword_count;
 
-                block->quadword_count += midgard_word_size[bundle.tag];
-        }
+      util_dynarray_append(&bundles, midgard_bundle, bundle);
+      block->quadword_count += midgard_tag_props[bundle.tag].size;
+   }
 
-        /* We emitted bundles backwards; copy into the block in reverse-order */
+   assert(num_ldst == 0);
 
-        util_dynarray_init(&block->bundles, NULL);
-        util_dynarray_foreach_reverse(&bundles, midgard_bundle, bundle) {
-                util_dynarray_append(&block->bundles, midgard_bundle, *bundle);
-        }
+   /* We emitted bundles backwards; copy into the block in reverse-order */
 
-        /* Blend constant was backwards as well. blend_offset if set is
-         * strictly positive, as an offset of zero would imply constants before
-         * any instructions which is invalid in Midgard. TODO: blend constants
-         * are broken if you spill since then quadword_count becomes invalid
-         * XXX */
+   util_dynarray_init(&block->bundles, block);
+   util_dynarray_foreach_reverse(&bundles, midgard_bundle, bundle) {
+      util_dynarray_append(&block->bundles, midgard_bundle, *bundle);
+   }
+   util_dynarray_fini(&bundles);
 
-        if (blend_offset)
-                ctx->blend_constant_offset = ((ctx->quadword_count + block->quadword_count) - blend_offset - 1) * 0x10;
+   block->scheduled = true;
+   ctx->quadword_count += block->quadword_count;
 
-        block->is_scheduled = true;
-        ctx->quadword_count += block->quadword_count;
+   /* Reorder instructions to match bundled. First remove existing
+    * instructions and then recreate the list */
 
-        /* Reorder instructions to match bundled. First remove existing
-         * instructions and then recreate the list */
+   mir_foreach_instr_in_block_safe(block, ins) {
+      list_del(&ins->link);
+   }
 
-        mir_foreach_instr_in_block_safe(block, ins) {
-                list_del(&ins->link);
-        }
+   mir_foreach_instr_in_block_scheduled_rev(block, ins) {
+      list_add(&ins->link, &block->base.instructions);
+   }
 
-        mir_foreach_instr_in_block_scheduled_rev(block, ins) {
-                list_add(&ins->link, &block->instructions);
-        }
+   free(instructions); /* Allocated by flatten_mir() */
+   free(worklist);
+   free(liveness);
+}
 
-	free(instructions); /* Allocated by flatten_mir() */
-	free(worklist);
+/* Insert moves to ensure we can register allocate load/store registers */
+static void
+mir_lower_ldst(compiler_context *ctx)
+{
+   mir_foreach_instr_global_safe(ctx, I) {
+      if (I->type != TAG_LOAD_STORE_4)
+         continue;
+
+      mir_foreach_src(I, s) {
+         if (s == 0)
+            continue;
+         if (I->src[s] == ~0)
+            continue;
+         if (I->swizzle[s][0] == 0)
+            continue;
+
+         unsigned temp = make_compiler_temp(ctx);
+         midgard_instruction mov = v_mov(I->src[s], temp);
+         mov.mask = 0x1;
+         mov.dest_type = I->src_types[s];
+         for (unsigned c = 0; c < NIR_MAX_VEC_COMPONENTS; ++c)
+            mov.swizzle[1][c] = I->swizzle[s][0];
+
+         mir_insert_instruction_before(ctx, I, &mov);
+         I->src[s] = mov.dest;
+         I->swizzle[s][0] = 0;
+      }
+   }
+}
+
+/* Insert moves to ensure we can register allocate blend writeout */
+static void
+mir_lower_blend_input(compiler_context *ctx)
+{
+   mir_foreach_block(ctx, _blk) {
+      midgard_block *blk = (midgard_block *)_blk;
+
+      if (list_is_empty(&blk->base.instructions))
+         continue;
+
+      midgard_instruction *I = mir_last_in_block(blk);
+
+      if (!I || I->type != TAG_ALU_4 || !I->writeout)
+         continue;
+
+      mir_foreach_src(I, s) {
+         unsigned src = I->src[s];
+
+         if (src >= ctx->temp_count)
+            continue;
+
+         if (!_blk->live_out[src])
+            continue;
+
+         unsigned temp = make_compiler_temp(ctx);
+         midgard_instruction mov = v_mov(src, temp);
+         mov.mask = 0xF;
+         mov.dest_type = nir_type_uint32;
+         mir_insert_instruction_before(ctx, I, &mov);
+         I->src[s] = mov.dest;
+      }
+   }
 }
 
 void
-schedule_program(compiler_context *ctx)
+midgard_schedule_program(compiler_context *ctx)
 {
-        midgard_promote_uniforms(ctx);
+   mir_lower_ldst(ctx);
+   midgard_promote_uniforms(ctx);
 
-        /* Must be lowered right before scheduling */
-        mir_squeeze_index(ctx);
-        mir_lower_special_reads(ctx);
-        mir_squeeze_index(ctx);
+   /* Must be lowered right before scheduling */
+   mir_lower_special_reads(ctx);
+   mir_squeeze_index(ctx);
 
-        /* Lowering can introduce some dead moves */
+   if (ctx->stage == MESA_SHADER_FRAGMENT) {
+      mir_invalidate_liveness(ctx);
+      mir_compute_liveness(ctx);
+      mir_lower_blend_input(ctx);
+   }
 
-        mir_foreach_block(ctx, block) {
-                midgard_opt_dead_move_eliminate(ctx, block);
-                schedule_block(ctx, block);
-        }
+   mir_squeeze_index(ctx);
 
+   /* Lowering can introduce some dead moves */
+
+   mir_foreach_block(ctx, _block) {
+      midgard_block *block = (midgard_block *)_block;
+      midgard_opt_dead_move_eliminate(ctx, block);
+      schedule_block(ctx, block);
+   }
 }

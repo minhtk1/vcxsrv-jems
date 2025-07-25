@@ -28,9 +28,11 @@
 #define GLFORMATS_H
 
 
+#include <stdint.h>
 #include <stdbool.h>
-#include <GL/gl.h>
+#include <stdint.h>
 
+#include "util/glheader.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -55,9 +57,6 @@ _mesa_components_in_format( GLenum format );
 
 extern GLint
 _mesa_bytes_per_pixel( GLenum format, GLenum type );
-
-extern GLint
-_mesa_bytes_per_vertex_attrib(GLint comps, GLenum type);
 
 extern GLboolean
 _mesa_is_astc_format(GLenum internalFormat);
@@ -105,6 +104,9 @@ extern GLboolean
 _mesa_is_depth_or_stencil_format(GLenum format);
 
 extern GLboolean
+_mesa_has_depth_float_channel(GLenum internalFormat);
+
+extern GLboolean
 _mesa_is_compressed_format(const struct gl_context *ctx, GLenum format);
 
 extern GLboolean
@@ -138,7 +140,7 @@ _mesa_es_error_check_format_and_type(const struct gl_context *ctx,
                                      unsigned dimensions);
 
 extern GLenum
-_mesa_gles_error_check_format_and_type(const struct gl_context *ctx,
+_mesa_gles_error_check_format_and_type(struct gl_context *ctx,
                                        GLenum format, GLenum type,
                                        GLenum internalFormat);
 extern GLint

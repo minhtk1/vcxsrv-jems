@@ -22,6 +22,7 @@
 
 import mako.template
 import sys
+import itertools
 
 class type(object):
    def __init__(self, c_type, union_field, glsl_type):
@@ -98,7 +99,7 @@ real_types = (float_type, double_type)
 # This is used by most operations.
 constant_template_common = mako.template.Template("""\
    case ${op.get_enum_name()}:
-      for (unsigned c = 0; c < op[0]->type->components(); c++) {
+      for (unsigned c = 0; c < glsl_get_components(op[0]->type); c++) {
          switch (op[0]->type->base_type) {
     % for dst_type, src_types in op.signatures():
          case ${src_types[0].glsl_type}:
@@ -112,20 +113,10 @@ constant_template_common = mako.template.Template("""\
       break;""")
 
 # This template is for binary operations that can operate on some combination
-# of scalar and vector operands.
+# of scalar and vector operands where both source types are the same.
 constant_template_vector_scalar = mako.template.Template("""\
    case ${op.get_enum_name()}:
-    % if "mixed" in op.flags:
-        % for i in range(op.num_operands):
-      assert(op[${i}]->type->base_type == ${op.source_types[0].glsl_type} ||
-            % for src_type in op.source_types[1:-1]:
-             op[${i}]->type->base_type == ${src_type.glsl_type} ||
-            % endfor
-             op[${i}]->type->base_type == ${op.source_types[-1].glsl_type});
-        % endfor
-    % else:
       assert(op[0]->type == op[1]->type || op0_scalar || op1_scalar);
-    % endif
       for (unsigned c = 0, c0 = 0, c1 = 0;
            c < components;
            c0 += c0_inc, c1 += c1_inc, c++) {
@@ -142,12 +133,47 @@ constant_template_vector_scalar = mako.template.Template("""\
       }
       break;""")
 
+# This template is for binary operations that can operate on some combination
+# of scalar and vector operands where the source types can be mixed.
+constant_template_vector_scalar_mixed = mako.template.Template("""\
+   case ${op.get_enum_name()}:
+        % for i in range(op.num_operands):
+      assert(op[${i}]->type->base_type == ${op.source_types[0].glsl_type} ||
+            % for src_type in op.source_types[1:-1]:
+             op[${i}]->type->base_type == ${src_type.glsl_type} ||
+            % endfor
+             op[${i}]->type->base_type == ${op.source_types[-1].glsl_type});
+        % endfor
+      for (unsigned c = 0, c0 = 0, c1 = 0;
+           c < components;
+           c0 += c0_inc, c1 += c1_inc, c++) {
+         <%
+           first_sig_dst_type, first_sig_src_types = op.signatures()[0]
+           last_sig_dst_type, last_sig_src_types = op.signatures()[-1]
+         %>
+         if (op[0]->type->base_type == ${first_sig_src_types[0].glsl_type} &&
+             op[1]->type->base_type == ${first_sig_src_types[1].glsl_type}) {
+            data.${first_sig_dst_type.union_field}[c] = ${op.get_c_expression(first_sig_src_types, ("c0", "c1", "c2"))};
+    % for dst_type, src_types in op.signatures()[1:-1]:
+         } else if (op[0]->type->base_type == ${src_types[0].glsl_type} &&
+                    op[1]->type->base_type == ${src_types[1].glsl_type}) {
+            data.${dst_type.union_field}[c] = ${op.get_c_expression(src_types, ("c0", "c1", "c2"))};
+    % endfor
+         } else if (op[0]->type->base_type == ${last_sig_src_types[0].glsl_type} &&
+                    op[1]->type->base_type == ${last_sig_src_types[1].glsl_type}) {
+            data.${last_sig_dst_type.union_field}[c] = ${op.get_c_expression(last_sig_src_types, ("c0", "c1", "c2"))};
+         } else {
+            unreachable("invalid types");
+         }
+      }
+      break;""")
+
 # This template is for multiplication.  It is unique because it has to support
 # matrix * vector and matrix * matrix operations, and those are just different.
 constant_template_mul = mako.template.Template("""\
    case ${op.get_enum_name()}:
       /* Check for equal types, or unequal types involving scalars */
-      if ((op[0]->type == op[1]->type && !op[0]->type->is_matrix())
+      if ((op[0]->type == op[1]->type && !glsl_type_is_matrix(op[0]->type))
           || op0_scalar || op1_scalar) {
          for (unsigned c = 0, c0 = 0, c1 = 0;
               c < components;
@@ -164,7 +190,7 @@ constant_template_mul = mako.template.Template("""\
             }
          }
       } else {
-         assert(op[0]->type->is_matrix() || op[1]->type->is_matrix());
+         assert(glsl_type_is_matrix(op[0]->type) || glsl_type_is_matrix(op[1]->type));
 
          /* Multiply an N-by-M matrix with an M-by-P matrix.  Since either
           * matrix can be a GLSL vector, either N or P can be 1.
@@ -175,14 +201,14 @@ constant_template_mul = mako.template.Template("""\
           * For mat*vec, the vector is treated as a column vector.  Since
           * matrix_columns is 1 for vectors, this just works.
           */
-         const unsigned n = op[0]->type->is_vector()
+         const unsigned n = glsl_type_is_vector(op[0]->type)
             ? 1 : op[0]->type->vector_elements;
          const unsigned m = op[1]->type->vector_elements;
          const unsigned p = op[1]->type->matrix_columns;
          for (unsigned j = 0; j < p; j++) {
             for (unsigned i = 0; i < n; i++) {
                for (unsigned k = 0; k < m; k++) {
-                  if (op[0]->type->is_double())
+                  if (glsl_type_is_double(op[0]->type))
                      data.d[i+n*j] += op[0]->value.d[i+n*k]*op[1]->value.d[k+m*j];
                   else
                      data.f[i+n*j] += op[0]->value.f[i+n*k]*op[1]->value.f[k+m*j];
@@ -247,7 +273,7 @@ constant_template_vector_insert = mako.template.Template("""\
 
       memcpy(&data, &op[0]->value, sizeof(data));
 
-      switch (this->type->base_type) {
+      switch (return_type->base_type) {
     % for dst_type, src_types in op.signatures():
       case ${src_types[0].glsl_type}:
          data.${dst_type.union_field}[idx] = op[1]->value.${src_types[0].union_field}[0];
@@ -262,8 +288,8 @@ constant_template_vector_insert = mako.template.Template("""\
 # This template is for ir_quadop_vector.
 constant_template_vector = mako.template.Template("""\
    case ${op.get_enum_name()}:
-      for (unsigned c = 0; c < this->type->vector_elements; c++) {
-         switch (this->type->base_type) {
+      for (unsigned c = 0; c < return_type->vector_elements; c++) {
+         switch (return_type->base_type) {
     % for dst_type, src_types in op.signatures():
          case ${src_types[0].glsl_type}:
             data.${dst_type.union_field}[c] = op[c]->value.${src_types[0].union_field}[0];
@@ -278,13 +304,13 @@ constant_template_vector = mako.template.Template("""\
 # This template is for ir_triop_lrp.
 constant_template_lrp = mako.template.Template("""\
    case ${op.get_enum_name()}: {
-      assert(op[0]->type->is_float() || op[0]->type->is_double());
-      assert(op[1]->type->is_float() || op[1]->type->is_double());
-      assert(op[2]->type->is_float() || op[2]->type->is_double());
+      assert(glsl_type_is_float(op[0]->type) || glsl_type_is_double(op[0]->type));
+      assert(glsl_type_is_float(op[1]->type) || glsl_type_is_double(op[1]->type));
+      assert(glsl_type_is_float(op[2]->type) || glsl_type_is_double(op[2]->type));
 
-      unsigned c2_inc = op[2]->type->is_scalar() ? 0 : 1;
+      unsigned c2_inc = glsl_type_is_scalar(op[2]->type) ? 0 : 1;
       for (unsigned c = 0, c2 = 0; c < components; c2 += c2_inc, c++) {
-         switch (this->type->base_type) {
+         switch (return_type->base_type) {
     % for dst_type, src_types in op.signatures():
          case ${src_types[0].glsl_type}:
             data.${dst_type.union_field}[c] = ${op.get_c_expression(src_types, ("c", "c", "c2"))};
@@ -303,7 +329,7 @@ constant_template_lrp = mako.template.Template("""\
 constant_template_csel = mako.template.Template("""\
    case ${op.get_enum_name()}:
       for (unsigned c = 0; c < components; c++) {
-         switch (this->type->base_type) {
+         switch (return_type->base_type) {
     % for dst_type, src_types in op.signatures():
          case ${src_types[1].glsl_type}:
             data.${dst_type.union_field}[c] = ${op.get_c_expression(src_types)};
@@ -378,7 +404,10 @@ class operation(object):
          elif self.name == "vector_extract":
             return constant_template_vector_extract.render(op=self)
          elif vector_scalar_operation in self.flags:
-            return constant_template_vector_scalar.render(op=self)
+            if mixed_type_operation in self.flags:
+               return constant_template_vector_scalar_mixed.render(op=self)
+            else:
+               return constant_template_vector_scalar.render(op=self)
       elif self.num_operands == 3:
          if self.name == "vector_insert":
             return constant_template_vector_insert.render(op=self)
@@ -438,6 +467,8 @@ ir_expression_operation = [
    operation("f2b", 1, source_types=(float_type,), dest_type=bool_type, c_expression="{src0} != 0.0F ? true : false"),
    # Boolean-to-float conversion
    operation("b2f", 1, source_types=(bool_type,), dest_type=float_type, c_expression="{src0} ? 1.0F : 0.0F"),
+   # Boolean-to-float16 conversion
+   operation("b2f16", 1, source_types=(bool_type,), dest_type=float_type, c_expression="{src0} ? 1.0F : 0.0F"),
    # int-to-boolean conversion
    operation("i2b", 1, source_types=(uint_type, int_type), dest_type=bool_type, c_expression="{src0} ? true : false"),
    # Boolean-to-int conversion
@@ -452,6 +483,28 @@ ir_expression_operation = [
    operation("d2f", 1, source_types=(double_type,), dest_type=float_type, c_expression="{src0}"),
    # Float-to-double conversion.
    operation("f2d", 1, source_types=(float_type,), dest_type=double_type, c_expression="{src0}"),
+   # Half-float conversions. These all operate on and return float types,
+   # since the framework expands half to full float before calling in.  We
+   # still have to handle them here so that we can constant propagate through
+   # them, but they are no-ops.
+   operation("f2f16", 1, source_types=(float_type,), dest_type=float_type, c_expression="{src0}"),
+   operation("f2fmp", 1, source_types=(float_type,), dest_type=float_type, c_expression="{src0}"),
+   operation("f162f", 1, source_types=(float_type,), dest_type=float_type, c_expression="{src0}"),
+   operation("u2f16", 1, source_types=(uint_type,), dest_type=float_type, c_expression="{src0}"),
+   operation("f162u", 1, source_types=(float_type,), dest_type=uint_type, c_expression="{src0}"),
+   operation("i2f16", 1, source_types=(int_type,), dest_type=float_type, c_expression="{src0}"),
+   operation("f162i", 1, source_types=(float_type,), dest_type=int_type, c_expression="{src0}"),
+   operation("d2f16", 1, source_types=(double_type,), dest_type=float_type, c_expression="{src0}"),
+   operation("f162d", 1, source_types=(float_type,), dest_type=double_type, c_expression="{src0}"),
+   operation("u642f16", 1, source_types=(uint64_type,), dest_type=float_type, c_expression="{src0}"),
+   operation("f162u64", 1, source_types=(float_type,), dest_type=uint64_type, c_expression="{src0}"),
+   operation("i642f16", 1, source_types=(int64_type,), dest_type=float_type, c_expression="{src0}"),
+   operation("f162i64", 1, source_types=(float_type,), dest_type=int64_type, c_expression="{src0}"),
+   # int16<->int32 conversion.
+   operation("i2i", 1, source_types=(int_type,), dest_type=int_type, c_expression="{src0}"),
+   operation("i2imp", 1, source_types=(int_type,), dest_type=int_type, c_expression="{src0}"),
+   operation("u2u", 1, source_types=(uint_type,), dest_type=uint_type, c_expression="{src0}"),
+   operation("u2ump", 1, source_types=(uint_type,), dest_type=uint_type, c_expression="{src0}"),
    # Double-to-integer conversion.
    operation("d2i", 1, source_types=(double_type,), dest_type=int_type, c_expression="{src0}"),
    # Integer-to-double conversion.
@@ -462,6 +515,8 @@ ir_expression_operation = [
    operation("u2d", 1, source_types=(uint_type,), dest_type=double_type, c_expression="{src0}"),
    # Double-to-boolean conversion.
    operation("d2b", 1, source_types=(double_type,), dest_type=bool_type, c_expression="{src0} != 0.0"),
+   # Float16-to-boolean conversion.
+   operation("f162b", 1, source_types=(float_type,), dest_type=bool_type, c_expression="{src0} != 0.0"),
    # 'Bit-identical int-to-float "conversion"
    operation("bitcast_i2f", 1, source_types=(int_type,), dest_type=float_type, c_expression="bitcast_u2f({src0})"),
    # 'Bit-identical float-to-int "conversion"
@@ -539,23 +594,22 @@ ir_expression_operation = [
    operation("bit_count", 1, source_types=(uint_type, int_type), dest_type=int_type, c_expression="util_bitcount({src0})"),
    operation("find_msb", 1, source_types=(uint_type, int_type), dest_type=int_type, c_expression={'u': "find_msb_uint({src0})", 'i': "find_msb_int({src0})"}),
    operation("find_lsb", 1, source_types=(uint_type, int_type), dest_type=int_type, c_expression="find_msb_uint({src0} & -{src0})"),
+   operation("clz", 1, source_types=(uint_type,), dest_type=uint_type, c_expression="(unsigned)(31 - find_msb_uint({src0}))"),
 
    operation("saturate", 1, printable_name="sat", source_types=(float_type,), c_expression="CLAMP({src0}, 0.0f, 1.0f)"),
 
    # Double packing, part of ARB_gpu_shader_fp64.
-   operation("pack_double_2x32", 1, printable_name="packDouble2x32", source_types=(uint_type,), dest_type=double_type, c_expression="memcpy(&data.d[0], &op[0]->value.u[0], sizeof(double))", flags=frozenset((horizontal_operation, non_assign_operation))),
-   operation("unpack_double_2x32", 1, printable_name="unpackDouble2x32", source_types=(double_type,), dest_type=uint_type, c_expression="memcpy(&data.u[0], &op[0]->value.d[0], sizeof(double))", flags=frozenset((horizontal_operation, non_assign_operation))),
+   operation("pack_double_2x32", 1, printable_name="packDouble2x32", source_types=(uint_type,), dest_type=double_type, c_expression="data.u64[0] = pack_2x32(op[0]->value.u[0], op[0]->value.u[1])", flags=frozenset((horizontal_operation, non_assign_operation))),
+   operation("unpack_double_2x32", 1, printable_name="unpackDouble2x32", source_types=(double_type,), dest_type=uint_type, c_expression="unpack_2x32(op[0]->value.u64[0], &data.u[0], &data.u[1])", flags=frozenset((horizontal_operation, non_assign_operation))),
 
    # Sampler/Image packing, part of ARB_bindless_texture.
-   operation("pack_sampler_2x32", 1, printable_name="packSampler2x32", source_types=(uint_type,), dest_type=uint64_type, c_expression="memcpy(&data.u64[0], &op[0]->value.u[0], sizeof(uint64_t))", flags=frozenset((horizontal_operation, non_assign_operation))),
-   operation("pack_image_2x32", 1, printable_name="packImage2x32", source_types=(uint_type,), dest_type=uint64_type, c_expression="memcpy(&data.u64[0], &op[0]->value.u[0], sizeof(uint64_t))", flags=frozenset((horizontal_operation, non_assign_operation))),
-   operation("unpack_sampler_2x32", 1, printable_name="unpackSampler2x32", source_types=(uint64_type,), dest_type=uint_type, c_expression="memcpy(&data.u[0], &op[0]->value.u64[0], sizeof(uint64_t))", flags=frozenset((horizontal_operation, non_assign_operation))),
-   operation("unpack_image_2x32", 1, printable_name="unpackImage2x32", source_types=(uint64_type,), dest_type=uint_type, c_expression="memcpy(&data.u[0], &op[0]->value.u64[0], sizeof(uint64_t))", flags=frozenset((horizontal_operation, non_assign_operation))),
+   operation("pack_sampler_2x32", 1, printable_name="packSampler2x32", source_types=(uint_type,), dest_type=uint64_type, c_expression="data.u64[0] = pack_2x32(op[0]->value.u[0], op[0]->value.u[1])", flags=frozenset((horizontal_operation, non_assign_operation))),
+   operation("pack_image_2x32", 1, printable_name="packImage2x32", source_types=(uint_type,), dest_type=uint64_type, c_expression="data.u64[0] = pack_2x32(op[0]->value.u[0], op[0]->value.u[1])", flags=frozenset((horizontal_operation, non_assign_operation))),
+   operation("unpack_sampler_2x32", 1, printable_name="unpackSampler2x32", source_types=(uint64_type,), dest_type=uint_type, c_expression="unpack_2x32(op[0]->value.u64[0], &data.u[0], &data.u[1])", flags=frozenset((horizontal_operation, non_assign_operation))),
+   operation("unpack_image_2x32", 1, printable_name="unpackImage2x32", source_types=(uint64_type,), dest_type=uint_type, c_expression="unpack_2x32(op[0]->value.u64[0], &data.u[0], &data.u[1])", flags=frozenset((horizontal_operation, non_assign_operation))),
 
    operation("frexp_sig", 1),
    operation("frexp_exp", 1),
-
-   operation("noise", 1),
 
    operation("subroutine_to_int", 1),
 
@@ -576,16 +630,46 @@ ir_expression_operation = [
    # of its length.
    operation("ssbo_unsized_array_length", 1),
 
+   # Calculate length of an implicitly sized array.
+   # This opcode is going to be replaced with a constant expression at link
+   # time.
+   operation("implicitly_sized_array_length", 1),
+
    # 64-bit integer packing ops.
-   operation("pack_int_2x32", 1, printable_name="packInt2x32", source_types=(int_type,), dest_type=int64_type, c_expression="memcpy(&data.i64[0], &op[0]->value.i[0], sizeof(int64_t))", flags=frozenset((horizontal_operation, non_assign_operation))),
-   operation("pack_uint_2x32", 1, printable_name="packUint2x32", source_types=(uint_type,), dest_type=uint64_type, c_expression="memcpy(&data.u64[0], &op[0]->value.u[0], sizeof(uint64_t))", flags=frozenset((horizontal_operation, non_assign_operation))),
-   operation("unpack_int_2x32", 1, printable_name="unpackInt2x32", source_types=(int64_type,), dest_type=int_type, c_expression="memcpy(&data.i[0], &op[0]->value.i64[0], sizeof(int64_t))", flags=frozenset((horizontal_operation, non_assign_operation))),
-   operation("unpack_uint_2x32", 1, printable_name="unpackUint2x32", source_types=(uint64_type,), dest_type=uint_type, c_expression="memcpy(&data.u[0], &op[0]->value.u64[0], sizeof(uint64_t))", flags=frozenset((horizontal_operation, non_assign_operation))),
+   operation("pack_int_2x32", 1, printable_name="packInt2x32", source_types=(int_type,), dest_type=int64_type, c_expression="data.u64[0] = pack_2x32(op[0]->value.u[0], op[0]->value.u[1])", flags=frozenset((horizontal_operation, non_assign_operation))),
+   operation("pack_uint_2x32", 1, printable_name="packUint2x32", source_types=(uint_type,), dest_type=uint64_type, c_expression="data.u64[0] = pack_2x32(op[0]->value.u[0], op[0]->value.u[1])", flags=frozenset((horizontal_operation, non_assign_operation))),
+   operation("unpack_int_2x32", 1, printable_name="unpackInt2x32", source_types=(int64_type,), dest_type=int_type, c_expression="unpack_2x32(op[0]->value.u64[0], &data.u[0], &data.u[1])", flags=frozenset((horizontal_operation, non_assign_operation))),
+   operation("unpack_uint_2x32", 1, printable_name="unpackUint2x32", source_types=(uint64_type,), dest_type=uint_type, c_expression="unpack_2x32(op[0]->value.u64[0], &data.u[0], &data.u[1])", flags=frozenset((horizontal_operation, non_assign_operation))),
 
    operation("add", 2, printable_name="+", source_types=numeric_types, c_expression="{src0} + {src1}", flags=vector_scalar_operation),
    operation("sub", 2, printable_name="-", source_types=numeric_types, c_expression="{src0} - {src1}", flags=vector_scalar_operation),
+   operation("add_sat", 2, printable_name="add_sat", source_types=integer_types, c_expression={
+      'u': "({src0} + {src1}) < {src0} ? UINT32_MAX : ({src0} + {src1})",
+      'i': "iadd_saturate({src0}, {src1})",
+      'u64': "({src0} + {src1}) < {src0} ? UINT64_MAX : ({src0} + {src1})",
+      'i64': "iadd64_saturate({src0}, {src1})"
+   }),
+   operation("sub_sat", 2, printable_name="sub_sat", source_types=integer_types, c_expression={
+      'u': "({src1} > {src0}) ? 0 : {src0} - {src1}",
+      'i': "isub_saturate({src0}, {src1})",
+      'u64': "({src1} > {src0}) ? 0 : {src0} - {src1}",
+      'i64': "isub64_saturate({src0}, {src1})"
+   }),
+   operation("abs_sub", 2, printable_name="abs_sub", source_types=integer_types, c_expression={
+      'u': "({src1} > {src0}) ? {src1} - {src0} : {src0} - {src1}",
+      'i': "({src1} > {src0}) ? (unsigned){src1} - (unsigned){src0} : (unsigned){src0} - (unsigned){src1}",
+      'u64': "({src1} > {src0}) ? {src1} - {src0} : {src0} - {src1}",
+      'i64': "({src1} > {src0}) ? (uint64_t){src1} - (uint64_t){src0} : (uint64_t){src0} - (uint64_t){src1}",
+   }),
+   operation("avg", 2, printable_name="average", source_types=integer_types, c_expression="({src0} >> 1) + ({src1} >> 1) + (({src0} & {src1}) & 1)"),
+   operation("avg_round", 2, printable_name="average_rounded", source_types=integer_types, c_expression="({src0} >> 1) + ({src1} >> 1) + (({src0} | {src1}) & 1)"),
+
    # "Floating-point or low 32-bit integer multiply."
    operation("mul", 2, printable_name="*", source_types=numeric_types, c_expression="{src0} * {src1}"),
+   operation("mul_32x16", 2, printable_name="*", source_types=(uint_type, int_type), c_expression={
+      'u': "{src0} * (uint16_t){src1}",
+      'i': "{src0} * (int16_t){src0}"
+   }),
    operation("imul_high", 2),       # Calculates the high 32-bits of a 64-bit multiply.
    operation("div", 2, printable_name="/", source_types=numeric_types, c_expression={'u': "{src1} == 0 ? 0 : {src0} / {src1}", 'i': "{src1} == 0 ? 0 : {src0} / {src1}", 'u64': "{src1} == 0 ? 0 : {src0} / {src1}", 'i64': "{src1} == 0 ? 0 : {src0} / {src1}", 'default': "{src0} / {src1}"}, flags=vector_scalar_operation),
 
@@ -618,8 +702,12 @@ ir_expression_operation = [
    operation("any_nequal", 2, source_types=all_types, dest_type=bool_type, c_expression="!op[0]->has_value(op[1])", flags=frozenset((horizontal_operation, types_identical_operation))),
 
    # Bit-wise binary operations.
-   operation("lshift", 2, printable_name="<<", source_types=integer_types, c_expression="{src0} << {src1}", flags=frozenset((vector_scalar_operation, mixed_type_operation))),
-   operation("rshift", 2, printable_name=">>", source_types=integer_types, c_expression="{src0} >> {src1}", flags=frozenset((vector_scalar_operation, mixed_type_operation))),
+   operation("lshift", 2,
+             printable_name="<<", all_signatures=list((src_sig[0], src_sig) for src_sig in itertools.product(integer_types, repeat=2)),
+             source_types=integer_types, c_expression="{src0} << {src1}", flags=frozenset((vector_scalar_operation, mixed_type_operation))),
+   operation("rshift", 2,
+             printable_name=">>", all_signatures=list((src_sig[0], src_sig) for src_sig in itertools.product(integer_types, repeat=2)),
+             source_types=integer_types, c_expression="{src0} >> {src1}", flags=frozenset((vector_scalar_operation, mixed_type_operation))),
    operation("bit_and", 2, printable_name="&", source_types=integer_types, c_expression="{src0} & {src1}", flags=vector_scalar_operation),
    operation("bit_xor", 2, printable_name="^", source_types=integer_types, c_expression="{src0} ^ {src1}", flags=vector_scalar_operation),
    operation("bit_or", 2, printable_name="|", source_types=integer_types, c_expression="{src0} | {src1}", flags=vector_scalar_operation),
@@ -633,12 +721,6 @@ ir_expression_operation = [
    operation("max", 2, source_types=numeric_types, c_expression="MAX2({src0}, {src1})", flags=vector_scalar_operation),
 
    operation("pow", 2, source_types=(float_type,), c_expression="powf({src0}, {src1})"),
-
-   # Load a value the size of a given GLSL type from a uniform block.
-   #
-   # operand0 is the ir_constant uniform block index in the linked shader.
-   # operand1 is a byte offset within the uniform block.
-   operation("ubo_load", 2),
 
    # Multiplies a number by two to a power, part of ARB_gpu_shader5.
    operation("ldexp", 2,

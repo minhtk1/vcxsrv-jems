@@ -42,7 +42,7 @@
 #include "util/hash_table.h"
 #include "util/u_atomic.h"
 
-static mtx_t handle_lock = _MTX_INITIALIZER_NP;
+#define SHIM_MEM_SIZE (4ull * 1024 * 1024 * 1024)
 
 #ifndef HAVE_MEMFD_CREATE
 #include <sys/syscall.h>
@@ -56,6 +56,8 @@ memfd_create(const char *name, unsigned int flags)
 
 /* Global state for the shim shared between libc, core, and driver. */
 struct shim_device shim_device;
+
+long shim_page_size;
 
 static uint32_t
 uint_key_hash(const void *key)
@@ -80,6 +82,32 @@ drm_shim_device_init(void)
                                                 uint_key_hash,
                                                 uint_key_compare);
 
+   shim_device.offset_map = _mesa_hash_table_u64_create(NULL);
+
+   mtx_init(&shim_device.mem_lock, mtx_plain);
+
+   shim_device.mem_fd = memfd_create("shim mem", MFD_CLOEXEC);
+   assert(shim_device.mem_fd != -1);
+
+   ASSERTED int ret = ftruncate(shim_device.mem_fd, SHIM_MEM_SIZE);
+   assert(ret == 0);
+
+   /* The man page for mmap() says
+    *
+    *    offset must be a multiple of the page size as returned by
+    *    sysconf(_SC_PAGE_SIZE).
+    *
+    * Depending on the configuration of the kernel, this may not be 4096. Get
+    * this page size once and use it as the page size throughout, ensuring that
+    * are offsets are page-size aligned as required. Otherwise, mmap will fail
+    * with EINVAL.
+    */
+
+   shim_page_size = sysconf(_SC_PAGE_SIZE);
+
+   util_vma_heap_init(&shim_device.mem_heap, shim_page_size,
+                      SHIM_MEM_SIZE - shim_page_size);
+
    drm_shim_driver_init();
 }
 
@@ -89,6 +117,8 @@ drm_shim_file_create(int fd)
    struct shim_fd *shim_fd = calloc(1, sizeof(*shim_fd));
 
    shim_fd->fd = fd;
+   p_atomic_set(&shim_fd->refcount, 1);
+   mtx_init(&shim_fd->handle_lock, mtx_plain);
    shim_fd->handles = _mesa_hash_table_create(NULL,
                                               uint_key_hash,
                                               uint_key_compare);
@@ -104,8 +134,34 @@ void drm_shim_fd_register(int fd, struct shim_fd *shim_fd)
 {
    if (!shim_fd)
       shim_fd = drm_shim_file_create(fd);
+   else
+      p_atomic_inc(&shim_fd->refcount);
 
    _mesa_hash_table_insert(shim_device.fd_map, (void *)(uintptr_t)(fd + 1), shim_fd);
+}
+
+static void handle_delete_fxn(struct hash_entry *entry)
+{
+   drm_shim_bo_put(entry->data);
+}
+
+void drm_shim_fd_unregister(int fd)
+{
+   if (fd == -1)
+      return;
+
+   struct hash_entry *entry =
+         _mesa_hash_table_search(shim_device.fd_map, (void *)(uintptr_t)(fd + 1));
+   if (!entry)
+      return;
+   struct shim_fd *shim_fd = entry->data;
+   _mesa_hash_table_remove(shim_device.fd_map, entry);
+
+   if (!p_atomic_dec_zero(&shim_fd->refcount))
+      return;
+
+   _mesa_hash_table_destroy(shim_fd->handles, handle_delete_fxn);
+   free(shim_fd);
 }
 
 struct shim_fd *
@@ -148,6 +204,18 @@ drm_shim_ioctl_version(int fd, unsigned long request, void *arg)
 }
 
 static int
+drm_shim_ioctl_get_unique(int fd, unsigned long request, void *arg)
+{
+   struct drm_unique *gu = arg;
+
+   if (gu->unique && shim_device.unique)
+      strncpy(gu->unique, shim_device.unique, gu->unique_len);
+   gu->unique_len = shim_device.unique ? strlen(shim_device.unique) : 0;
+
+   return 0;
+}
+
+static int
 drm_shim_ioctl_get_cap(int fd, unsigned long request, void *arg)
 {
    struct drm_get_cap *gc = arg;
@@ -155,6 +223,7 @@ drm_shim_ioctl_get_cap(int fd, unsigned long request, void *arg)
    switch (gc->capability) {
    case DRM_CAP_PRIME:
    case DRM_CAP_SYNCOBJ:
+   case DRM_CAP_SYNCOBJ_TIMELINE:
       gc->value = 1;
       return 0;
 
@@ -174,18 +243,28 @@ drm_shim_ioctl_gem_close(int fd, unsigned long request, void *arg)
    if (!c->handle)
       return 0;
 
-   mtx_lock(&handle_lock);
+   mtx_lock(&shim_fd->handle_lock);
    struct hash_entry *entry =
       _mesa_hash_table_search(shim_fd->handles, (void *)(uintptr_t)c->handle);
    if (!entry) {
-      mtx_unlock(&handle_lock);
+      mtx_unlock(&shim_fd->handle_lock);
       return -EINVAL;
    }
 
    struct shim_bo *bo = entry->data;
    _mesa_hash_table_remove(shim_fd->handles, entry);
    drm_shim_bo_put(bo);
-   mtx_unlock(&handle_lock);
+   mtx_unlock(&shim_fd->handle_lock);
+   return 0;
+}
+
+static int
+drm_shim_ioctl_syncobj_create(int fd, unsigned long request, void *arg)
+{
+   struct drm_syncobj_create *create = arg;
+
+   create->handle = 1; /* 0 is invalid */
+
    return 0;
 }
 
@@ -197,12 +276,19 @@ drm_shim_ioctl_stub(int fd, unsigned long request, void *arg)
 
 ioctl_fn_t core_ioctls[] = {
    [_IOC_NR(DRM_IOCTL_VERSION)] = drm_shim_ioctl_version,
+   [_IOC_NR(DRM_IOCTL_GET_UNIQUE)] = drm_shim_ioctl_get_unique,
    [_IOC_NR(DRM_IOCTL_GET_CAP)] = drm_shim_ioctl_get_cap,
    [_IOC_NR(DRM_IOCTL_GEM_CLOSE)] = drm_shim_ioctl_gem_close,
-   [_IOC_NR(DRM_IOCTL_SYNCOBJ_CREATE)] = drm_shim_ioctl_stub,
+   [_IOC_NR(DRM_IOCTL_SYNCOBJ_CREATE)] = drm_shim_ioctl_syncobj_create,
    [_IOC_NR(DRM_IOCTL_SYNCOBJ_DESTROY)] = drm_shim_ioctl_stub,
    [_IOC_NR(DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD)] = drm_shim_ioctl_stub,
    [_IOC_NR(DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE)] = drm_shim_ioctl_stub,
+   [_IOC_NR(DRM_IOCTL_SYNCOBJ_WAIT)] = drm_shim_ioctl_stub,
+   [_IOC_NR(DRM_IOCTL_SYNCOBJ_TRANSFER)] = drm_shim_ioctl_stub,
+   [_IOC_NR(DRM_IOCTL_SYNCOBJ_RESET)] = drm_shim_ioctl_stub,
+   [_IOC_NR(DRM_IOCTL_SYNCOBJ_TIMELINE_SIGNAL)] = drm_shim_ioctl_stub,
+   [_IOC_NR(DRM_IOCTL_SYNCOBJ_TIMELINE_WAIT)] = drm_shim_ioctl_stub,
+   [_IOC_NR(DRM_IOCTL_SYNCOBJ_QUERY)] = drm_shim_ioctl_stub,
 };
 
 /**
@@ -211,7 +297,7 @@ ioctl_fn_t core_ioctls[] = {
 int
 drm_shim_ioctl(int fd, unsigned long request, void *arg)
 {
-   int type = _IOC_TYPE(request);
+   ASSERTED int type = _IOC_TYPE(request);
    int nr = _IOC_NR(request);
 
    assert(type == DRM_IOCTL_BASE);
@@ -239,23 +325,23 @@ drm_shim_ioctl(int fd, unsigned long request, void *arg)
               nr, request);
    }
 
-   abort();
+   return -EINVAL;
 }
 
-void
+int
 drm_shim_bo_init(struct shim_bo *bo, size_t size)
 {
-   bo->size = size;
-   bo->fd = memfd_create("shim bo", MFD_CLOEXEC);
-   if (bo->fd == -1) {
-      fprintf(stderr, "Failed to create BO: %s\n", strerror(errno));
-      abort();
-   }
 
-   if (ftruncate(bo->fd, size) == -1) {
-      fprintf(stderr, "Failed to size BO: %s\n", strerror(errno));
-      abort();
-   }
+   mtx_lock(&shim_device.mem_lock);
+   bo->mem_addr = util_vma_heap_alloc(&shim_device.mem_heap, size, shim_page_size);
+   mtx_unlock(&shim_device.mem_lock);
+
+   if (!bo->mem_addr)
+      return -ENOMEM;
+
+   bo->size = size;
+
+   return 0;
 }
 
 struct shim_bo *
@@ -264,11 +350,11 @@ drm_shim_bo_lookup(struct shim_fd *shim_fd, int handle)
    if (!handle)
       return NULL;
 
-   mtx_lock(&handle_lock);
+   mtx_lock(&shim_fd->handle_lock);
    struct hash_entry *entry =
       _mesa_hash_table_search(shim_fd->handles, (void *)(uintptr_t)handle);
    struct shim_bo *bo = entry ? entry->data : NULL;
-   mtx_unlock(&handle_lock);
+   mtx_unlock(&shim_fd->handle_lock);
 
    if (bo)
       p_atomic_inc(&bo->refcount);
@@ -290,7 +376,10 @@ drm_shim_bo_put(struct shim_bo *bo)
 
    if (shim_device.driver_bo_free)
       shim_device.driver_bo_free(bo);
-   close(bo->fd);
+
+   mtx_lock(&shim_device.mem_lock);
+   util_vma_heap_free(&shim_device.mem_heap, bo->mem_addr, bo->size);
+   mtx_unlock(&shim_device.mem_lock);
    free(bo);
 }
 
@@ -300,34 +389,41 @@ drm_shim_bo_get_handle(struct shim_fd *shim_fd, struct shim_bo *bo)
    /* We should probably have some real datastructure for finding the free
     * number.
     */
-   mtx_lock(&handle_lock);
+   mtx_lock(&shim_fd->handle_lock);
    for (int new_handle = 1; ; new_handle++) {
       void *key = (void *)(uintptr_t)new_handle;
       if (!_mesa_hash_table_search(shim_fd->handles, key)) {
          drm_shim_bo_get(bo);
          _mesa_hash_table_insert(shim_fd->handles, key, bo);
-         mtx_unlock(&handle_lock);
+         mtx_unlock(&shim_fd->handle_lock);
          return new_handle;
       }
    }
-   mtx_unlock(&handle_lock);
+   mtx_unlock(&shim_fd->handle_lock);
 
    return 0;
 }
 
 /* Creates an mmap offset for the BO in the DRM fd.
- *
- * XXX: We should be maintaining a u_mm allocator where the mmap offsets
- * allocate the size of the BO and it can be used to look the BO back up.
- * Instead, we just stuff the shim's pointer as the return value, and treat
- * the incoming mmap offset on the DRM fd as a BO pointer.  This doesn't work
- * if someone tries to map a subset of the BO, but it's enough to get V3D
- * working for now.
  */
 uint64_t
 drm_shim_bo_get_mmap_offset(struct shim_fd *shim_fd, struct shim_bo *bo)
 {
-   return (uintptr_t)bo;
+   mtx_lock(&shim_device.mem_lock);
+   _mesa_hash_table_u64_insert(shim_device.offset_map, bo->mem_addr, bo);
+   mtx_unlock(&shim_device.mem_lock);
+
+   /* reuse the buffer address as the mmap offset: */
+   return bo->mem_addr;
+}
+
+void
+drm_shim_init_iomem_region(off64_t offset, size_t size,
+                           void *(*mmap_handler)(size_t, int, int, off64_t))
+{
+   shim_device.iomem_region.mmap = mmap_handler;
+   shim_device.iomem_region.start = offset;
+   shim_device.iomem_region.size = size;
 }
 
 /* For mmap() on the DRM fd, look up the BO from the "offset" and map the BO's
@@ -335,9 +431,26 @@ drm_shim_bo_get_mmap_offset(struct shim_fd *shim_fd, struct shim_bo *bo)
  */
 void *
 drm_shim_mmap(struct shim_fd *shim_fd, size_t length, int prot, int flags,
-              int fd, off_t offset)
+              int fd, off64_t offset)
 {
-   struct shim_bo *bo = (void *)(uintptr_t)offset;
+   if (shim_device.iomem_region.mmap &&
+       offset >= shim_device.iomem_region.start &&
+       offset + length <= shim_device.iomem_region.start + shim_device.iomem_region.size) {
+      return shim_device.iomem_region.mmap(length, prot, flags, offset);
+   }
 
-   return mmap(NULL, length, prot, flags, bo->fd, 0);
+   mtx_lock(&shim_device.mem_lock);
+   struct shim_bo *bo = _mesa_hash_table_u64_search(shim_device.offset_map, offset);
+   mtx_unlock(&shim_device.mem_lock);
+
+   if (!bo)
+      return MAP_FAILED;
+
+   if (length > bo->size)
+      return MAP_FAILED;
+
+   /* The offset we pass to mmap must be aligned to the page size */
+   assert((bo->mem_addr & (shim_page_size - 1)) == 0);
+
+   return mmap(NULL, length, prot, flags, shim_device.mem_fd, bo->mem_addr);
 }

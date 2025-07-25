@@ -28,11 +28,13 @@
  */
 
 
-#include "glheader.h"
+#include "util/glheader.h"
 #include "bufferobj.h"
 #include "context.h"
 #include "pixelstore.h"
 #include "mtypes.h"
+#include "util/rounding.h"
+#include "api_exec_decl.h"
 
 
 static ALWAYS_INLINE void
@@ -53,7 +55,7 @@ pixel_storei(GLenum pname, GLint param, bool no_error)
          ctx->Pack.LsbFirst = param ? GL_TRUE : GL_FALSE;
          break;
       case GL_PACK_ROW_LENGTH:
-         if (!no_error && !_mesa_is_desktop_gl(ctx) && !_mesa_is_gles3(ctx))
+         if (!no_error && _mesa_is_gles1(ctx))
             goto invalid_enum_error;
          if (!no_error && param<0)
             goto invalid_value_error;
@@ -67,14 +69,14 @@ pixel_storei(GLenum pname, GLint param, bool no_error)
          ctx->Pack.ImageHeight = param;
          break;
       case GL_PACK_SKIP_PIXELS:
-         if (!no_error && !_mesa_is_desktop_gl(ctx) && !_mesa_is_gles3(ctx))
+         if (!no_error && _mesa_is_gles1(ctx))
             goto invalid_enum_error;
          if (!no_error && param<0)
             goto invalid_value_error;
          ctx->Pack.SkipPixels = param;
          break;
       case GL_PACK_SKIP_ROWS:
-         if (!no_error && !_mesa_is_desktop_gl(ctx) && !_mesa_is_gles3(ctx))
+         if (!no_error && _mesa_is_gles1(ctx))
             goto invalid_enum_error;
          if (!no_error && param<0)
             goto invalid_value_error;
@@ -93,8 +95,12 @@ pixel_storei(GLenum pname, GLint param, bool no_error)
          ctx->Pack.Alignment = param;
          break;
       case GL_PACK_INVERT_MESA:
-         if (!no_error &&
-             (!_mesa_is_desktop_gl(ctx) || !ctx->Extensions.MESA_pack_invert))
+         if (!no_error && !_mesa_has_MESA_pack_invert(ctx))
+            goto invalid_enum_error;
+         ctx->Pack.Invert = param;
+         break;
+      case GL_PACK_REVERSE_ROW_ORDER_ANGLE:
+         if (!no_error && !_mesa_has_ANGLE_pack_reverse_row_order(ctx))
             goto invalid_enum_error;
          ctx->Pack.Invert = param;
          break;
@@ -138,7 +144,7 @@ pixel_storei(GLenum pname, GLint param, bool no_error)
          ctx->Unpack.LsbFirst = param ? GL_TRUE : GL_FALSE;
          break;
       case GL_UNPACK_ROW_LENGTH:
-         if (!no_error && ctx->API == API_OPENGLES)
+         if (!no_error && _mesa_is_gles1(ctx))
             goto invalid_enum_error;
          if (!no_error && param<0)
             goto invalid_value_error;
@@ -152,14 +158,14 @@ pixel_storei(GLenum pname, GLint param, bool no_error)
          ctx->Unpack.ImageHeight = param;
          break;
       case GL_UNPACK_SKIP_PIXELS:
-         if (!no_error && ctx->API == API_OPENGLES)
+         if (!no_error && _mesa_is_gles1(ctx))
             goto invalid_enum_error;
          if (!no_error && param<0)
             goto invalid_value_error;
          ctx->Unpack.SkipPixels = param;
          break;
       case GL_UNPACK_SKIP_ROWS:
-         if (!no_error && ctx->API == API_OPENGLES)
+         if (!no_error && _mesa_is_gles1(ctx))
             goto invalid_enum_error;
          if (!no_error && param<0)
             goto invalid_value_error;
@@ -234,7 +240,7 @@ _mesa_PixelStorei(GLenum pname, GLint param)
 void GLAPIENTRY
 _mesa_PixelStoref(GLenum pname, GLfloat param)
 {
-   _mesa_PixelStorei(pname, IROUND(param));
+   _mesa_PixelStorei(pname, lroundf(param));
 }
 
 
@@ -248,9 +254,28 @@ _mesa_PixelStorei_no_error(GLenum pname, GLint param)
 void GLAPIENTRY
 _mesa_PixelStoref_no_error(GLenum pname, GLfloat param)
 {
-   _mesa_PixelStorei_no_error(pname, IROUND(param));
+   _mesa_PixelStorei_no_error(pname, lroundf(param));
 }
 
+void
+_mesa_init_pixelstore_attrib(struct gl_context *ctx,
+                             struct gl_pixelstore_attrib *pack)
+{
+   pack->Alignment = 4;
+   pack->RowLength = 0;
+   pack->ImageHeight = 0;
+   pack->SkipPixels = 0;
+   pack->SkipRows = 0;
+   pack->SkipImages = 0;
+   pack->SwapBytes = GL_FALSE;
+   pack->LsbFirst = GL_FALSE;
+   pack->Invert = GL_FALSE;
+   pack->CompressedBlockWidth = 0;
+   pack->CompressedBlockHeight = 0;
+   pack->CompressedBlockDepth = 0;
+   pack->CompressedBlockSize = 0;
+   _mesa_reference_buffer_object(ctx, &pack->BufferObj, NULL);
+}
 
 /**
  * Initialize the context's pixel store state.
@@ -259,36 +284,9 @@ void
 _mesa_init_pixelstore(struct gl_context *ctx)
 {
    /* Pixel transfer */
-   ctx->Pack.Alignment = 4;
-   ctx->Pack.RowLength = 0;
-   ctx->Pack.ImageHeight = 0;
-   ctx->Pack.SkipPixels = 0;
-   ctx->Pack.SkipRows = 0;
-   ctx->Pack.SkipImages = 0;
-   ctx->Pack.SwapBytes = GL_FALSE;
-   ctx->Pack.LsbFirst = GL_FALSE;
-   ctx->Pack.Invert = GL_FALSE;
-   ctx->Pack.CompressedBlockWidth = 0;
-   ctx->Pack.CompressedBlockHeight = 0;
-   ctx->Pack.CompressedBlockDepth = 0;
-   ctx->Pack.CompressedBlockSize = 0;
-   _mesa_reference_buffer_object(ctx, &ctx->Pack.BufferObj,
-                                 ctx->Shared->NullBufferObj);
-   ctx->Unpack.Alignment = 4;
-   ctx->Unpack.RowLength = 0;
-   ctx->Unpack.ImageHeight = 0;
-   ctx->Unpack.SkipPixels = 0;
-   ctx->Unpack.SkipRows = 0;
-   ctx->Unpack.SkipImages = 0;
-   ctx->Unpack.SwapBytes = GL_FALSE;
-   ctx->Unpack.LsbFirst = GL_FALSE;
-   ctx->Unpack.Invert = GL_FALSE;
-   ctx->Unpack.CompressedBlockWidth = 0;
-   ctx->Unpack.CompressedBlockHeight = 0;
-   ctx->Unpack.CompressedBlockDepth = 0;
-   ctx->Unpack.CompressedBlockSize = 0;
-   _mesa_reference_buffer_object(ctx, &ctx->Unpack.BufferObj,
-                                 ctx->Shared->NullBufferObj);
+   _mesa_init_pixelstore_attrib(ctx, &ctx->Pack);
+   _mesa_init_pixelstore_attrib(ctx, &ctx->Unpack);
+   _mesa_init_pixelstore_attrib(ctx, &ctx->DefaultPacking);
 
    /*
     * _mesa_unpack_image() returns image data in this format.  When we
@@ -297,16 +295,6 @@ _mesa_init_pixelstore(struct gl_context *ctx)
     * unpacking parameters to these values!
     */
    ctx->DefaultPacking.Alignment = 1;
-   ctx->DefaultPacking.RowLength = 0;
-   ctx->DefaultPacking.SkipPixels = 0;
-   ctx->DefaultPacking.SkipRows = 0;
-   ctx->DefaultPacking.ImageHeight = 0;
-   ctx->DefaultPacking.SkipImages = 0;
-   ctx->DefaultPacking.SwapBytes = GL_FALSE;
-   ctx->DefaultPacking.LsbFirst = GL_FALSE;
-   ctx->DefaultPacking.Invert = GL_FALSE;
-   _mesa_reference_buffer_object(ctx, &ctx->DefaultPacking.BufferObj,
-                                 ctx->Shared->NullBufferObj);
 }
 
 

@@ -1,8 +1,8 @@
 /**************************************************************************
- * 
+ *
  * Copyright 2003 VMware, Inc.
  * All Rights Reserved.
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the
  * "Software"), to deal in the Software without restriction, including
@@ -10,11 +10,11 @@
  * distribute, sub license, and/or sell copies of the Software, and to
  * permit persons to whom the Software is furnished to do so, subject to
  * the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice (including the
  * next paragraph) shall be included in all copies or substantial portions
  * of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
  * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
  * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT.
@@ -22,16 +22,17 @@
  * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
  * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- * 
+ *
  **************************************************************************/
 
 
-#include "main/glheader.h"
-#include "main/mtypes.h"
-#include "main/imports.h"
+#include "util/glheader.h"
+#include "main/shader_types.h"
+
 #include "main/shaderobj.h"
 #include "program/prog_cache.h"
 #include "program/program.h"
+#include "util/u_memory.h"
 
 
 struct cache_item
@@ -111,7 +112,7 @@ clear_cache(struct gl_context *ctx, struct gl_program_cache *cache,
 {
    struct cache_item *c, *next;
    GLuint i;
-   
+
    cache->last = NULL;
 
    for (i = 0; i < cache->size; i++) {
@@ -125,7 +126,7 @@ clear_cache(struct gl_context *ctx, struct gl_program_cache *cache,
 	 } else {
 	    _mesa_reference_program(ctx, &c->program, NULL);
 	 }
-	 free(c);
+	 FREE(c);
       }
       cache->items[i] = NULL;
    }
@@ -145,7 +146,7 @@ _mesa_new_program_cache(void)
       cache->items =
          calloc(cache->size, sizeof(struct cache_item *));
       if (!cache->items) {
-         free(cache);
+         FREE(cache);
          return NULL;
       }
    }
@@ -158,16 +159,7 @@ _mesa_delete_program_cache(struct gl_context *ctx, struct gl_program_cache *cach
 {
    clear_cache(ctx, cache, GL_FALSE);
    free(cache->items);
-   free(cache);
-}
-
-void
-_mesa_delete_shader_cache(struct gl_context *ctx,
-			  struct gl_program_cache *cache)
-{
-   clear_cache(ctx, cache, GL_TRUE);
-   free(cache->items);
-   free(cache);
+   FREE(cache);
 }
 
 
@@ -219,37 +211,8 @@ _mesa_program_cache_insert(struct gl_context *ctx,
    if (cache->n_items > cache->size * 1.5) {
       if (cache->size < 1000)
 	 rehash(cache);
-      else 
-	 clear_cache(ctx, cache, GL_FALSE);
-   }
-
-   cache->n_items++;
-   c->next = cache->items[hash % cache->size];
-   cache->items[hash % cache->size] = c;
-}
-
-void
-_mesa_shader_cache_insert(struct gl_context *ctx,
-			  struct gl_program_cache *cache,
-			  const void *key, GLuint keysize,
-			  struct gl_shader_program *program)
-{
-   const GLuint hash = hash_key(key, keysize);
-   struct cache_item *c = CALLOC_STRUCT(cache_item);
-
-   c->hash = hash;
-
-   c->key = malloc(keysize);
-   memcpy(c->key, key, keysize);
-   c->keysize = keysize;
-
-   c->program = (struct gl_program *)program;  /* no refcount change */
-
-   if (cache->n_items > cache->size * 1.5) {
-      if (cache->size < 1000)
-	 rehash(cache);
       else
-	 clear_cache(ctx, cache, GL_TRUE);
+	 clear_cache(ctx, cache, GL_FALSE);
    }
 
    cache->n_items++;
