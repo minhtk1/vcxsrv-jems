@@ -20,9 +20,7 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
  * DEALINGS IN THE SOFTWARE.
  */
-#ifdef HAVE_DIX_CONFIG_H
 #include <dix-config.h>
-#endif
 
 #include <GL/glxtokens.h>
 #include "glxserver.h"
@@ -116,7 +114,7 @@ __glXDisp_CreateContextAttribsARB(__GLXclientState * cl, GLbyte * pc)
     /* Verify that the size of the packet matches the size inferred from the
      * sizes specified for the various fields.
      */
-    const unsigned expected_size = (sz_xGLXCreateContextAttribsARBReq
+    const unsigned expected_size = (sizeof(xGLXCreateContextAttribsARBReq)
                                     + (req->numAttribs * 8)) / 4;
 
     if (req->length != expected_size)
@@ -130,12 +128,16 @@ __glXDisp_CreateContextAttribsARB(__GLXclientState * cl, GLbyte * pc)
      * On the client, the screen comes from the FBConfig, so GLXBadFBConfig
      * should be issued if the screen is nonsense.
      */
-    if (!validGlxScreen(client, req->screen, &glxScreen, &err))
+    if (!validGlxScreen(client, req->screen, &glxScreen, &err)) {
+        client->errorValue = req->fbconfig;
         return __glXError(GLXBadFBConfig);
+    }
 
     if (req->fbconfig) {
-        if (!validGlxFBConfig(client, glxScreen, req->fbconfig, &config, &err))
+        if (!validGlxFBConfig(client, glxScreen, req->fbconfig, &config, &err)) {
+            client->errorValue = req->fbconfig;
             return __glXError(GLXBadFBConfig);
+        }
     }
 
     /* Validate the context with which the new context should share resources.
@@ -307,6 +309,7 @@ __glXDisp_CreateContextAttribsARB(__GLXclientState * cl, GLbyte * pc)
      */
     if (!req->isDirect && (major_version > 1 || minor_version > 4
                            || profile == GLX_CONTEXT_ES2_PROFILE_BIT_EXT)) {
+        client->errorValue = req->fbconfig;
         return __glXError(GLXBadFBConfig);
     }
 
@@ -345,6 +348,7 @@ __glXDisp_CreateContextAttribsARB(__GLXclientState * cl, GLbyte * pc)
     ctx->renderMode = GL_RENDER;
     ctx->resetNotificationStrategy = reset;
     ctx->releaseBehavior = flush;
+    ctx->renderType = render_type;
 
     /* Add the new context to the various global tables of GLX contexts.
      */

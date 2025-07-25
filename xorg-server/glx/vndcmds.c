@@ -31,7 +31,7 @@
 #include <protocol-versions.h>
 
 #include "hashtable.h"
-#include "vndserver.h"
+#include "vndserver_priv.h"
 #include "vndservervendor.h"
 
 /**
@@ -93,6 +93,9 @@ static void SetReplyHeader(ClientPtr client, void *replyPtr)
     xGenericReply *rep = (xGenericReply *) replyPtr;
     rep->type = X_Reply;
     rep->sequenceNumber = client->sequence;
+    if (client->swapped) {
+	swaps(&rep->sequenceNumber);
+    }
     rep->length = 0;
 }
 
@@ -108,7 +111,7 @@ static int dispatch_GLXQueryVersion(ClientPtr client)
     reply.majorVersion = GlxCheckSwap(client, SERVER_GLX_MAJOR_VERSION);
     reply.minorVersion = GlxCheckSwap(client, SERVER_GLX_MINOR_VERSION);
 
-    WriteToClient(client, sz_xGLXQueryVersionReply, &reply);
+    WriteToClient(client, sizeof(xGLXQueryVersionReply), &reply);
     return Success;
 }
 
@@ -163,9 +166,6 @@ static int CommonLoseCurrent(ClientPtr client, GlxContextTagInfo *tagInfo)
             tagInfo->tag, // No old context tag,
             None, None, None, 0);
 
-    if (ret == Success) {
-        GlxFreeContextTag(tagInfo);
-    }
     return ret;
 }
 
@@ -257,7 +257,6 @@ static int CommonMakeCurrent(ClientPtr client,
             if (ret != Success) {
                 return ret;
             }
-            oldTag = NULL;
         }
 
         if (newVendor != NULL) {
@@ -268,10 +267,13 @@ static int CommonMakeCurrent(ClientPtr client,
         } else {
             reply.contextTag = 0;
         }
+
+        GlxFreeContextTag(oldTag);
+        oldTag = NULL;
     }
 
     reply.contextTag = GlxCheckSwap(client, reply.contextTag);
-    WriteToClient(client, sz_xGLXMakeCurrentReply, &reply);
+    WriteToClient(client, sizeof(xGLXMakeCurrentReply), &reply);
     return Success;
 }
 

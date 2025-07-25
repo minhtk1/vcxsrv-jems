@@ -26,17 +26,9 @@
  */
 
 
-#ifdef HAVE_DIX_CONFIG_H
 #include <dix-config.h>
-#else
 
-#include "glheader.h"
-
-#endif
-
-#include <GL/gl.h>
 #include "glxserver.h"
-#include "glxbyteorder.h"
 #include "indirect_size.h"
 #include "indirect_reqsize.h"
 
@@ -103,7 +95,7 @@ GLenum pname       = * (GLenum *)(pc + 0);
     }
 
     compsize = __glFogfv_size(pname);
-    return safe_pad(safe_mul(compsize, 1 * sizeof(GLfloat)));
+    return safe_pad(compsize * 1 * sizeof(GLfloat));
 }
 
 int
@@ -117,7 +109,7 @@ GLenum pname       = * (GLenum *)(pc + 4);
     }
 
     compsize = __glLightfv_size(pname);
-    return safe_pad(safe_mul(compsize, 1 * sizeof(GLfloat)));
+    return safe_pad(compsize * 1 * sizeof(GLfloat));
 }
 
 int
@@ -131,7 +123,7 @@ GLenum pname       = * (GLenum *)(pc + 0);
     }
 
     compsize = __glLightModelfv_size(pname);
-    return safe_pad(safe_mul(compsize, 1 * sizeof(GLfloat)));
+    return safe_pad(compsize * 1 * sizeof(GLfloat));
 }
 
 int
@@ -145,7 +137,7 @@ GLenum pname       = * (GLenum *)(pc + 4);
     }
 
     compsize = __glMaterialfv_size(pname);
-    return safe_pad(safe_mul(compsize, 1 * sizeof(GLfloat)));
+    return safe_pad(compsize * 1 * sizeof(GLfloat));
 }
 
 int
@@ -179,7 +171,7 @@ GLenum pname       = * (GLenum *)(pc + 4);
     }
 
     compsize = __glTexParameterfv_size(pname);
-    return safe_pad(safe_mul(compsize, 1 * sizeof(GLfloat)));
+    return safe_pad(compsize * 1 * sizeof(GLfloat));
 }
 
 int
@@ -251,7 +243,7 @@ GLenum pname       = * (GLenum *)(pc + 4);
     }
 
     compsize = __glTexEnvfv_size(pname);
-    return safe_pad(safe_mul(compsize, 1 * sizeof(GLfloat)));
+    return safe_pad(compsize * 1 * sizeof(GLfloat));
 }
 
 int
@@ -265,7 +257,7 @@ GLenum pname       = * (GLenum *)(pc + 4);
     }
 
     compsize = __glTexGendv_size(pname);
-    return safe_pad(safe_mul(compsize, 1 * sizeof(GLdouble)));
+    return safe_pad(compsize * 1 * sizeof(GLdouble));
 }
 
 int
@@ -279,7 +271,7 @@ GLenum pname       = * (GLenum *)(pc + 4);
     }
 
     compsize = __glTexGenfv_size(pname);
-    return safe_pad(safe_mul(compsize, 1 * sizeof(GLfloat)));
+    return safe_pad(compsize * 1 * sizeof(GLfloat));
 }
 
 int
@@ -676,7 +668,7 @@ GLenum pname       = * (GLenum *)(pc + 0);
     }
 
     compsize = __glPointParameterfv_size(pname);
-    return safe_pad(safe_mul(compsize, 1 * sizeof(GLfloat)));
+    return safe_pad(compsize * 1 * sizeof(GLfloat));
 }
 
 int
@@ -688,7 +680,7 @@ GLsizei n          = *(GLsizei *)(pc + 0);
         n = bswap_32(n);
     }
 
-    return safe_pad(safe_mul(n, 1 * sizeof(GLenum)));
+    return safe_pad(n * 1 * sizeof(GLenum));
 }
 
 int

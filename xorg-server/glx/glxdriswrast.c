@@ -24,9 +24,7 @@
  * SOFTWARE.
  */
 
-#ifdef HAVE_DIX_CONFIG_H
 #include <dix-config.h>
-#endif
 #include "glheader.h"
 
 #include <stdint.h>
@@ -130,7 +128,7 @@ __glXDRIcontextDestroy(__GLXcontext * baseContext)
     __GLXDRIcontext *context = (__GLXDRIcontext *) baseContext;
     __GLXDRIscreen *screen = (__GLXDRIscreen *) context->base.pGlxScreen;
 
-    (*screen->core->destroyContext) (context->driContext);
+    if (*screen->core->destroyContext) screen->core->destroyContext(context->driContext);
     __glXContextDestroy(&context->base);
     free(context);
 }
@@ -358,7 +356,7 @@ swrastGetImage(__DRIdrawable * draw,
 }
 
 static const __DRIswrastLoaderExtension swrastLoaderExtension = {
-    {__DRI_SWRAST_LOADER, __DRI_SWRAST_LOADER_VERSION},
+    {__DRI_SWRAST_LOADER, 1},
     swrastGetDrawableInfo,
     swrastPutImage,
     swrastGetImage
@@ -447,6 +445,13 @@ __glXDRIscreenDestroy(__GLXscreen * baseScreen)
     free(screen);
 }
 
+static int
+__glxDriwrastSwapInterval(__GLXdrawable * drawable, int interval)
+{
+    return true;
+}
+
+
 static __GLXscreen *
 __glXDRIscreenProbe(ScreenPtr pScreen)
 {
@@ -465,7 +470,7 @@ __glXDRIscreenProbe(ScreenPtr pScreen)
     screen->base.destroy = __glXDRIscreenDestroy;
     screen->base.createContext = __glXDRIscreenCreateContext;
     screen->base.createDrawable = __glXDRIscreenCreateDrawable;
-    screen->base.swapInterval = NULL;
+    screen->base.swapInterval = __glxDriwrastSwapInterval;
     screen->base.pScreen = pScreen;
 
     __glXInitExtensionEnableBits(screen->base.glx_enable_bits);

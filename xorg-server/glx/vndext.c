@@ -27,7 +27,7 @@
  * MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
  */
 
-#include "vndserver.h"
+#include "vndserver_priv.h"
 
 #include <string.h>
 #include <scrnintstr.h>
@@ -35,9 +35,14 @@
 #include <dixstruct.h>
 #include <extnsionst.h>
 #include <glx_extinit.h>
+#include "extinit_priv.h"
 
 #include <GL/glxproto.h>
 #include "vndservervendor.h"
+
+#include "dix/dix_priv.h"
+
+Bool noGlxExtension = FALSE;
 
 ExtensionEntry *GlxExtensionEntry;
 int GlxErrorBase = 0;
@@ -114,7 +119,7 @@ GlxMappingInit(void)
 
     idResource = CreateNewResourceType(idResourceDeleteCallback,
                                        "GLXServerIDRes");
-    if (idResource == RT_NONE)
+    if (idResource == X11_RESTYPE_NONE)
     {
         GlxMappingReset();
         return FALSE;
@@ -193,7 +198,7 @@ GLXClientCallback(CallbackListPtr *list, void *closure, void *data)
 static void
 GLXReset(ExtensionEntry *extEntry)
 {
-    // xf86Msg(X_INFO, "GLX: GLXReset\n");
+    // LogMessageVerb(X_INFO, 1, "GLX: GLXReset\n");
 
     GlxVendorExtensionReset(extEntry);
     GlxDispatchReset();
