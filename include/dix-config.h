@@ -6,6 +6,7 @@
 #define _X_UNUSED
 
 #define GLYPHPADBYTES 4
+#define HAVE_GETADDRINFO 1
 
 /* Use XCB for low-level protocol implementation */
 #define USE_XCB 1
@@ -14,7 +15,7 @@
 #define BIGREQS 1
 
 /* Builder address */
-#define BUILDERADDR "marha@users.sourceforge.net"
+#define BUILDERADDR "https://github.com/marchaesen"
 
 /* Operating System Name */
 #define OSNAME "Win32"
@@ -261,6 +262,9 @@
 /* Define to 1 if you have the `vasprintf' function. */
 #undef HAVE_VASPRINTF
 
+/* Support HyperV VSock transport */
+#define HYPERV 1
+
 /* Support IPv6 for TCP connections */
 #define IPv6 1
 
@@ -373,10 +377,10 @@
 #undef XORG_RELEASE
 
 /* Current Xorg version */
-#define XORG_VERSION_CURRENT (((1) * 10000000) + ((20) * 100000) + ((6) * 1000) + 0)
+#define XORG_VERSION_CURRENT (((21) * 10000000) + ((1) * 100000) + ((16) * 1000) + 1)
 
 /* Xorg release date */
-#define XORG_DATE "12 Januari 2020"
+#define XORG_DATE "7 April 2020"
 
 /* Build Xv Extension */
 #undef XvExtension
@@ -556,6 +560,10 @@
 
 /* Have epoll_create1() */
 #undef HAVE_EPOLL_CREATE1
+
+#define X_REGISTRY_RESOURCE 1
+#define X_REGISTRY_REQUEST 1
+
 
 #include <X11/Xwinsock.h>
 #include <X11/Xwindows.h>
