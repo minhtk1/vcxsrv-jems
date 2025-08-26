@@ -59,6 +59,7 @@ SOFTWARE.
 
 #ifdef WIN32
 #include <X11/Xwinsock.h>
+#include "../hw/xwin/win.h"
 #endif
 #include <stdio.h>
 #define XSERV_t
@@ -790,7 +791,40 @@ WriteToClient(ClientPtr who, int count, const void *__buf)
         }
     }
 #endif
-    if ((oco->count == 0 && who->local) || oco->count + count + padBytes > oco->size) {
+    /* RTT Optimization: Increase buffer utilization before flushing */
+    Bool should_flush = FALSE;
+    
+    if (oco->count == 0 && who->local) {
+        should_flush = TRUE; /* Local clients still get immediate flush */
+    } else if (oco->count + count + padBytes > oco->size) {
+        should_flush = TRUE; /* Buffer full */
+    } else {
+        /* RTT Optimization: Adaptive batching based on estimated RTT */
+        static int client_output_count = 0;
+        static DWORD last_flush_time = 0;
+        DWORD current_time = GetTickCount();
+        
+        client_output_count++;
+        
+        /* RTT Optimization: Use global configuration instead of environment variables */
+        extern WinRTTConfig g_winRTTConfig;
+        int flush_threshold_pct = g_winRTTConfig.flush_threshold_pct;
+        int batch_count_threshold = g_winRTTConfig.batch_count_threshold;
+        int time_threshold = g_winRTTConfig.time_threshold_ms;
+        
+        DWORD time_since_flush = current_time - last_flush_time;
+        
+        /* Flush if: buffer >threshold% full OR many writes OR too much time passed */
+        if ((oco->count + count + padBytes > (oco->size * flush_threshold_pct) / 100) || 
+            (client_output_count >= batch_count_threshold) ||
+            (time_since_flush > time_threshold && oco->count > 0)) {
+            should_flush = TRUE;
+            client_output_count = 0;
+            last_flush_time = current_time;
+        }
+    }
+    
+    if (should_flush) {
         output_pending_clear(who);
         if (!any_output_pending()) {
             CriticalOutputPending = FALSE;

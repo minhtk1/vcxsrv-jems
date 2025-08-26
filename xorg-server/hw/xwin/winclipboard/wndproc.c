@@ -115,6 +115,13 @@ winProcessXEventsTimeout(HWND hwnd, xcb_window_t iWindow, xcb_connection_t *conn
         if (remainingTime <= 0)
             break;
 
+        /* RTT Optimization: Use global configuration for clipboard polling */
+        extern int winIsRTTModeHigh(void);
+        if (winIsRTTModeHigh()) {
+            /* For high RTT (35-50ms), use longer timeouts to reduce CPU usage */
+            if (remainingTime > 100) remainingTime = 100; /* Cap at 100ms for high RTT */
+        }
+        
         tv.tv_sec = remainingTime / 1000;
         tv.tv_usec = (remainingTime % 1000) * 1000;
         /* Wait for an X event */

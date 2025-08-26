@@ -913,6 +913,16 @@ winUseMsg(void)
     ErrorF("-xkbvariant XKBVariant\n"
            "\tSet the variant to use for XKB.  This defaults to not set.\n"
            "\tFor example: -xkbvariant nodeadkeys\n");
+
+    ErrorF("-rtt {auto|ultra|low|standard|high|adaptive}\n"
+           "\tSet RTT optimization mode for network performance.\n"
+           "\t  auto:     Auto-detect network latency (default)\n"
+           "\t  ultra:    RTT < 15ms (premium LAN, maximum responsiveness)\n"
+           "\t  low:      RTT 15-25ms (good LAN, minimal optimizations)\n"
+           "\t  standard: RTT 25-35ms (moderate optimizations)\n"
+           "\t  high:     RTT 35-50ms (aggressive optimizations)\n"
+           "\t  adaptive: RTT 10-100ms+ (extreme variance, real-time adaptation)\n"
+           "\tThis optimizes socket buffers, batching, and polling for your network.\n");
 }
 
 /* See Porting Layer Definition - p. 57 */

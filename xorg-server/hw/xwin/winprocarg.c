@@ -247,6 +247,9 @@ ddxProcessArgument(int argc, char *argv[], int i)
             winDebug ("ddxProcessArgument - Initializing default "
                       "screens\n");
             winInitializeScreenDefaults();
+            
+            /* Initialize RTT configuration with auto-detection */
+            winInitializeRTTConfig(RTT_MODE_AUTO);
         }
     }
 
@@ -726,6 +729,23 @@ ddxProcessArgument(int argc, char *argv[], int i)
 
         /* Indicate that we have processed this argument */
         return 1;
+    }
+
+    /*
+     * Look for the '-rtt' argument
+     */
+    if (IS_OPTION("-rtt")) {
+        if (i + 1 >= argc) {
+            ErrorF("-rtt option requires a parameter (auto|ultra|low|standard|high|adaptive)\n");
+            UseMsg();
+            return 0;
+        }
+        
+        winSetRTTMode(argv[i + 1]);
+        winDebug("RTT mode set to: %s\n", argv[i + 1]);
+        
+        /* Indicate that we have processed these arguments */
+        return 2;
     }
 
     /*
