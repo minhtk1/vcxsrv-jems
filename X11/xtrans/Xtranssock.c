@@ -865,12 +865,25 @@ TRANS(SocketOpen) (int i, int type)
     )
     {
 	/*
-	 * turn off TCP coalescence for INET sockets
+	 * RTT Optimization: Use global configuration for TCP_NODELAY control
+	 * For high RTT networks (>20ms), Nagle algorithm may actually help
+	 * by reducing packet count at the cost of some latency
 	 */
-
-	int tmp = 1;
-	setsockopt (ciptr->fd, IPPROTO_TCP, TCP_NODELAY,
-	    (char *) &tmp, sizeof (int));
+#ifdef WIN32
+	/* Forward declaration to avoid circular dependency */
+	typedef struct WinRTTConfig WinRTTConfig;
+	extern WinRTTConfig g_winRTTConfig;
+	extern int winGetRTTEnableNagle(void);
+	
+	int enable_nodelay = winGetRTTEnableNagle() ? 0 : 1;
+#else
+	int enable_nodelay = 1; /* Default behavior for non-Windows */
+#endif
+	
+	if (enable_nodelay) {
+	    setsockopt (ciptr->fd, IPPROTO_TCP, TCP_NODELAY,
+	        (char *) &enable_nodelay, sizeof (int));
+	}
     }
 #endif
 
@@ -878,6 +891,9 @@ TRANS(SocketOpen) (int i, int type)
      * Some systems provide a really small default buffer size for
      * UNIX sockets.  Bump it up a bit such that large transfers don't
      * proceed at glacial speed.
+     * 
+     * For TCP sockets, also increase buffer sizes to handle high RTT networks better.
+     * Default 256KB for TCP to reduce packet fragmentation on high latency links.
      */
 #ifdef SO_SNDBUF
     if (Sockettrans2devtab[i].family == AF_UNIX
@@ -902,6 +918,37 @@ TRANS(SocketOpen) (int i, int type)
 	    val = 64 * 1024;
 	    setsockopt (ciptr->fd, SOL_SOCKET, SO_RCVBUF,
 	        (char *) &val, sizeof (int));
+	}
+    }
+    
+    /* Optimize TCP socket buffers for high RTT networks (20-50ms+) */
+    if (Sockettrans2devtab[i].family == AF_INET
+#ifdef IPv6
+      || Sockettrans2devtab[i].family == AF_INET6
+#endif
+    )
+    {
+	SOCKLEN_T len = sizeof (int);
+	int val;
+	/* RTT Optimization: Use adaptive socket buffer size for extreme variance networks */
+#ifdef WIN32
+	extern int winGetEffectiveSocketBuffer(void);
+	int target_buf_size = winGetEffectiveSocketBuffer();
+#else
+	int target_buf_size = 256 * 1024; /* 256KB default for non-Windows */
+#endif
+
+	if (getsockopt (ciptr->fd, SOL_SOCKET, SO_SNDBUF,
+	    (char *) &val, &len) == 0 && val < target_buf_size)
+	{
+	    setsockopt (ciptr->fd, SOL_SOCKET, SO_SNDBUF,
+	        (char *) &target_buf_size, sizeof (int));
+	}
+	if (getsockopt (ciptr->fd, SOL_SOCKET, SO_RCVBUF,
+	    (char *) &val, &len) == 0 && val < target_buf_size)
+	{
+	    setsockopt (ciptr->fd, SOL_SOCKET, SO_RCVBUF,
+	        (char *) &target_buf_size, sizeof (int));
 	}
     }
 #endif

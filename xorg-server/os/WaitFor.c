@@ -58,6 +58,7 @@ SOFTWARE.
 #include <stdio.h>
 #ifdef WIN32
 #include <X11/Xwinsock.h>
+#include "../hw/xwin/win.h"
 #endif
 #include <X11/Xos.h>            /* for strings, fcntl, time */
 #include <X11/X.h>
@@ -194,15 +195,51 @@ WaitForSomething(Bool are_ready)
             timeout = 0;
 
         BlockHandler(&timeout);
-        if (NewOutputPending)
-            FlushAllOutput();
+        
+        /* RTT Optimization: Use global configuration for adaptive flushing */
+        static int flush_hysteresis = 0;
+        extern WinRTTConfig g_winRTTConfig;
+        int adaptive_flush_threshold = g_winRTTConfig.flush_hysteresis;
+        int adaptive_timeout_threshold = g_winRTTConfig.poll_timeout_ms;
+        
+        if (NewOutputPending) {
+            /* Only flush if we have significant pending data or timeout is large enough */
+            if (++flush_hysteresis >= adaptive_flush_threshold || timeout >= adaptive_timeout_threshold) {
+                FlushAllOutput();
+                flush_hysteresis = 0;
+            }
+        } else {
+            flush_hysteresis = 0;
+        }
+        
         /* keep this check close to select() call to minimize race */
         if (dispatchException)
             i = -1;
         else
         {
-            if (!timeout) timeout=10; /* Avoid a 100 % usage loop, timeout is in milliseconds */
+            /* RTT Optimization: Use global configuration for adaptive timeout */
+            extern WinRTTConfig g_winRTTConfig;
+            int adaptive_min_timeout = g_winRTTConfig.poll_timeout_ms;
+            
+            if (!timeout) timeout = adaptive_min_timeout;
+            
+            /* RTT Performance Monitoring */
+            static int log_counter = 0;
+            DWORD pre_poll = GetTickCount();
             i = ospoll_wait(server_poll, timeout);
+            DWORD post_poll = GetTickCount();
+            
+            if (++log_counter % 100 == 0) { /* Log every 100th poll to avoid spam */
+                const char* mode_names[] = {"AUTO", "ULTRA", "LOW", "STANDARD", "HIGH", "ADAPTIVE"};
+                ErrorF("RTT_MONITOR: poll_time=%ums timeout=%d pending=%d hysteresis=%d mode=%s variance=%d\n", 
+                       post_poll - pre_poll, timeout, NewOutputPending ? 1 : 0, flush_hysteresis,
+                       mode_names[g_winRTTConfig.mode], g_winRTTConfig.rtt_variance);
+                       
+                /* Auto-detect RTT if in auto mode */
+                if (g_winRTTConfig.mode == RTT_MODE_AUTO) {
+                    winAutoDetectRTT();
+                }
+            }
         }
         pollerr = GetErrno();
         if (i <= 0) {           /* An error or timeout occurred */

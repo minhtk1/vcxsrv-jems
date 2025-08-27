@@ -465,22 +465,37 @@ winShadowUpdateGDI(ScreenPtr pScreen, shadowBufPtr pBuf)
     if (!pScreenInfo->fMultiWindow &&
         (pScreenInfo->dwClipUpdatesNBoxes == 0 ||
          dwBox < pScreenInfo->dwClipUpdatesNBoxes)) {
-        /* Loop through all boxes in the damaged region */
-        while (dwBox--) {
-            /*
-             * Calculate x offset, y offset, width, and height for
-             * current damage box
-             */
-            x = pBox->x1;
-            y = pBox->y1;
-            w = pBox->x2 - pBox->x1;
-            h = pBox->y2 - pBox->y1;
-
+        /* RTT Optimization: Use global configuration for GDI batching */
+        extern WinRTTConfig g_winRTTConfig;
+        Bool use_batching = g_winRTTConfig.enable_gdi_batching;
+        
+        if (use_batching && dwBox > 3) {
+            /* For high RTT (35-50ms): Merge to single large blit to reduce GDI overhead */
             BitBlt(pScreenPriv->hdcScreen,
-                   x, y, w, h, pScreenPriv->hdcShadow, x, y, SRCCOPY);
+                   pBoxExtents->x1, pBoxExtents->y1,
+                   pBoxExtents->x2 - pBoxExtents->x1,
+                   pBoxExtents->y2 - pBoxExtents->y1,
+                   pScreenPriv->hdcShadow, 
+                   pBoxExtents->x1, pBoxExtents->y1, SRCCOPY);
+        } else {
+            /* Standard per-box blitting for normal RTT or few boxes */
+            DWORD dwBoxCount = dwBox;
+            while (dwBoxCount--) {
+                /*
+                 * Calculate x offset, y offset, width, and height for
+                 * current damage box
+                 */
+                x = pBox->x1;
+                y = pBox->y1;
+                w = pBox->x2 - pBox->x1;
+                h = pBox->y2 - pBox->y1;
 
-            /* Get a pointer to the next box */
-            ++pBox;
+                BitBlt(pScreenPriv->hdcScreen,
+                       x, y, w, h, pScreenPriv->hdcShadow, x, y, SRCCOPY);
+
+                /* Get a pointer to the next box */
+                ++pBox;
+            }
         }
     }
     else if (!pScreenInfo->fMultiWindow) {

@@ -72,6 +72,40 @@ extern void winUpdateWindowPosition(HWND hWnd, HWND * zstyle);
 
 static UINT_PTR g_uipMousePollingTimerID = 0;
 
+#ifdef XWIN_MENU_FIX
+/*
+ * Theo dõi vòng menu và bổ trợ log/debug
+ */
+#define MTRACE(msg) ErrorF("[XMWMENU] %s\n", msg)
+#define MTRACEF(fmt, ...) ErrorF("[XMWMENU] " fmt "\n", __VA_ARGS__)
+static Bool s_fInMenuLoop = FALSE;
+extern Bool g_fButton[3];
+
+static void xmw_ResetButtons(void)
+{
+    g_fButton[0] = FALSE;
+    g_fButton[1] = FALSE;
+    g_fButton[2] = FALSE;
+}
+
+static void xmw_ReleaseCaptureIfAny(HWND hwnd)
+{
+    HWND hCap = GetCapture();
+    if (hCap) {
+        MTRACE("ReleaseCapture()");
+        ReleaseCapture();
+    }
+}
+
+static void xmw_EndMenuIfInLoop(void)
+{
+    if (s_fInMenuLoop) {
+        MTRACE("EndMenu()");
+        EndMenu();
+    }
+}
+#endif /* XWIN_MENU_FIX */
+
 /*
  * Constant defines
  */
@@ -608,6 +642,30 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     /* Branch on message type */
     switch (message) {
+#ifdef XWIN_MENU_FIX
+    case WM_ENTERMENULOOP:
+        MTRACE("WM_ENTERMENULOOP");
+        s_fInMenuLoop = TRUE;
+        xmw_ReleaseCaptureIfAny(hwnd);
+        xmw_ResetButtons();
+        return 0;
+
+    case WM_EXITMENULOOP:
+        MTRACE("WM_EXITMENULOOP");
+        s_fInMenuLoop = FALSE;
+        return 0;
+
+    case WM_CANCELMODE:
+        MTRACE("WM_CANCELMODE");
+        if (s_fInMenuLoop) {
+            xmw_EndMenuIfInLoop();
+            xmw_ReleaseCaptureIfAny(hwnd);
+            xmw_ResetButtons();
+            s_fInMenuLoop = FALSE;
+            return 0;
+        }
+        break;
+#endif
     case WM_CREATE:
         /*
          * Make X windows' Z orders sync with Windows windows because
@@ -845,6 +903,9 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         if (s_pScreenPriv == NULL || s_pScreenInfo->fIgnoreInput)
             break;
         g_fButton[0] = TRUE;
+#ifdef XWIN_MENU_FIX
+        MTRACE("SetCapture(LBUTTON)");
+#endif
         SetCapture(hwnd);
         return winMouseButtonsHandle(s_pScreen, ButtonPress, Button1, wParam);
 
@@ -852,6 +913,9 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         if (s_pScreenPriv == NULL || s_pScreenInfo->fIgnoreInput)
             break;
         g_fButton[0] = FALSE;
+#ifdef XWIN_MENU_FIX
+        MTRACE("ReleaseCapture(LBUTTON)");
+#endif
         ReleaseCapture();
         winStartMousePolling(s_pScreenPriv);
         return winMouseButtonsHandle(s_pScreen, ButtonRelease, Button1, wParam);
@@ -862,6 +926,9 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         if (s_pScreenPriv == NULL || s_pScreenInfo->fIgnoreInput)
             break;
         g_fButton[1] = TRUE;
+#ifdef XWIN_MENU_FIX
+        MTRACE("SetCapture(MBUTTON)");
+#endif
         SetCapture(hwnd);
         return winMouseButtonsHandle(s_pScreen, ButtonPress, Button2, wParam);
 
@@ -869,6 +936,9 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         if (s_pScreenPriv == NULL || s_pScreenInfo->fIgnoreInput)
             break;
         g_fButton[1] = FALSE;
+#ifdef XWIN_MENU_FIX
+        MTRACE("ReleaseCapture(MBUTTON)");
+#endif
         ReleaseCapture();
         winStartMousePolling(s_pScreenPriv);
         return winMouseButtonsHandle(s_pScreen, ButtonRelease, Button2, wParam);
@@ -879,6 +949,9 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         if (s_pScreenPriv == NULL || s_pScreenInfo->fIgnoreInput)
             break;
         g_fButton[2] = TRUE;
+#ifdef XWIN_MENU_FIX
+        MTRACE("SetCapture(RBUTTON)");
+#endif
         SetCapture(hwnd);
         return winMouseButtonsHandle(s_pScreen, ButtonPress, Button3, wParam);
 
@@ -886,6 +959,9 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         if (s_pScreenPriv == NULL || s_pScreenInfo->fIgnoreInput)
             break;
         g_fButton[2] = FALSE;
+#ifdef XWIN_MENU_FIX
+        MTRACE("ReleaseCapture(RBUTTON)");
+#endif
         ReleaseCapture();
         winStartMousePolling(s_pScreenPriv);
         return winMouseButtonsHandle(s_pScreen, ButtonRelease, Button3, wParam);
@@ -932,6 +1008,9 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             break;
 
     case WM_SETFOCUS:
+#ifdef XWIN_MENU_FIX
+        MTRACE("WM_SETFOCUS");
+#endif
         if (s_pScreenPriv == NULL || s_pScreenInfo->fIgnoreInput)
             break;
 
@@ -961,6 +1040,15 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         return 0;
 
     case WM_KILLFOCUS:
+#ifdef XWIN_MENU_FIX
+        MTRACE("WM_KILLFOCUS");
+        if (s_fInMenuLoop) {
+            xmw_EndMenuIfInLoop();
+            xmw_ReleaseCaptureIfAny(hwnd);
+            xmw_ResetButtons();
+            s_fInMenuLoop = FALSE;
+        }
+#endif
         /* Pop any pressed keys since we are losing keyboard focus */
         winKeybdReleaseKeys();
 
@@ -1048,14 +1136,17 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_HOTKEY:
 
-        /* Pass the message to the root window */
-        SendMessage(hwndScreen, message, wParam, lParam);
+        /* RTT Optimization: Use PostMessage for non-critical hotkey events */
+        PostMessage(hwndScreen, message, wParam, lParam);
         return 0;
 
     case WM_ACTIVATE:
+#ifdef XWIN_MENU_FIX
+        MTRACEF("WM_ACTIVATE: wParam=%u", (unsigned)wParam);
+#endif
 
-        /* Pass the message to the root window */
-        SendMessage(hwndScreen, message, wParam, lParam);
+        /* RTT Optimization: Use PostMessage for activation events to avoid blocking */
+        PostMessage(hwndScreen, message, wParam, lParam);
 
         /* Allow DefWindowProc to SetFocus() as needed */
         break;

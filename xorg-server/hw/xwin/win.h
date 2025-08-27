@@ -212,6 +212,48 @@ static Atom func (void) {					\
 #define WND_IDX_ENTEREDSIZEMOVE  (sizeof(LONG_PTR))
 
 /*
+ * RTT Optimization Configuration
+ */
+typedef enum {
+    RTT_MODE_AUTO = 0,      /* Auto-detect RTT and choose optimal settings */
+    RTT_MODE_ULTRA,         /* RTT < 15ms - ultra-low latency optimizations */
+    RTT_MODE_LOW,           /* RTT 15-25ms - minimal optimizations */
+    RTT_MODE_STANDARD,      /* RTT 25-35ms - standard optimizations */
+    RTT_MODE_HIGH,          /* RTT 35-50ms - aggressive optimizations */
+    RTT_MODE_ADAPTIVE       /* RTT 10-100ms+ - extreme variance adaptive */
+} WinRTTMode;
+
+typedef struct {
+    WinRTTMode mode;
+    int socket_buffer_size;     /* TCP socket buffer size */
+    int flush_threshold_pct;    /* Buffer percentage before flush */
+    int batch_count_threshold;  /* Number of writes to batch */
+    int time_threshold_ms;      /* Time before forced flush */
+    int poll_timeout_ms;        /* Minimum poll timeout */
+    int flush_hysteresis;       /* Pending outputs before flush */
+    Bool enable_nagle;          /* TCP Nagle algorithm */
+    Bool enable_gdi_batching;   /* Merge GDI BitBlt operations */
+    
+    /* Adaptive mode enhancements for extreme variance */
+    int adaptive_buffer_size;   /* Dynamic buffer size for adaptive mode */
+    int rtt_variance;           /* Current RTT variance measurement */
+    int recent_rtt_samples[20]; /* Recent RTT samples for trend analysis */
+    int sample_index;           /* Current sample index */
+    DWORD last_adjustment;      /* Last time we adjusted parameters */
+} WinRTTConfig;
+
+/* Global RTT configuration */
+extern WinRTTConfig g_winRTTConfig;
+
+/* RTT configuration functions */
+void winInitializeRTTConfig(WinRTTMode mode);
+void winAutoDetectRTT(void);
+void winSetRTTMode(const char *mode_str);
+int winGetEffectiveSocketBuffer(void);
+int winGetRTTEnableNagle(void);
+int winIsRTTModeHigh(void);
+
+/*
  * Typedefs for engine dependent function pointers
  */
 

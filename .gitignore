@@ -28,3 +28,6 @@ cscope*
 .makefile.dep
 .vscode
 .vs
+
+# log
+*.log
